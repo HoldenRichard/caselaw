@@ -29,6 +29,7 @@ import { buildArtifacts } from '../src/generate/artifacts.js'
 import { check, planUpgrade, planEject, applyEject, doctor, LifecycleError } from '../src/commands/lifecycle.js'
 import { buildReviewPrompt } from '../src/commands/review.js'
 import { ADAPTERS, selectAdapters } from '../src/adapters/index.js'
+import { MODULES } from '../src/generate/artifacts.js'
 import { gather } from '../src/audit/gather.js'
 import { runChecks } from '../src/audit/checks.js'
 import { formatReport, toJson, agentPrompt } from '../src/audit/report.js'
@@ -54,6 +55,8 @@ Options
   --force                overwrite content you have edited (read the diff first)
   --json                 machine-readable audit output, for CI
   --agent                print a model-agnostic prompt for a second opinion
+  --with <a,b,c>         add optional modules: decisions, glossary, known-issues
+  --purge                eject: remove the generated docs too
 `
 
 async function main() {
@@ -247,6 +250,9 @@ async function cmdInit(args) {
   // docs would differ every day and `check` could never tell calendar drift
   // from real drift.
   doc.generatedAt ??= new Date().toISOString()
+  // Recorded in answers so `check` and `upgrade` keep producing the same set;
+  // a module chosen at install must not silently vanish on the next run.
+  if (args.with.length) doc.modules = [...new Set([...(doc.modules ?? []), ...args.with])]
 
   const prompt = ttyPrompt()
   try {
@@ -354,7 +360,7 @@ function summarizeDetection(d) {
 }
 
 function parseArgs(list) {
-  const out = { command: null, dir: null, dryRun: false, yes: false, force: false, help: false, json: false, agent: false, strict: false, purge: false }
+  const out = { command: null, dir: null, dryRun: false, yes: false, force: false, help: false, json: false, agent: false, strict: false, purge: false, with: [], wantsWith: false }
   for (const a of list) {
     if (a === '--help' || a === '-h') out.help = true
     else if (a === '--dry-run') out.dryRun = true
@@ -364,6 +370,9 @@ function parseArgs(list) {
     else if (a === '--agent') out.agent = true
     else if (a === '--strict') out.strict = true
     else if (a === '--purge') out.purge = true
+    else if (a.startsWith('--with=')) out.with = a.slice(7).split(',').map((x) => x.trim()).filter(Boolean)
+    else if (a === '--with') out.wantsWith = true
+    else if (out.wantsWith) { out.with = a.split(',').map((x) => x.trim()).filter(Boolean); out.wantsWith = false }
     else if (a.startsWith('-')) { /* ignore unknown flags rather than dying */ }
     else if (!out.command) out.command = a
     else if (!out.dir) out.dir = a

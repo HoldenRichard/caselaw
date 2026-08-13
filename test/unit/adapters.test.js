@@ -16,7 +16,7 @@ import { join } from 'node:path'
 import {
   ADAPTERS, RESERVED_COMMANDS, selectAdapters, getAdapter, commandCollisions,
 } from '../../src/adapters/index.js'
-import { buildArtifacts, templateFiles } from '../../src/generate/artifacts.js'
+import { buildArtifacts, templateFiles, MODULES } from '../../src/generate/artifacts.js'
 import { emptyAnswers } from '../../src/core/answers.js'
 import { buildReviewPrompt } from '../../src/commands/review.js'
 
@@ -216,5 +216,57 @@ describe('review --emit', () => {
     const p = buildReviewPrompt({ root: '/x', detected: {}, answers: null, rules: { active: [] }, gatesConfig: { gates: [] } })
     assert.match(p, /\(none yet\)/)
     assert.match(p, /no authority split recorded/)
+  })
+})
+
+describe('optional modules', () => {
+  const doc = () => {
+    const d = emptyAnswers({ project: { name: 'P' } })
+    d.generatedAt = '2026-08-13T00:00:00.000Z'
+    return d
+  }
+
+  test('POSITIVE CONTROL: nothing optional is installed by default', async () => {
+    const arts = await buildArtifacts({ doc: doc(), detected: detectedWith({ claudeMd: true }) })
+    const optional = arts.filter((a) => /docs\/(decisions|glossary|known-issues)/.test(a.path))
+    assert.deepEqual(optional, [],
+      'installing four files nobody asked for is the curated-corpus mistake: volume standing in for fit')
+  })
+
+  test('each module installs only its own files', async () => {
+    const arts = await buildArtifacts({ doc: doc(), detected: detectedWith({ claudeMd: true }), modules: ['glossary'] })
+    const paths = arts.map((a) => a.path)
+    assert.ok(paths.includes('docs/glossary.md'))
+    assert.ok(!paths.some((p) => p.startsWith('docs/decisions/')))
+  })
+
+  test('every declared module actually resolves to real template files', async () => {
+    for (const id of Object.keys(MODULES)) {
+      const arts = await buildArtifacts({ doc: doc(), detected: detectedWith({ claudeMd: true }), modules: [id] })
+      const mine = arts.filter((a) => MODULES[id].files.some((f) => f.to === a.path))
+      assert.equal(mine.length, MODULES[id].files.length, `module "${id}" did not produce all its files`)
+      for (const a of mine) assert.ok(a.body.length > 100, `${a.path} is suspiciously empty`)
+    }
+  })
+
+  test('POSITIVE CONTROL: an unknown module is an error, not silently ignored', async () => {
+    await assert.rejects(
+      () => buildArtifacts({ doc: doc(), detected: detectedWith({ claudeMd: true }), modules: ['telepathy'] }),
+      /Unknown module "telepathy"/,
+    )
+  })
+
+  test('POSITIVE CONTROL: the seed ADR renders a real date, never a placeholder', async () => {
+    const arts = await buildArtifacts({ doc: doc(), detected: detectedWith({ claudeMd: true }), modules: ['decisions'] })
+    const adr = arts.find((a) => a.path.endsWith('0001-adopt-the-harness.md'))
+    assert.match(adr.body, /\*\*Date:\*\* 2026-08-13/)
+    assert.doesNotMatch(adr.body, /\{\{/, 'an unrendered template token would ship to the user')
+  })
+
+  test('the ADR records the costs it accepts, not only the benefits', async () => {
+    const arts = await buildArtifacts({ doc: doc(), detected: detectedWith({ claudeMd: true }), modules: ['decisions'] })
+    const adr = arts.find((a) => a.path.endsWith('0001-adopt-the-harness.md'))
+    assert.match(adr.body.replace(/\s+/g, ' '), /Costs accepted knowingly/,
+      'a decision record listing only benefits is marketing')
   })
 })

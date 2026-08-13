@@ -13,6 +13,8 @@ import { dirname, join } from 'node:path'
 import { generate as generateAuthoritySplit } from './authority-split.js'
 import { generate as generateCloseOut } from './close-out.js'
 import { selectAdapters, commandCollisions } from '../adapters/index.js'
+import { isoDate } from '../core/dates.js'
+import { render } from '../render/engine.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 export const TEMPLATE_ROOT = join(HERE, '../../templates')
@@ -56,6 +58,33 @@ export function claudeHookSettings() {
   return { hooks: { PreToolUse: [entry('pre')], PostToolUse: [entry('post')] } }
 }
 
+/**
+ * Optional modules, off by default and enabled with `--with`.
+ *
+ * Each is a genuinely useful artifact and none is required for the harness to
+ * work. Installing all of them by default would be the curated-corpus mistake:
+ * volume standing in for fit, and four files nobody asked for teaching the
+ * reader that this tool does not know what their project needs.
+ */
+export const MODULES = {
+  decisions: {
+    label: 'decision records (ADRs)',
+    files: [
+      { from: 'decisions/README.md', to: 'docs/decisions/README.md' },
+      { from: 'decisions/_template.md', to: 'docs/decisions/_template.md' },
+      { from: 'decisions/0001-adopt-the-harness.md', to: 'docs/decisions/0001-adopt-the-harness.md', templated: true },
+    ],
+  },
+  glossary: {
+    label: 'a project glossary',
+    files: [{ from: 'glossary.md', to: 'docs/glossary.md' }],
+  },
+  'known-issues': {
+    label: 'a tracked-debt list',
+    files: [{ from: 'known-issues.md', to: 'docs/known-issues.md' }],
+  },
+}
+
 export const EMPTY_GATES = {
   version: 1,
   $comment:
@@ -67,7 +96,7 @@ export const EMPTY_GATES = {
  * @param {{doc: object, detected: object}} input
  * @returns {Promise<Array<{path:string, kind:'file'|'block', body:string, blockId?:string, version?:number}>>}
  */
-export async function buildArtifacts({ doc, detected, adapterIds = null }) {
+export async function buildArtifacts({ doc, detected, adapterIds = null, modules = doc.modules ?? [] }) {
   const out = []
 
   const authority = await generateAuthoritySplit({
@@ -132,6 +161,18 @@ export async function buildArtifacts({ doc, detected, adapterIds = null }) {
         path: join('.claude/commands', rel), kind: 'file',
         body: await readFile(join(TEMPLATE_ROOT, 'adapters/claude/commands', rel), 'utf8'),
       })
+    }
+  }
+
+  for (const id of modules) {
+    const mod = MODULES[id]
+    if (!mod) throw new Error(`Unknown module "${id}". Known: ${Object.keys(MODULES).join(', ')}`)
+    for (const f of mod.files) {
+      let body = await readFile(join(TEMPLATE_ROOT, 'modules', f.from), 'utf8')
+      if (f.templated) {
+        body = render(body, { today: isoDate(doc.generatedAt ? new Date(doc.generatedAt) : new Date()) })
+      }
+      out.push({ path: f.to, kind: 'file', body })
     }
   }
 
