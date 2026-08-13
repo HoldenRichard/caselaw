@@ -227,7 +227,11 @@ export function remove(rawText, id) {
   if (!found.present) return { text: original, action: 'absent' }
 
   let next = text.slice(0, found.start) + text.slice(found.end)
-  next = next.replace(/\n{3,}/g, '\n\n').replace(/^\n+/, '')
+  // Restore the file as closely as possible to how it looked before the block
+  // existed: no leading blank, no run of blanks where the block used to be,
+  // and exactly one trailing newline. An uninstall that leaves a stray blank
+  // line shows up as a diff in someone's next commit for no reason.
+  next = next.replace(/\n{3,}/g, '\n\n').replace(/^\n+/, '').replace(/\n\s*\n+$/, '\n')
   let out = applyEol(next, eol)
   if (bom) out = BOM + out
   return { text: out, action: 'removed', previousInterior: found.interior }

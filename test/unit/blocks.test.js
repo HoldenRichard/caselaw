@@ -209,3 +209,28 @@ describe('text normalization', () => {
     assert.equal(hash('a\r\nb'), hash('a\nb'))
   })
 })
+
+describe('managed blocks — removal restores the file exactly', () => {
+  test('POSITIVE CONTROL: eject leaves no trailing blank line behind', () => {
+    const original = 'node_modules/\n'
+    const withBlock = upsert(original, { id: 'h', body: 'x', version: 1, filePath: '.gitignore' })
+    const after = remove(withBlock.text, 'h')
+    assert.equal(after.text, original,
+      'an uninstall that leaves a stray blank line shows up as a diff in the next commit for no reason')
+  })
+
+  test('a file that was only our block comes back empty, for the caller to delete', () => {
+    const withBlock = upsert('', { id: 'h', body: 'x', version: 1, filePath: '.gitignore' })
+    assert.equal(remove(withBlock.text, 'h').text.trim(), '')
+  })
+
+  test('user content on both sides survives intact', () => {
+    const original = '# Top\n\nprose\n\n## Bottom\n\nmore\n'
+    const withBlock = upsert(original, { id: 'h', body: 'ours', version: 1, filePath: 'CLAUDE.md' })
+    const after = remove(withBlock.text, 'h')
+    assert.match(after.text, /# Top/)
+    assert.match(after.text, /## Bottom/)
+    assert.match(after.text, /more/)
+    assert.doesNotMatch(after.text, /ours/)
+  })
+})

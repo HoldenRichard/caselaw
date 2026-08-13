@@ -25,6 +25,8 @@ import { hash } from '../src/core/text.js'
 import { generate as generateAuthoritySplit } from '../src/generate/authority-split.js'
 import { generate as generateCloseOut } from '../src/generate/close-out.js'
 import { scanMachinePaths } from '../src/core/secrets.js'
+import { buildArtifacts } from '../src/generate/artifacts.js'
+import { check, planUpgrade, planEject, applyEject, doctor, LifecycleError } from '../src/commands/lifecycle.js'
 import { gather } from '../src/audit/gather.js'
 import { runChecks } from '../src/audit/checks.js'
 import { formatReport, toJson, agentPrompt } from '../src/audit/report.js'
@@ -35,6 +37,10 @@ const TEMPLATE_VERSION = '1.0'
 const USAGE = `harness ${CLI_VERSION}
 
   harness init [dir]     interview this project and generate its governance
+  harness check [dir]    CI: are the committed docs still what the answers produce?
+  harness upgrade [dir]  re-render from your answers at the current template
+  harness doctor [dir]   is any of this actually wired up?
+  harness eject [dir]    remove the harness, keep everything you wrote
   harness audit [dir]    is the governance in this repo still true?
   harness detect [dir]   print what Stage 0 sees, and ask nothing
   harness --help
@@ -54,12 +60,121 @@ async function main() {
   switch (args.command) {
     case 'init': return cmdInit(args)
     case 'audit': return cmdAudit(args)
+    case 'check': return cmdCheck(args)
+    case 'upgrade': return cmdUpgrade(args)
+    case 'doctor': return cmdDoctor(args)
+    case 'eject': return cmdEject(args)
     case 'detect': return cmdDetect(args)
     default:
       say(`Unknown command "${args.command}".\n`)
       say(USAGE)
       exit(2)
   }
+}
+
+async function cmdCheck(args) {
+  const root = resolve(args.dir || cwd())
+  const detected = await detect(root)
+  const r = await check({ root, detected, strict: args.strict })
+
+  if (!r.installed) { say('No harness installed here; nothing to check.'); return }
+
+  for (const m of r.missing) say(`  MISSING   ${m.path}`)
+  for (const st of r.stale) say(`  STALE     ${st.path}`)
+  for (const d of r.diverged) say(`  DIVERGED  ${d.path}  ← ${d.reason}`)
+
+  if (r.ok && !r.diverged.length) say('  Up to date. The committed docs are what the answers produce.')
+  else if (r.ok) say(`\n  ${r.diverged.length} file(s) you edited. \`upgrade\` leaves those alone; --strict fails on them.`)
+  else say('\n  Run `harness upgrade` to bring these back in line.')
+
+  if (!r.ok) exit(1)
+}
+
+async function cmdUpgrade(args) {
+  const root = resolve(args.dir || cwd())
+  const detected = await detect(root)
+
+  let planned
+  try {
+    planned = await planUpgrade({ root, detected, force: args.force })
+  } catch (err) {
+    say(`  ${err.message}`)
+    return exit(1)
+  }
+  const { doc, manifest, plan } = planned
+
+  say('')
+  say(formatPlan(plan, { root }))
+  if (args.dryRun) { say('\n  --dry-run: nothing written.'); return }
+  if (plan.summary.willWrite === 0) { say('\n  Already up to date.'); return }
+
+  if (!args.yes) {
+    const prompt = ttyPrompt()
+    try {
+      const okToWrite = await prompt.confirm({ prompt: 'Apply these changes?', default: false })
+      if (okToWrite !== true) { say('  Aborted. Nothing written.'); return exit(1) }
+    } finally { await prompt.close() }
+  }
+
+  await writePlan({ root, plan, manifest, doc })
+  say(`\n  Updated ${plan.summary.willWrite} file(s).`)
+}
+
+async function cmdDoctor(args) {
+  const root = resolve(args.dir || cwd())
+  const r = await doctor({ root })
+  say('')
+  for (const f of r.findings) {
+    const mark = f.status === 'ok' ? '  ok  ' : f.status === 'warn' ? '  warn' : '  FAIL'
+    say(`${mark}  ${f.name.padEnd(13)} ${f.detail}`)
+    if (f.hint && f.status !== 'ok') say(`        ${' '.repeat(13)} ${f.hint}`)
+  }
+  say('')
+  say(r.ok ? '  Wiring looks live.' : '  Something is configured but not working.')
+  if (!r.ok) exit(1)
+}
+
+async function cmdEject(args) {
+  const root = resolve(args.dir || cwd())
+  let plan
+  try {
+    plan = await planEject({ root, purge: args.purge })
+  } catch (err) {
+    say(`  ${err.message}`)
+    return exit(1)
+  }
+
+  say('')
+  say(`  Eject — ${plan.deleteFiles.length} file(s) removed, ${plan.stripBlocks.length} block(s) stripped`)
+  say('')
+  for (const p of plan.deleteFiles) say(`  DELETE  ${p}`)
+  for (const b of plan.stripBlocks) say(`  STRIP   ${b.path}  (block "${b.blockId}", the rest of the file stays)`)
+  for (const l of plan.leaveAlone) say(`  KEEP    ${l.path}  ← ${l.reason}`)
+  if (plan.keptDoctrine.length) {
+    say(`  KEEP    ${plan.keptDoctrine.length} file(s) under docs/  ← your doctrine; readable without this tool`)
+  }
+  say('')
+  if (plan.purge) {
+    say('  --purge: the generated docs go too. This removes governance you wrote.')
+  } else {
+    say('  Everything under docs/ stays — it is your answers as prose, and it does not')
+    say('  need this tool to be useful. What goes is the machinery, so gates stop')
+    say('  running and the hooks stop firing. Use --purge to remove the docs as well.')
+  }
+
+  if (args.dryRun) { say('\n  --dry-run: nothing removed.'); return }
+  if (!args.yes) {
+    const prompt = ttyPrompt()
+    try {
+      const okToGo = await prompt.confirm({ prompt: 'Remove these?', default: false })
+      if (okToGo !== true) { say('  Aborted. Nothing removed.'); return exit(1) }
+    } finally { await prompt.close() }
+  }
+
+  const res = await applyEject({ root, plan })
+  say(`\n  Removed ${res.removed.length}, stripped ${res.stripped.length}.`)
+  if (res.left.length) say(`  Left ${res.left.length} file(s) you had edited.`)
+  for (const f of res.failed) say(`  could not remove ${f.path}: ${f.reason}`)
 }
 
 async function cmdAudit(args) {
@@ -170,6 +285,17 @@ async function finishInit({ root, doc, detected, args, prompt }) {
     }
   }
 
+  await writePlan({ root, plan, manifest, doc })
+
+  say(`\n  Wrote ${plan.summary.willWrite} file(s).`)
+  if (doc.unanswered.length) {
+    say(`  ${doc.unanswered.length} question(s) unanswered — they are marked in the output, not guessed.`)
+  }
+  say('  Read docs/authority-split.md. It is the one your agent should read first.\n')
+}
+
+/** Write an approved plan and record what we wrote. Shared by init and upgrade. */
+async function writePlan({ root, plan, manifest, doc }) {
   for (const e of plan.entries) {
     if (e.action === SKIP || e.action === UNCHANGED) continue
     const abs = join(root, e.path)
@@ -183,128 +309,7 @@ async function finishInit({ root, doc, detected, args, prompt }) {
     })
   }
   await manifestStore.save(root, manifest)
-  await answersStore.save(root, doc)
-
-  say(`\n  Wrote ${plan.summary.willWrite} file(s).`)
-  if (doc.unanswered.length) {
-    say(`  ${doc.unanswered.length} question(s) unanswered — they are marked in the output, not guessed.`)
-  }
-  say('  Read docs/authority-split.md. It is the one your agent should read first.\n')
-}
-
-/** Everything init would write, as artifacts the plan can classify. */
-async function buildArtifacts({ doc, detected }) {
-  const out = []
-
-  const { content } = await generateAuthoritySplit({
-    answers: doc.answers,
-    detected,
-    projectName: doc.project?.name,
-    now: new Date(doc.generatedAt),
-  })
-  out.push({ path: 'docs/authority-split.md', kind: 'file', body: content })
-
-  const closeOut = await generateCloseOut({
-    answers: doc.answers, detected, projectName: doc.project?.name,
-  })
-  out.push({ path: 'docs/close-out.md', kind: 'file', body: closeOut.content })
-
-  // The case-law scaffolding ships verbatim: machinery, never content.
-  // active/ is created EMPTY on purpose and says so; candidates/ are examples
-  // that cannot be adopted without the adopter writing their own Origin.
-  for (const rel of await templateFiles('rules')) {
-    out.push({
-      path: join('docs/rules', rel),
-      kind: 'file',
-      body: await readFile(join(TEMPLATE_ROOT, 'rules', rel), 'utf8'),
-    })
-  }
-
-  const pointer = [
-    '## How work is done here',
-    '',
-    'Read these before planning or editing. They are the authority; this block is a pointer.',
-    '',
-    '- `docs/authority-split.md` — what you can and cannot verify here. Read it first.',
-    '- `docs/rules/active/` — case law. At session start, scan it and load every rule whose',
-    '  Trigger matches this turn. Rules are trigger-scoped, never ambient.',
-    '- `docs/close-out.md` — end a working session with this, including its rule-proposals line.',
-    '',
-    'At any catch with a proven root cause, draft a rule: `harness rule propose "<name>"`.',
-    'You draft; you never ratify. Only a human moves a rule into active/.',
-    '',
-    'Generated by harness. Edit `.harness/answers.json` and re-run, not this block.',
-  ].join('\n')
-
-  for (const target of pointerTargets(detected)) {
-    out.push({ path: target, kind: 'block', blockId: 'pointer', body: pointer, version: 1 })
-  }
-
-  // Adapter commands, only for the agent tools this project actually uses.
-  // Writing a Claude Code command into a repo that has never seen Claude Code
-  // is clutter, and clutter is how a harness starts getting deleted.
-  if (pointerTargets(detected).includes('CLAUDE.md')) {
-    for (const rel of await templateFiles('adapters/claude/commands')) {
-      out.push({
-        path: join('.claude/commands', rel),
-        kind: 'file',
-        body: await readFile(join(TEMPLATE_ROOT, 'adapters/claude/commands', rel), 'utf8'),
-      })
-    }
-  }
-
-  // The gate runner is VENDORED, not depended on: the project keeps working
-  // if this CLI is uninstalled. That is the whole point of `eject`.
-  out.push({
-    path: '.harness/bin/gate.mjs',
-    kind: 'file',
-    body: await readFile(join(RUNTIME_ROOT, 'gate.mjs'), 'utf8'),
-  })
-  out.push({
-    path: '.harness/schema/gates.schema.json',
-    kind: 'file',
-    body: await readFile(join(RUNTIME_ROOT, 'schema/gates.schema.json'), 'utf8'),
-  })
-
-  // An empty gate set, on purpose and said out loud — same reasoning as the
-  // empty rules directory. Gates come from rules; rules come from incidents.
-  out.push({
-    path: '.harness/gates.json',
-    kind: 'file',
-    body: JSON.stringify({
-      version: 1,
-      $comment: 'Empty on purpose. Gates are created by `harness rule promote <name>`, from a rule that earned one. See docs/rules/README.md.',
-      gates: [],
-    }, null, 2) + '\n',
-  })
-
-  // Hook wiring, only where the project already uses Claude Code.
-  if (pointerTargets(detected).includes('CLAUDE.md')) {
-    out.push({
-      path: '.claude/settings.json',
-      kind: 'file',
-      body: JSON.stringify(claudeHookSettings(), null, 2) + '\n',
-    })
-  }
-
-  out.push({
-    path: '.gitignore',
-    kind: 'block',
-    blockId: 'harness',
-    version: 1,
-    body: ['# Local gate telemetry — per-machine, never committed.', '.harness/gate-fires.jsonl'].join('\n'),
-  })
-
-  return out
-}
-
-/** Write to the agent files this project already uses; default to CLAUDE.md. */
-function pointerTargets(detected) {
-  const a = detected.agentConfig || {}
-  const targets = []
-  if (a.claudeMd) targets.push('CLAUDE.md')
-  if (a.agentsMd) targets.push('AGENTS.md')
-  return targets.length ? targets : ['CLAUDE.md']
+  if (doc) await answersStore.save(root, doc)
 }
 
 function renderDetection(d) {
@@ -333,7 +338,7 @@ function summarizeDetection(d) {
 }
 
 function parseArgs(list) {
-  const out = { command: null, dir: null, dryRun: false, yes: false, force: false, help: false, json: false, agent: false }
+  const out = { command: null, dir: null, dryRun: false, yes: false, force: false, help: false, json: false, agent: false, strict: false, purge: false }
   for (const a of list) {
     if (a === '--help' || a === '-h') out.help = true
     else if (a === '--dry-run') out.dryRun = true
@@ -341,6 +346,8 @@ function parseArgs(list) {
     else if (a === '--force') out.force = true
     else if (a === '--json') out.json = true
     else if (a === '--agent') out.agent = true
+    else if (a === '--strict') out.strict = true
+    else if (a === '--purge') out.purge = true
     else if (a.startsWith('-')) { /* ignore unknown flags rather than dying */ }
     else if (!out.command) out.command = a
     else if (!out.dir) out.dir = a
