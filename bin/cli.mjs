@@ -27,6 +27,8 @@ import { generate as generateCloseOut } from '../src/generate/close-out.js'
 import { scanMachinePaths } from '../src/core/secrets.js'
 import { buildArtifacts } from '../src/generate/artifacts.js'
 import { check, planUpgrade, planEject, applyEject, doctor, LifecycleError } from '../src/commands/lifecycle.js'
+import { buildReviewPrompt } from '../src/commands/review.js'
+import { ADAPTERS, selectAdapters } from '../src/adapters/index.js'
 import { gather } from '../src/audit/gather.js'
 import { runChecks } from '../src/audit/checks.js'
 import { formatReport, toJson, agentPrompt } from '../src/audit/report.js'
@@ -42,6 +44,7 @@ const USAGE = `harness ${CLI_VERSION}
   harness doctor [dir]   is any of this actually wired up?
   harness eject [dir]    remove the harness, keep everything you wrote
   harness audit [dir]    is the governance in this repo still true?
+  harness review [dir]   print a review prompt for a DIFFERENT model to run
   harness detect [dir]   print what Stage 0 sees, and ask nothing
   harness --help
 
@@ -64,6 +67,7 @@ async function main() {
     case 'upgrade': return cmdUpgrade(args)
     case 'doctor': return cmdDoctor(args)
     case 'eject': return cmdEject(args)
+    case 'review': return cmdReview(args)
     case 'detect': return cmdDetect(args)
     default:
       say(`Unknown command "${args.command}".\n`)
@@ -195,6 +199,18 @@ async function cmdAudit(args) {
   if (!result.ok) exit(1)
 }
 
+async function cmdReview(args) {
+  const root = resolve(args.dir || cwd())
+  const ctx = await gather(root)
+  say(buildReviewPrompt({
+    root,
+    detected: await detect(root),
+    answers: ctx.answers,
+    rules: ctx.rules,
+    gatesConfig: ctx.gatesConfig,
+  }))
+}
+
 async function cmdDetect(args) {
   const root = resolve(args.dir || cwd())
   const report = await detect(root)
@@ -322,7 +338,7 @@ function renderDetection(d) {
     push(k, d.commands?.[k]?.cmd)
   }
   push('ci', d.ci?.present ? (d.ci.providers || []).join(', ') || 'yes' : null)
-  push('agents', Object.entries(d.agentConfig || {}).filter(([, v]) => v === true).map(([k]) => k).join(', '))
+  push('agents', selectAdapters(d).map((a) => a.label).join(', '))
   push('deploys to', (d.deploySurface || []).map((x) => x.kind).join(', '))
   return rows.length ? '\n' + rows.join('\n') : '\n  (nothing detected)'
 }

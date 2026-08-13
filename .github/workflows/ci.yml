@@ -21,6 +21,9 @@ jobs:
           node-version: ${{ matrix.node }}
       # Zero dependencies, so there is nothing to install. Node's own runner.
       - run: node --test 'test/unit/*.test.js'
+      # The tool must pass its own audit. A governance tool whose own
+      # governance is stale has already lost the argument.
+      - run: node bin/cli.mjs audit .
 
   # The everyday fast blocker: pattern matching over the working tree. The
   # shallow checkout is deliberate — a working-tree scan has no use for history,
