@@ -9,3 +9,8 @@ node_modules/
 
 # Scratch output from dry runs
 caselaw-preview/
+
+# caselaw:begin id=caselaw v=1 hash=9c7b1845a86e3731e281f6d8b1ee6994e6fea968c181d455e794edaa9731148a
+# Local gate telemetry — per-machine, never committed.
+.caselaw/gate-fires.jsonl
+# caselaw:end id=caselaw

@@ -249,3 +249,33 @@ describe('audit — output', () => {
     assert.match(p, /fabricated finding costs more/)
   })
 })
+
+describe('audit — reading git correctly', () => {
+  test('POSITIVE CONTROL: untracked doctrine is named by PATH, not by git prose', async () => {
+    // The bug this closes: the stderr parser captured the text AFTER git's
+    // "did not match any file(s) known to git", producing findings like
+    // "Did you forget to is not tracked by git" — nonsense that still reads
+    // as a real error to anyone skimming a CI log.
+    await put('docs/authority-split.md', '# untracked on purpose\n')
+    await put('CLAUDE.md', '# also untracked\n')
+    // deliberately NOT committed
+
+    const g = await gather(root)
+    const r = runChecks(g)
+    const untracked = r.findings.filter((f) => f.code === 'doctrine-tracked')
+    assert.ok(untracked.length > 0, 'untracked doctrine must be reported')
+    for (const f of untracked) {
+      assert.match(f.message, /^[\w./-]+ is not tracked by git$/,
+        `finding names something that is not a path: "${f.message}"`)
+      assert.doesNotMatch(f.message, /Did you forget|pathspec|error:/,
+        'git prose leaked into the finding instead of the filename')
+    }
+  })
+
+  test('committed doctrine is not reported as untracked', async () => {
+    await put('docs/authority-split.md', '# committed\n')
+    commit()
+    const r = runChecks(await gather(root))
+    assert.ok(!r.findings.some((f) => f.code === 'doctrine-tracked'))
+  })
+})

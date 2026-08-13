@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "templateVersion": "1.0",
+  "project": {
+    "name": "caselaw"
+  },
+  "answers": {
+    "authority.cannot": [
+      "rendered-ui",
+      "prod-data"
+    ],
+    "authority.triage": {
+      "rendered-ui": "physical",
+      "prod-data": "chosen"
+    },
+    "authority.human_proof": "Run the CLI against a real repo and read the generated docs yourself; a suite cannot judge whether a generated sentence is true.",
+    "authority.agent_reach": "It can run the full suite, the self-audit, gitleaks and trufflehog, and install itself into a scratch repo end to end."
+  },
+  "unanswered": [],
+  "detected": {
+    "languages": [
+      {
+        "name": "JavaScript",
+        "files": 49,
+        "pct": 100
+      }
+    ],
+    "buildSystem": "node",
+    "commands": {
+      "test": {
+        "cmd": "npm run test",
+        "source": "package.json:scripts.test"
+      },
+      "lint": null,
+      "format": null,
+      "typecheck": {
+        "cmd": "npm run typecheck",
+        "source": "package.json:scripts.typecheck"
+      },
+      "build": null
+    },
+    "deploySurface": [],
+    "at": "2026-08-13T22:37:42.120Z"
+  },
+  "generatedAt": "2026-08-13T22:37:42.126Z"
+}

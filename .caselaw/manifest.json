@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "cliVersion": "0.1.0",
+  "templateVersion": "1.0",
+  "generatedAt": "2026-08-13T22:37:42.138Z",
+  "entries": {
+    "docs/authority-split.md": {
+      "kind": "file",
+      "hash": "f4e9f1e002694986369dc5b2b0b0f601a46a7150e804fc824fe3d965ec4c4864"
+    },
+    "docs/close-out.md": {
+      "kind": "file",
+      "hash": "e80423773717443301591e414d5b0fec70be2e47e9df2b4ce1fb43b608925963"
+    },
+    "docs/rules/README.md": {
+      "kind": "file",
+      "hash": "c5a675bdc4de16c61de11540a0561fa2d6e013345ba478af6815bb4097db9eaf"
+    },
+    "docs/rules/_template.md": {
+      "kind": "file",
+      "hash": "ef59dabde1f30f837ec65b2578c79cde34f2905dbc4cc58f4d7088e31116158c"
+    },
+    "docs/rules/active/WHY-THIS-IS-EMPTY.md": {
+      "kind": "file",
+      "hash": "097adc1eda0a49b0ebc399aecfe38fd5bf7de7f5ed89695462ab3a254ab1dea9"
+    },
+    "docs/rules/candidates/assertion-before-replace.md": {
+      "kind": "file",
+      "hash": "3669b0959cab43f0c598fea396b1f23f48fb14c988c6d0c5610f89b6e34a954d"
+    },
+    "docs/rules/candidates/config-identity-gate.md": {
+      "kind": "file",
+      "hash": "851d1030ae204fb3d9a5cb00bed15a098478270f7efdb97d11b8db224151b064"
+    },
+    "docs/rules/candidates/one-writer-per-repo.md": {
+      "kind": "file",
+      "hash": "bf2ea952ddc2e584712c9e1d843a97ff013ef386cf1bf7ac80dc2d9b18e84c36"
+    },
+    "docs/rules/candidates/rename-greps-the-tree.md": {
+      "kind": "file",
+      "hash": "7c271c74246813c4b850503f75cf46a82b19889033a861c2dfa0adaaf5a01035"
+    },
+    "docs/rules/candidates/trace-the-premise.md": {
+      "kind": "file",
+      "hash": "cd2caa99650c69b65f716099355798fc0995f55c45b168df609989c502fc504a"
+    },
+    "CLAUDE.md": {
+      "kind": "block",
+      "hash": "3a37a3b7a13529f206a299960e8615764686817e25c473c5acbb7616f7b6d807",
+      "blockId": "pointer"
+    },
+    ".caselaw/bin/gate.mjs": {
+      "kind": "file",
+      "hash": "5321fe6a6601a6f96d5540184c93fc8eee65906049080163b2f149166165fc79"
+    },
+    ".caselaw/schema/gates.schema.json": {
+      "kind": "file",
+      "hash": "42ecc57147da8bbdfdfad43e36916ebaac0ef625cb56120659d1084a763182ce"
+    },
+    ".caselaw/gates.json": {
+      "kind": "file",
+      "hash": "3a827edc6bf290a11fae2df2c823065136dece4c87a6e2a84a62da0929baa1cb"
+    },
+    ".claude/settings.json": {
+      "kind": "file",
+      "hash": "5ca4bfcdd2f8005d8d30b0369d34e3254e80c88758c10a69e1ba44a740816412"
+    },
+    ".claude/commands/close-out.md": {
+      "kind": "file",
+      "hash": "6e0360a0e8f0cc19cb3311c1ef90fd51b8ce8f4caa3ba64e4bb82407a5943d95"
+    },
+    ".gitignore": {
+      "kind": "block",
+      "hash": "9c7b1845a86e3731e281f6d8b1ee6994e6fea968c181d455e794edaa9731148a",
+      "blockId": "caselaw"
+    }
+  }
+}

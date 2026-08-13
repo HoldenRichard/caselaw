@@ -1,0 +1,45 @@
+# Session close-out — caselaw
+
+Copy this at the end of a working session. It exists for one reason: **`docs/rules/active/`
+only fills up if something asks.** Without a standing prompt for rule proposals, the case-law
+system stays empty forever and the rest of this harness is decoration.
+
+Keep it short. A close-out nobody writes is worth less than a rough one they do.
+
+---
+
+## What changed
+
+<!-- One or two lines. What is different in the repo now that wasn't before. -->
+
+## Verified
+
+<!-- One line per check that actually ran. Value — who ran it — what it showed.
+     "Tests pass" is not a verification line; "npm run test — agent — 41 passed, 0 failed" is. -->
+
+-
+
+## Not verified — over to you
+
+<!-- The device/console/production remainder. Anything on this list is a claim
+     nobody has checked yet, so say so plainly rather than implying it is done. -->
+Your project's human-only tier, from `docs/authority-split.md`:
+
+- [ ] see what the UI actually renders
+- [ ] read production datastore state
+
+## Rule proposals
+
+<!-- THE LINE THAT MAKES THIS SYSTEM WORK.
+     Did anything go wrong this session with a root cause you can name?
+     First occurrence: write it down as an observation.
+     Second occurrence: that is a rule — `caselaw rule propose <name>`.
+     Nothing to propose is a perfectly good answer, and the common one. -->
+
+- none
+
+## Still open
+
+<!-- Anything parked, blocked, or deliberately deferred. Future-you reads this first. -->
+
+-

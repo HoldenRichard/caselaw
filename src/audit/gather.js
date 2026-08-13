@@ -160,8 +160,12 @@ async function gatherUntracked(root, paths, notes) {
     const tracked = new Set(stdout.split('\n').map((s) => s.trim()).filter(Boolean))
     return unique.filter((p) => !tracked.has(p))
   } catch (err) {
-    // git exits non-zero when ANY path is untracked, and names them on stderr.
-    const listed = String(err?.stderr || '').matchAll(/did not match any file\(s\) known to git:?\s*'?([^\n']+)/g)
+    // git exits non-zero when ANY path is untracked and names them on stderr as
+    //   error: pathspec 'docs/x.md' did not match any file(s) known to git
+    // The path comes BEFORE the phrase. An earlier version captured what came
+    // after, which yielded findings like "Did you forget to is not tracked by
+    // git" — nonsense that still read as a real error to anyone skimming.
+    const listed = String(err?.stderr || '').matchAll(/pathspec '([^']+)' did not match/g)
     const found = [...listed].map((m) => m[1].trim()).filter(Boolean)
     if (found.length) return found
     notes.push('could not determine which doctrine files are tracked')

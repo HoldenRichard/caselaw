@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "$comment": "Empty on purpose. Gates are created by `caselaw rule promote <name>`, from a rule that earned one. See docs/rules/README.md.",
+  "gates": []
+}
