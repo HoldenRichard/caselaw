@@ -16,6 +16,7 @@ import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { render } from '../render/engine.js'
+import { isoDate, addDays } from '../core/dates.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 export const TEMPLATE_PATH = join(HERE, '../../templates/docs/authority-split.md.tmpl')
@@ -135,11 +136,3 @@ export async function generate(input) {
   return { content: render(template, model), model }
 }
 
-function isoDate(d) {
-  return new Date(d).toISOString().slice(0, 10)
-}
-function addDays(d, n) {
-  const out = new Date(d)
-  out.setDate(out.getDate() + n)
-  return out
-}
