@@ -1,0 +1,69 @@
+# Authority split — {{ project.name }}
+
+Generated {{ generatedAt }} from the install interview.{{# if retestDue }} Boundary re-check due **{{ retestDue }}**.{{/ if }}
+
+This file says who can verify what. It is the difference between "the agent said it works" and
+"someone checked". Regenerate it with `harness upgrade`; edit `.harness/answers.json`, not this file.
+
+## The agent can
+
+{{# each can }}- {{ . }}
+{{/ each }}
+{{^ if can }}_Nothing recorded yet. Re-run the interview and answer the second question._
+{{/ if }}
+
+{{# if physical }}
+## The agent cannot — physical
+
+No process could do these from this machine. They are not policy; they are facts about the world.
+
+{{# each physical }}- **{{ label }}**{{# if note }} — {{ note }}{{/ if }}
+{{/ each }}
+
+{{/ if }}
+{{# if chosen }}
+## The agent cannot — chosen
+
+Technically reachable, deliberately withheld. If one of these ever needs to change, change it
+here first and say why — an undocumented loosening is how a boundary quietly stops existing.
+
+{{# each chosen }}- **{{ label }}**{{# if note }} — {{ note }}{{/ if }}
+{{/ each }}
+
+{{/ if }}
+{{# if unverified }}
+## Unverified boundaries — settle these by {{ retestDue }}
+
+Assumed, never actually tested. This section exists because a silent misconfiguration reads
+exactly like a permanent boundary, and boundaries do not get re-tested. Each row below is a
+belief, not a fact.
+
+| Boundary | Assumed because | Settle it |
+|---|---|---|
+{{# each unverified }}| {{ label }} | {{ assumedBecause }} | {{# if settleCommand }}`{{ settleCommand }}`{{/ if }}{{^ if settleCommand }}_no one-liner — try it by hand once_{{/ if }} |
+{{/ each }}
+
+> Before you accept any line above as permanent, prove it. A boundary you have never tested is
+> a guess that has been promoted to a rule by nothing but time.
+
+{{/ if }}
+{{# if truthSources }}
+## Read/write split for the tools the agent does have
+
+{{# each truthSources }}- **{{ name }}** — {{ access }}
+{{/ each }}
+
+READ freely, without asking. WRITE, DELETE, and DEPLOY never without explicit approval,
+**per action** — not per session, and not per category. A tool that can read and write is not
+a read-only tool that happens to be behaving.
+
+{{/ if }}
+## What a human still has to do
+
+{{# if humanProof }}{{ humanProof }}{{/ if }}{{^ if humanProof }}_Not recorded._{{/ if }}
+
+## Consequence
+
+Code is authoritative for what is committed. Only a human observation is authoritative for what
+is live. Never report a write as persisted, a deploy as landed, or a screen as rendered — report
+what the code does, and name exactly what a human should look at.
