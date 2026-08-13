@@ -1,0 +1,60 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22']
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+      # Zero dependencies, so there is nothing to install. Node's own runner.
+      - run: node --test 'test/unit/*.test.js'
+
+  # The everyday fast blocker: pattern matching over the working tree. The
+  # shallow checkout is deliberate — a working-tree scan has no use for history,
+  # and the contrast with the job below is the point. A pinned image rather than
+  # gitleaks-action, which needs a GITLEAKS_LICENSE secret on org-owned repos; a
+  # public tool must not break the moment someone forks it into an org.
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # --redact is not optional: without it a finding prints the credential
+      # into a build log that anyone can read on a public repo.
+      - name: gitleaks — working tree
+        run: |
+          docker run --rm -v "$PWD:/repo" \
+            ghcr.io/gitleaks/gitleaks:v8.30.1 \
+            dir /repo --no-banner --no-color --redact
+
+  # The pre-public gate: not "does this look like a key" but "is this key still
+  # live". Verified-only, across the entire history.
+  trufflehog:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # LOAD-BEARING. actions/checkout defaults to depth 1, so a "full
+          # history" scan would read one commit, find nothing, and pass — the
+          # single most common way this gate is misconfigured. A green check
+          # that proves nothing is worse than no check.
+          fetch-depth: 0
+      - name: trufflehog — verified secrets, full history
+        run: |
+          docker run --rm -v "$PWD:/repo" \
+            -e GIT_CONFIG_COUNT=1 \
+            -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/repo \
+            ghcr.io/trufflesecurity/trufflehog:3.96.0 \
+            git file:///repo --results=verified --fail --no-update --no-color
