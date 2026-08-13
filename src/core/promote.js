@@ -34,7 +34,7 @@ export const MECHANISABLE = [
     question: 'Is there a string that must always be present?',
     example: 'a licence header; a required frontmatter key',
     scaffold: ({ paths, patterns, message, origin }) => ({
-      kind: 'required-content', paths, required: patterns, message, origin,
+      kind: 'required-content', paths, requires: patterns, message, origin,
     }),
   },
   {
@@ -50,7 +50,7 @@ export const MECHANISABLE = [
     question: 'Does editing one thing require editing another in the same change?',
     example: 'touching the schema requires a migration',
     scaffold: ({ paths, pairedWith, message, origin }) => ({
-      kind: 'paired-edit', paths, pairedWith, message, origin,
+      kind: 'paired-edit', paths, when: paths, require: pairedWith, message, origin,
     }),
   },
   {
@@ -63,8 +63,12 @@ export const MECHANISABLE = [
     kind: 'shell',
     question: 'Is it only checkable by running a command?',
     example: 'a linter or a bespoke script',
-    scaffold: ({ paths, command, message, origin }) => ({
-      kind: 'shell', paths, command, message, origin,
+    scaffold: ({ paths, command, args, message, origin }) => ({
+      // `command` is a bare executable; arguments live in `args`. A command
+      // containing whitespace is rejected at load time rather than failing
+      // later as a missing binary and sending the author looking in the
+      // wrong place.
+      kind: 'shell', paths, command, args, message, origin,
     }),
   },
 ]
@@ -112,6 +116,7 @@ export function buildGate({ rule, kind, answers = {} }) {
       assert: answers.assert,
       pairedWith: answers.pairedWith,
       command: answers.command,
+      args: answers.args,
       message: answers.message || firstSentence(rule.rule),
       origin: rule.file || `docs/rules/active/${rule.name}.md`,
     }),

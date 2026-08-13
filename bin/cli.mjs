@@ -228,6 +228,40 @@ async function buildArtifacts({ doc, detected }) {
     }
   }
 
+  // The gate runner is VENDORED, not depended on: the project keeps working
+  // if this CLI is uninstalled. That is the whole point of `eject`.
+  out.push({
+    path: '.harness/bin/gate.mjs',
+    kind: 'file',
+    body: await readFile(join(RUNTIME_ROOT, 'gate.mjs'), 'utf8'),
+  })
+  out.push({
+    path: '.harness/schema/gates.schema.json',
+    kind: 'file',
+    body: await readFile(join(RUNTIME_ROOT, 'schema/gates.schema.json'), 'utf8'),
+  })
+
+  // An empty gate set, on purpose and said out loud — same reasoning as the
+  // empty rules directory. Gates come from rules; rules come from incidents.
+  out.push({
+    path: '.harness/gates.json',
+    kind: 'file',
+    body: JSON.stringify({
+      version: 1,
+      $comment: 'Empty on purpose. Gates are created by `harness rule promote <name>`, from a rule that earned one. See docs/rules/README.md.',
+      gates: [],
+    }, null, 2) + '\n',
+  })
+
+  // Hook wiring, only where the project already uses Claude Code.
+  if (pointerTargets(detected).includes('CLAUDE.md')) {
+    out.push({
+      path: '.claude/settings.json',
+      kind: 'file',
+      body: JSON.stringify(claudeHookSettings(), null, 2) + '\n',
+    })
+  }
+
   out.push({
     path: '.gitignore',
     kind: 'block',
@@ -288,6 +322,22 @@ function parseArgs(list) {
 }
 
 const TEMPLATE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../templates')
+const RUNTIME_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../runtime')
+
+/**
+ * PreToolUse blocks a bad write before it lands; PostToolUse catches the
+ * structural checks that need the finished file. Both invoke the VENDORED
+ * runner, so the hooks keep working without this CLI installed.
+ */
+function claudeHookSettings() {
+  const cmd = (mode) =>
+    `node "$CLAUDE_PROJECT_DIR/.harness/bin/gate.mjs" --mode ${mode} --host claude --root "$CLAUDE_PROJECT_DIR"`
+  const entry = (mode) => ({
+    matcher: 'Edit|Write|MultiEdit',
+    hooks: [{ type: 'command', command: cmd(mode), timeout: 30 }],
+  })
+  return { hooks: { PreToolUse: [entry('pre')], PostToolUse: [entry('post')] } }
+}
 
 /** Every file under templates/<sub>, as paths relative to that directory. */
 async function templateFiles(sub) {

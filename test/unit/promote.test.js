@@ -89,3 +89,53 @@ describe('promote — the rule keeps its prose', () => {
     assert.equal(enforcementLine('no-em-dash'), 'machine:no-em-dash')
   })
 })
+
+describe('promote — what it generates must be what the runner reads', () => {
+  // The failure this closes: promote.js emitted `required`, `pairedWith` and an
+  // array `command`, none of which the runner reads. Every generated gate
+  // would have loaded, validated, and silently checked nothing — a guardrail
+  // that exists in the config and nowhere else. Authoring and enforcement have
+  // to be tested together or they drift apart in exactly this way.
+  test('POSITIVE CONTROL: every generated gate actually fires in the real runner', async () => {
+    const { evaluate } = await import('../../runtime/gate.mjs')
+    const { mkdtemp, mkdir, writeFile } = await import('node:fs/promises')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+
+    const root = await mkdtemp(join(tmpdir(), 'harness-promote-e2e-'))
+    await mkdir(join(root, 'src'), { recursive: true })
+    await writeFile(join(root, 'src/a.js'), 'const s = "BANNED"\n', 'utf8')
+
+    const { gate, ok } = buildGate({
+      rule: RULE, kind: 'banned-content',
+      answers: { paths: ['src/**'], patterns: [{ literal: 'BANNED', label: 'banned token' }] },
+    })
+    assert.equal(ok, true)
+
+    const r = await evaluate({
+      root, mode: 'all', telemetry: false,
+      config: { version: 1, gates: [{ ...gate, severity: 'block' }] },
+    })
+    assert.equal(r.ok, false, 'a gate built by promote must actually fire in the runner')
+    assert.equal(r.config.problems.filter((p) => p.severity === 'error').length, 0,
+      'and it must load without validation errors')
+  })
+
+  test('POSITIVE CONTROL: required-content uses the field name the runner reads', () => {
+    const { gate } = buildGate({
+      rule: RULE, kind: 'required-content',
+      answers: { paths: ['src/**'], patterns: [{ literal: '@licence', label: 'licence' }] },
+    })
+    assert.ok(gate.requires, 'the runner reads `requires`; `required` would be silently ignored')
+    assert.ok(!('required' in gate))
+  })
+
+  test('POSITIVE CONTROL: paired-edit uses when/require, not paths/pairedWith', () => {
+    const { gate } = buildGate({
+      rule: RULE, kind: 'paired-edit',
+      answers: { paths: ['db/schema.sql'], pairedWith: ['db/migrations/**'] },
+    })
+    assert.deepEqual(gate.when, ['db/schema.sql'])
+    assert.deepEqual(gate.require, ['db/migrations/**'])
+  })
+})

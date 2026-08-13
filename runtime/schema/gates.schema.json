@@ -1,0 +1,215 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/HoldenRichard/harness/runtime/schema/gates.schema.json",
+  "title": "harness gate configuration",
+  "description": "The declarative form of a rule that kept getting violated. Prose rules live in docs/rules/active/; when one is broken often enough it is PROMOTED into a gate here, and runtime/gate.mjs executes it. Nothing consumes this schema yet — it is documentation, and the target for future `harness gate validate`. The authority on behaviour is runtime/gate.mjs and its positive-control tests.",
+  "type": "object",
+  "required": ["version", "gates"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 1,
+      "description": "Config format version. A runtime that does not recognise the version still runs the gate kinds it understands and says so — refusing outright would take out every gate over a version bump."
+    },
+    "gates": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/gate" }
+    }
+  },
+  "$defs": {
+    "glob": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Repo-root-relative glob. Supports **, *, ?, and brace alternation {a,b}. `*` never crosses a `/`, so `*.md` matches only top-level files — write `**/*.md` for any depth. Matching is case-sensitive on every platform so a gate behaves the same on macOS and in Linux CI.",
+      "examples": ["docs/**/*.md", "src/{core,detect}/**/*.js", "generated/**"]
+    },
+    "globs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/glob" }
+    },
+    "pattern": {
+      "type": "object",
+      "description": "One thing to look for. Exactly one of `literal` or `regex`.",
+      "properties": {
+        "literal": { "type": "string", "minLength": 1, "description": "Matched verbatim; regex metacharacters are escaped." },
+        "regex": { "type": "string", "description": "JavaScript regular expression source. The `g` flag is always applied. An invalid regex DEGRADES the gate — it never throws and never silently matches nothing." },
+        "flags": { "type": "string", "pattern": "^[imsu]*$", "description": "Extra regex flags. `g` is implied; `y` is not accepted." },
+        "label": { "type": "string", "description": "Short human name shown in reports and telemetry, e.g. \"home path\"." }
+      },
+      "oneOf": [{ "required": ["literal"] }, { "required": ["regex"] }],
+      "additionalProperties": false
+    },
+    "grandfather": {
+      "type": "object",
+      "description": "Time-boxed permission for one KNOWN violation. `reason` and `expires` are mandatory: an entry without them is a permanent silent exemption, which is indistinguishable from switching the gate off for that string. An expired or malformed entry STOPS SUPPRESSING and is reported — the violation reappearing is the whole point of an expiry.",
+      "required": ["context", "reason", "expires"],
+      "additionalProperties": false,
+      "properties": {
+        "context": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Literal text that must appear NEAR the match for it to be suppressed. Scoping by surrounding context rather than by line number means the exemption survives the file being reformatted, and does not silently widen to cover a new violation that lands on the same line."
+        },
+        "reason": { "type": "string", "minLength": 1, "description": "Why this one is allowed to stay." },
+        "expires": { "type": "string", "format": "date", "description": "ISO date. After it passes the entry suppresses nothing." },
+        "path": { "$ref": "#/$defs/glob", "description": "Optional: restrict the exemption to files matching this glob." },
+        "window": { "type": "integer", "minimum": 0, "default": 160, "description": "Characters either side of the match searched for `context`." }
+      }
+    },
+    "gate": {
+      "type": "object",
+      "required": ["id", "kind", "origin"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "description": "kebab-case. This is the key in .harness/gate-fires.jsonl, so changing it resets the evidence behind a warn -> block promotion."
+        },
+        "kind": { "enum": ["banned-content", "required-content", "cross-file", "file-invariant", "path-scope", "paired-edit", "shell"] },
+        "severity": {
+          "enum": ["warn", "block"],
+          "default": "warn",
+          "description": "Only `block` can fail a run. A new gate is expected to start as `warn` and earn `block` from its fire log, so a missing severity defaults to `warn` rather than being an error."
+        },
+        "paths": {
+          "$ref": "#/$defs/globs",
+          "description": "Files the gate applies to. Omitted means every candidate file. NOTE the inversion for `path-scope`, where these are the FORBIDDEN globs."
+        },
+        "exclude": { "$ref": "#/$defs/globs", "description": "Carve-outs. Always wins over `paths`." },
+        "origin": {
+          "type": "string",
+          "minLength": 1,
+          "description": "REQUIRED. The rule file this gate mechanises, e.g. docs/rules/active/no-machine-paths.md. It is what lets an audit detect an orphaned gate — one nothing asked for and nobody will defend. A gate missing this still RUNS (enforcement beats bookkeeping) but is reported as a config problem in every mode."
+        },
+        "message": { "type": "string", "description": "Shown with every fire. Say what the reader should DO, not that a rule exists." },
+        "modes": {
+          "type": "array",
+          "items": { "enum": ["pre", "post", "staged", "all"] },
+          "description": "Optional. NARROWS the modes this gate runs in; it can never widen them past what the kind can honestly do. Widening would let, say, a file-invariant run in `pre` mode against the pre-edit bytes and return a confident verdict about the wrong file."
+        }
+      },
+      "allOf": [
+        { "if": { "properties": { "kind": { "const": "banned-content" } } }, "then": { "$ref": "#/$defs/bannedContent" } },
+        { "if": { "properties": { "kind": { "const": "required-content" } } }, "then": { "$ref": "#/$defs/requiredContent" } },
+        { "if": { "properties": { "kind": { "const": "cross-file" } } }, "then": { "$ref": "#/$defs/crossFile" } },
+        { "if": { "properties": { "kind": { "const": "file-invariant" } } }, "then": { "$ref": "#/$defs/fileInvariant" } },
+        { "if": { "properties": { "kind": { "const": "path-scope" } } }, "then": { "$ref": "#/$defs/pathScope" } },
+        { "if": { "properties": { "kind": { "const": "paired-edit" } } }, "then": { "$ref": "#/$defs/pairedEdit" } },
+        { "if": { "properties": { "kind": { "const": "shell" } } }, "then": { "$ref": "#/$defs/shell" } }
+      ]
+    },
+
+    "bannedContent": {
+      "description": "Text that must not appear in matching files. Runs in every mode; in `pre` it sees the proposed text before it lands.",
+      "required": ["patterns"],
+      "properties": {
+        "patterns": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/pattern" } },
+        "decode": {
+          "const": "json",
+          "description": "Parse the file as JSON and scan the DECODED strings (and keys) instead of the raw bytes. Without this, \\u2014 in a .json file contains no em dash at the byte level, so a scan for an em dash reports clean — a documented bypass of the gate. Any escape hides the same way. Files that do not parse as JSON DEGRADE rather than passing."
+        },
+        "grandfather": { "type": "array", "items": { "$ref": "#/$defs/grandfather" } }
+      }
+    },
+
+    "requiredContent": {
+      "description": "Content that MUST be present in matching files. In `pre` mode only whole-file writes are checked: an Edit supplies a fragment, and 'this fragment lacks the required string' is true of nearly every edit — a gate that fires on every edit gets switched off within a day. In `all` mode, matching ZERO files is reported as DEGRADED, because a requirement that was never checked is exactly the decorative guardrail this tool exists to prevent.",
+      "required": ["requires"],
+      "properties": {
+        "requires": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/pattern" } },
+        "patterns": { "type": "array", "items": { "$ref": "#/$defs/pattern" }, "description": "Accepted alias for `requires`." }
+      }
+    },
+
+    "crossFile": {
+      "description": "\"These two files must stay in sync\", declaratively. The most valuable kind, for a social reason rather than a technical one: the alternative is a bespoke script per invariant that nobody reviews and nobody deletes when the invariant dies. Any source file that cannot be read or parsed DEGRADES the gate — a half-read list is indistinguishable from a set_equal violation.",
+      "required": ["extract", "assert"],
+      "properties": {
+        "extract": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["name", "file"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string", "minLength": 1, "description": "How `assert` refers to this value set." },
+              "file": { "type": "string", "minLength": 1, "description": "A repo-relative path, or a glob to gather from every matching file." },
+              "pointer": { "type": "string", "description": "RFC 6901 JSON pointer, e.g. \"/gates\". Empty or omitted means the whole document. The file must parse as JSON." },
+              "select": {
+                "enum": ["values", "keys", "self"],
+                "description": "values (default): array elements, or object values. keys: object keys. self: the pointed value as a single item."
+              },
+              "field": { "type": "string", "description": "Project a field out of each selected item. A leading `/` makes it a JSON pointer into the item; otherwise it is a plain key. A missing field yields undefined, which is a real answer the assertions can see." },
+              "regex": { "type": "string", "description": "Alternative to `pointer` for NON-JSON files (Markdown, .env, source). Capture group 1 is the value; without a group the whole match is used. This is what makes \"the version in README.md agrees with package.json\" expressible." },
+              "flags": { "type": "string", "pattern": "^[imsu]*$" }
+            }
+          }
+        },
+        "assert": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": { "enum": ["unique", "set_equal", "subset", "field_agrees", "count"] },
+              "of": { "type": "string", "description": "unique / count: the extract name." },
+              "left": { "type": "string", "description": "set_equal / subset / field_agrees." },
+              "right": { "type": "string" },
+              "key": { "type": "string", "description": "field_agrees: the identity field to join the two sides on. Omit it to compare two SINGLE values directly — the common \"one version string in two files\" case." },
+              "field": { "type": "string", "description": "field_agrees with `key`: the field that must agree for each shared key." },
+              "equals": { "type": "integer" },
+              "min": { "type": "integer" },
+              "max": { "type": "integer" }
+            }
+          }
+        }
+      }
+    },
+
+    "fileInvariant": {
+      "description": "Shape checks on each matching file. At least one assertion is required; a file-invariant that asserts nothing DEGRADES rather than passing.",
+      "properties": {
+        "parses": {
+          "enum": ["json", "yaml"],
+          "description": "`yaml` ALWAYS DEGRADES: the vendored runtime has no dependencies and `node:` has no YAML parser, and guessing at YAML with regexes would produce confident wrong verdicts on anchors, multi-line scalars and flow style. Use a `shell` gate (yq, python) for YAML."
+        },
+        "endsWithNewline": { "type": "boolean" },
+        "maxBytes": { "type": "integer", "minimum": 0 },
+        "requiredFrontmatter": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Top-level keys that must be present AND non-empty in a leading --- block. This is a key-presence scan of unindented `key: value` lines, not a YAML parse; that subset is all this assertion asks about. A file with no frontmatter block at all fires."
+        }
+      }
+    },
+
+    "pathScope": {
+      "description": "Writes under `paths` are refused (generated directories, vendored code, anything a human owns). Note the inversion: here `paths` is the forbidden set and `exclude` carves holes in it. Runs in pre / post / staged. SKIPS in `all` with a stated reason, because a whole-tree scan has no writes to guard and firing on every existing vendored file would be noise, not enforcement.",
+      "required": ["paths"]
+    },
+
+    "pairedEdit": {
+      "description": "If a file matching `when` changed, a file matching `require` must change in the same change set. Runs in `staged` (the index) and `post` (working tree + index + untracked, so the sibling an agent edited earlier in the session counts). SKIPS with a stated reason in `pre` (one proposed write is not a change set) and `all` (no change set at all) — never passes silently, because \"I cannot see the change set\" and \"the pair was edited\" are not the same claim.",
+      "required": ["when", "require"],
+      "properties": {
+        "when": { "$ref": "#/$defs/globs" },
+        "require": { "$ref": "#/$defs/globs" }
+      }
+    },
+
+    "shell": {
+      "description": "The escape hatch. Non-zero exit = fail; a command that NEVER RAN (not installed, not executable, timed out) degrades instead, because \"eslint is missing\" must never be reported as \"your code is broken\". TRUST NOTE: this executes what the config says, so .harness/gates.json is trusted AS CODE and belongs in review like code. There is no shell — `command` and `args` go to execFile as an argument array, so a path with a space or a `;` is an argument, never syntax.",
+      "required": ["command"],
+      "properties": {
+        "command": { "type": "string", "pattern": "^\\S+$", "description": "An executable name or path. Whitespace is REJECTED at load time: \"npm run lint\" would otherwise fail as a missing binary and send the author looking in the wrong place. Put arguments in `args`." },
+        "args": { "type": "array", "items": { "type": "string" } },
+        "passPaths": { "enum": ["args", "none"], "default": "args", "description": "Append the in-scope changed paths to `args`. Batched at `maxPaths` per invocation." },
+        "maxPaths": { "type": "integer", "minimum": 1, "default": 500 },
+        "timeoutMs": { "type": "integer", "minimum": 1, "default": 30000 },
+        "cwd": { "type": "string", "description": "Repo-relative working directory." }
+      }
+    }
+  }
+}
