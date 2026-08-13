@@ -1,6 +1,6 @@
 {
   "name": "harness",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Bootstrap a governance harness into any project: an interview that generates your own rules, gates that earn their teeth, and an audit that keeps it honest.",
   "type": "module",
@@ -8,7 +8,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test test/unit/",
+    "test": "node --test 'test/unit/*.test.js'",
     "typecheck": "tsc --noEmit -p jsconfig.json"
   },
   "files": [
@@ -17,5 +17,8 @@
     "templates",
     "runtime"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "bin": {
+    "harness": "bin/cli.mjs"
+  }
 }
