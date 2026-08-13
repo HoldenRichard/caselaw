@@ -25,4 +25,4 @@ formatter's doing.
 **Enforcement:** memory
 
 ---
-_Candidate, not in force. `harness rule adopt one-writer-per-repo --origin "<your incident>"`._
+_Candidate, not in force. `caselaw rule adopt one-writer-per-repo --origin "<your incident>"`._

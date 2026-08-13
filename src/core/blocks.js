@@ -5,9 +5,9 @@
  * that carry the block id, the template version, and a hash of the interior at
  * the time we wrote it:
  *
- *   <!-- harness:begin id=pointer v=1 hash=1c04… -->
+ *   <!-- caselaw:begin id=pointer v=1 hash=1c04… -->
  *   ...content we own...
- *   <!-- harness:end id=pointer -->
+ *   <!-- caselaw:end id=pointer -->
  *
  * Three rules, each of which exists because of a specific failure mode:
  *
@@ -34,7 +34,7 @@ export const STYLES = {
   slash: { open: '// ', close: '' }, // js, ts, swift, go, rust
 }
 
-const TAG = 'harness'
+const TAG = 'caselaw'
 
 /** Pick a comment style from a file path. */
 export function styleFor(filePath) {

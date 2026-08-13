@@ -277,7 +277,7 @@ export async function detectStack(root, opts = {}, walked = null) {
       warnings.push({
         code: 'nested-manifest',
         message: `No build manifest at the root; found ${nested.path} (${nested.name}) below it.`,
-        hint: 'You may have pointed harness at a parent folder rather than at the project.',
+        hint: 'You may have pointed caselaw at a parent folder rather than at the project.',
       })
     }
   }

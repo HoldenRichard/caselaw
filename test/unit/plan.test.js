@@ -9,7 +9,7 @@ import { hash } from '../../src/core/text.js'
 import { emptyManifest, record } from '../../src/core/manifest.js'
 
 let root
-beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'harness-plan-')) })
+beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'caselaw-plan-')) })
 afterEach(async () => { await rm(root, { recursive: true, force: true }) })
 
 const put = async (rel, content) => {

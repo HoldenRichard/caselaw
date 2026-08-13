@@ -30,7 +30,7 @@
  *   3. Only `severity: "block"` can fail a run. New gates start as `warn` and
  *      earn `block` from the fire log.
  *
- * TRUST NOTE. The `shell` kind executes what `.harness/gates.json` says. That
+ * TRUST NOTE. The `shell` kind executes what `.caselaw/gates.json` says. That
  * file is repo content and an agent can write it, so it is trusted AS CODE and
  * belongs in review like code. Everything else here treats config as data:
  * globs and patterns are compiled, never evaluated, and every child process is
@@ -364,10 +364,10 @@ function runTool(file, args, { cwd, timeoutMs = GIT_TIMEOUT_MS, maxBuffer = 16 *
 // Config
 // ===========================================================================
 
-export const DEFAULT_CONFIG_PATH = '.harness/gates.json'
+export const DEFAULT_CONFIG_PATH = '.caselaw/gates.json'
 
 /**
- * Read and validate `.harness/gates.json`.
+ * Read and validate `.caselaw/gates.json`.
  *
  * Never throws, and never refuses wholesale over one bad entry. Three tiers of
  * config problem, chosen so that a mistake costs you the smallest possible
@@ -413,7 +413,7 @@ export async function loadConfig(root, opts = {}) {
       // No config is a real answer — "this project has no gates yet" — not a
       // degradation. It is still printed, because a runner installed with zero
       // gates is precisely the decorative-guardrail state.
-      return { ...base, reason: `no gate config at ${base.path}`, hint: 'promote a rule with `harness gate add`' }
+      return { ...base, reason: `no gate config at ${base.path}`, hint: 'promote a rule with `caselaw gate add`' }
     }
     return {
       ...base,
@@ -465,7 +465,7 @@ export async function loadConfig(root, opts = {}) {
 
 /**
  * The gate-level half of config loading, callable without a file so an inline
- * config in a test and a real `.harness/gates.json` cannot diverge. Divergence
+ * config in a test and a real `.caselaw/gates.json` cannot diverge. Divergence
  * would mean the tests prove something production does not do — the exact
  * failure mode this whole project is aimed at.
  *
@@ -777,7 +777,7 @@ async function listRepoFiles(root) {
   return walked
 }
 
-const WALK_SKIP_DIRS = new Set(['.git', 'node_modules', '.harness'])
+const WALK_SKIP_DIRS = new Set(['.git', 'node_modules', '.caselaw'])
 
 async function walkTree(root) {
   const files = []
@@ -1718,7 +1718,7 @@ export async function runGate(gate, ctx) {
 // ===========================================================================
 
 /**
- * One JSON line per fire in `.harness/gate-fires.jsonl`.
+ * One JSON line per fire in `.caselaw/gate-fires.jsonl`.
  *
  * This is what makes warn -> block promotion evidence-based: you can say "this
  * gate fired 14 times in three weeks and was never a false positive" instead of
@@ -1732,7 +1732,7 @@ export async function runGate(gate, ctx) {
 export async function recordFires(root, fires, mode, enabled = true) {
   if (!enabled || !Array.isArray(fires) || fires.length === 0) return { written: 0, error: null }
   try {
-    const dir = join(resolve(root), '.harness')
+    const dir = join(resolve(root), '.caselaw')
     await mkdir(dir, { recursive: true })
     const ts = new Date().toISOString()
     const lines =
@@ -1996,7 +1996,7 @@ function blockReason(result) {
     const origin = f.origin ? ` [rule: ${f.origin}]` : ''
     return `${f.gate} (${f.kind}) ${at}: ${f.detail}.${msg}${origin}`
   })
-  return `harness gate blocked this change:\n  ${lines.join('\n  ')}`
+  return `caselaw gate blocked this change:\n  ${lines.join('\n  ')}`
 }
 
 function humanReport(result) {
@@ -2085,7 +2085,7 @@ function parseArgs(argv) {
   return out
 }
 
-const USAGE = `harness gate runner
+const USAGE = `caselaw gate runner
 
   node gate.mjs --mode pre    --host claude   PreToolUse: hook JSON on stdin, exit 2 to block
   node gate.mjs --mode post   --host claude   PostToolUse: re-read from disk, {"decision":"block"} on stdout
@@ -2095,7 +2095,7 @@ const USAGE = `harness gate runner
   --root <dir>      project root (default: cwd)
   --config <path>   gate config (default: ${DEFAULT_CONFIG_PATH})
   --json            machine-readable result instead of the report
-  --no-telemetry    do not append to .harness/gate-fires.jsonl
+  --no-telemetry    do not append to .caselaw/gate-fires.jsonl
 `
 
 /**
@@ -2119,11 +2119,11 @@ export async function main(argv = process.argv.slice(2), io = {}) {
     const mode = args.mode
     if (!MODES.includes(mode)) {
       // Bad invocation is OUR failure, and our failures never block.
-      stderr(`harness gate: --mode must be one of ${MODES.join(', ')} (got ${JSON.stringify(mode ?? null)})\n`)
+      stderr(`caselaw gate: --mode must be one of ${MODES.join(', ')} (got ${JSON.stringify(mode ?? null)})\n`)
       return EXIT.OK
     }
     if (args.host && args.host !== 'claude') {
-      stderr(`harness gate: unknown --host ${JSON.stringify(args.host)}; reading Claude Code hook JSON\n`)
+      stderr(`caselaw gate: unknown --host ${JSON.stringify(args.host)}; reading Claude Code hook JSON\n`)
     }
 
     const common = { root, mode, configPath: args.config ?? undefined, telemetry: args.telemetry }
@@ -2135,7 +2135,7 @@ export async function main(argv = process.argv.slice(2), io = {}) {
     stdout(args.json ? JSON.stringify(result, null, 2) + '\n' : humanReport(result) + '\n')
     return result.blocking.length > 0 ? EXIT.FAILED : EXIT.OK
   } catch (err) {
-    stderr(`harness gate: internal error, no gates enforced (${shortError(err)})\n`)
+    stderr(`caselaw gate: internal error, no gates enforced (${shortError(err)})\n`)
     return EXIT.OK
   }
 }
@@ -2143,11 +2143,11 @@ export async function main(argv = process.argv.slice(2), io = {}) {
 async function runHookMode(mode, common, args, stdout, stderr) {
   const raw = await readStdin()
   if (!raw.ok) {
-    stderr(`harness gate: ${raw.reason}; nothing was checked\n`)
+    stderr(`caselaw gate: ${raw.reason}; nothing was checked\n`)
     return EXIT.OK
   }
   if (!raw.text.trim()) {
-    stderr('harness gate: empty hook payload; nothing was checked\n')
+    stderr('caselaw gate: empty hook payload; nothing was checked\n')
     return EXIT.OK
   }
 
@@ -2155,20 +2155,20 @@ async function runHookMode(mode, common, args, stdout, stderr) {
   try {
     payload = JSON.parse(raw.text)
   } catch (err) {
-    stderr(`harness gate: hook payload is not valid JSON (${shortError(err)}); nothing was checked\n`)
+    stderr(`caselaw gate: hook payload is not valid JSON (${shortError(err)}); nothing was checked\n`)
     return EXIT.OK
   }
 
   const hook = extractHookInput(payload)
   if (!hook.ok) {
-    stderr(`harness gate: ${hook.reason}\n`)
+    stderr(`caselaw gate: ${hook.reason}\n`)
     return EXIT.OK
   }
 
   const root = common.root
   const rel = isAbsolute(hook.path) ? toPosix(relative(root, hook.path)) : toPosix(hook.path)
   if (!rel || rel.startsWith('../')) {
-    stderr(`harness gate: ${hook.path} is outside ${root}; nothing was checked\n`)
+    stderr(`caselaw gate: ${hook.path} is outside ${root}; nothing was checked\n`)
     return EXIT.OK
   }
 
@@ -2206,7 +2206,7 @@ async function runHookMode(mode, common, args, stdout, stderr) {
   if (result.config.degraded) asides.push(`config not usable: ${result.config.reason}`)
   for (const f of result.warnings) asides.push(`warn ${f.gate}: ${f.detail}${f.message ? ` — ${f.message}` : ''}`)
   for (const r of result.degraded) for (const d of r.degradations) asides.push(`degraded ${r.gate}: ${d.reason}`)
-  if (asides.length) stderr(`harness gate (${mode}):\n  ${asides.join('\n  ')}\n`)
+  if (asides.length) stderr(`caselaw gate (${mode}):\n  ${asides.join('\n  ')}\n`)
 
   if (result.blocking.length === 0) return EXIT.OK
 
@@ -2233,7 +2233,7 @@ if (invokedDirectly) {
     (err) => {
       // Unreachable in principle — main() catches everything. If it is ever
       // reached, the answer is still "do not break the workflow".
-      process.stderr.write(`harness gate: unhandled error, no gates enforced (${shortError(err)})\n`)
+      process.stderr.write(`caselaw gate: unhandled error, no gates enforced (${shortError(err)})\n`)
       process.exitCode = EXIT.OK
     },
   )

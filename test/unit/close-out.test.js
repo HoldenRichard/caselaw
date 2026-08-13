@@ -39,7 +39,7 @@ describe('close-out — the handover list is the authority split, not a second l
   test('POSITIVE CONTROL: the rule-proposals prompt is present — it is the whole point', async () => {
     const { content } = await generate(KABU_LIKE)
     assert.match(content, /## Rule proposals/)
-    assert.match(content, /harness rule propose/,
+    assert.match(content, /caselaw rule propose/,
       'without a standing prompt, proposed/ stays empty and the system is decoration')
   })
 
@@ -88,7 +88,7 @@ describe('shipped case-law templates', () => {
   test('the active/ directory ships an explainer rather than a starter pack', async () => {
     const text = await readFile(join(TEMPLATES, 'rules/active/WHY-THIS-IS-EMPTY.md'), 'utf8')
     assert.match(text, /zero ratified rules/)
-    assert.match(text, /harness rule propose/)
+    assert.match(text, /caselaw rule propose/)
   })
 
   test('the README documents the ladder and the retirement rule', async () => {

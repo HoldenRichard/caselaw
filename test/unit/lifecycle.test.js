@@ -13,7 +13,7 @@ import { hash } from '../../src/core/text.js'
 
 let root
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'harness-life-'))
+  root = await mkdtemp(join(tmpdir(), 'caselaw-life-'))
   execFileSync('git', ['init', '-q'], { cwd: root })
 })
 afterEach(async () => { await rm(root, { recursive: true, force: true }) })
@@ -138,7 +138,7 @@ describe('eject', () => {
     await install()
     const plan = await planEject({ root })
 
-    assert.ok(plan.deleteFiles.includes('.harness/bin/gate.mjs'))
+    assert.ok(plan.deleteFiles.includes('.caselaw/bin/gate.mjs'))
     assert.ok(plan.deleteFiles.includes('.claude/settings.json'))
     assert.ok(!plan.deleteFiles.some((p) => p.startsWith('docs/')),
       'docs are the user\'s answers as prose; an uninstall must not destroy them')
@@ -180,8 +180,8 @@ describe('eject', () => {
   test('the harness bookkeeping goes', async () => {
     await install()
     await applyEject({ root, plan: await planEject({ root }) })
-    assert.equal(await exists('.harness/manifest.json'), false)
-    assert.equal(await exists('.harness/answers.json'), false)
+    assert.equal(await exists('.caselaw/manifest.json'), false)
+    assert.equal(await exists('.caselaw/answers.json'), false)
   })
 
   test('POSITIVE CONTROL: ejecting an uninstalled repo is refused', async () => {
@@ -203,7 +203,7 @@ describe('doctor — is any of this actually wired up?', () => {
 
   test('POSITIVE CONTROL: hooks configured with no runner to invoke is a FAIL', async () => {
     await install()
-    await rm(join(root, '.harness/bin/gate.mjs'))
+    await rm(join(root, '.caselaw/bin/gate.mjs'))
     const r = await doctor({ root })
     assert.equal(r.ok, false, 'config that nothing can invoke is the failure this tool exists to prevent')
     assert.ok(r.findings.some((f) => f.name === 'gate runner' && f.status === 'fail'))
@@ -230,7 +230,7 @@ describe('doctor — is any of this actually wired up?', () => {
   test('an uninstalled repo fails clearly rather than pretending', async () => {
     const r = await doctor({ root })
     assert.equal(r.ok, false)
-    assert.match(r.findings[0].hint, /harness init/)
+    assert.match(r.findings[0].hint, /caselaw init/)
   })
 })
 
@@ -259,7 +259,7 @@ describe('the whole round trip', () => {
     assert.match(await readFile(join(root, 'docs/authority-split.md'), 'utf8'), /A different procedure/)
 
     await applyEject({ root, plan: await planEject({ root }) })
-    assert.equal(await exists('.harness/bin/gate.mjs'), false)
+    assert.equal(await exists('.caselaw/bin/gate.mjs'), false)
     assert.equal(await exists('docs/authority-split.md'), true, 'the doctrine outlives the tool')
   })
 })

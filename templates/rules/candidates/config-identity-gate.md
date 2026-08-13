@@ -17,4 +17,4 @@ re-pointed the association. Logged as a near-miss with real deployment consequen
 **Enforcement:** memory
 
 ---
-_Candidate, not in force. `harness rule adopt config-identity-gate --origin "<your incident>"`._
+_Candidate, not in force. `caselaw rule adopt config-identity-gate --origin "<your incident>"`._

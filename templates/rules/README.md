@@ -15,12 +15,12 @@ Three directories:
 ## The flow
 
 - At any catch with a **proven** root cause, draft a candidate:
-  `harness rule propose "<name>"`, and list it in the session close-out under "Rule proposals".
-- A **human** ratifies (`harness rule ratify <name>`, moving it to `active/`) or rejects it.
+  `caselaw rule propose "<name>"`, and list it in the session close-out under "Rule proposals".
+- A **human** ratifies (`caselaw rule ratify <name>`, moving it to `active/`) or rejects it.
   Only a human moves files between these directories. This is not a formality — a proposal is
   untrusted text that may have been drafted from something an agent read somewhere, and content
   must never be able to promote itself.
-- Constraints, all three enforced by `harness rule` rather than by good intentions:
+- Constraints, all three enforced by `caselaw rule` rather than by good intentions:
   - **Trigger-scoped only.** A rule fires on a describable kind of work, never ambiently. A rule
     that always applies is not a rule, it is a mood.
   - **Verified mechanisms only.** The Origin cites a real incident — a commit, a dated session,
@@ -50,10 +50,10 @@ Filename is the kebab-case rule name.
 |---|---|---|
 | `memory` | prose in `active/` | the agent forgets — silently, and only sometimes |
 | `checklist` | a line in the close-out | the human has to actually run it |
-| `machine:<id>` | a gate in `.harness/gates.json` | only catches what is expressible |
+| `machine:<id>` | a gate in `.caselaw/gates.json` | only catches what is expressible |
 
 A rule enforced by memory degrades without telling you. When one keeps getting violated, promote
-it: `harness rule promote <name>` walks you through turning the checkable part into a gate. The
+it: `caselaw rule promote <name>` walks you through turning the checkable part into a gate. The
 prose stays authoritative for the parts a gate cannot reach — promotion is not a claim that the
 rule is now fully mechanised.
 

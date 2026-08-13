@@ -1,7 +1,7 @@
 /**
  * The ladder climber: turning a prose rule into a gate.
  *
- * `harness rule promote <name>` asks what part of the rule is mechanically
+ * `caselaw rule promote <name>` asks what part of the rule is mechanically
  * checkable, builds a gate definition, runs it across the whole tree to see
  * what it would catch TODAY, and only then writes it — as `warn`.
  *

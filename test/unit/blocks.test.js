@@ -7,8 +7,8 @@ describe('managed blocks — creation', () => {
   test('creates a block in an empty file', () => {
     const r = upsert('', { id: 'pointer', body: 'hello', version: 1, style: 'html' })
     assert.equal(r.action, 'created')
-    assert.match(r.text, /harness:begin id=pointer v=1 hash=[0-9a-f]{64}/)
-    assert.match(r.text, /harness:end id=pointer/)
+    assert.match(r.text, /caselaw:begin id=pointer v=1 hash=[0-9a-f]{64}/)
+    assert.match(r.text, /caselaw:end id=pointer/)
     assert.match(r.text, /^hello$/m)
   })
 
@@ -68,7 +68,7 @@ describe('managed blocks — POSITIVE CONTROLS (these must fail)', () => {
   })
 
   test('a begin marker with no end throws', () => {
-    const broken = '<!-- harness:begin id=x v=1 hash=abc -->\nbody\n'
+    const broken = '<!-- caselaw:begin id=x v=1 hash=abc -->\nbody\n'
     assert.throws(
       () => upsert(broken, { id: 'x', body: 'new', version: 1, style: 'html' }),
       (err) => err instanceof BlockError && err.code === 'UNBALANCED',
@@ -76,7 +76,7 @@ describe('managed blocks — POSITIVE CONTROLS (these must fail)', () => {
   })
 
   test('an end marker with no begin throws', () => {
-    const broken = 'body\n<!-- harness:end id=x -->\n'
+    const broken = 'body\n<!-- caselaw:end id=x -->\n'
     assert.throws(
       () => upsert(broken, { id: 'x', body: 'new', version: 1, style: 'html' }),
       (err) => err instanceof BlockError && err.code === 'UNBALANCED',
@@ -84,7 +84,7 @@ describe('managed blocks — POSITIVE CONTROLS (these must fail)', () => {
   })
 
   test('inverted markers throw', () => {
-    const broken = '<!-- harness:end id=x -->\nbody\n<!-- harness:begin id=x v=1 hash=abc -->\n'
+    const broken = '<!-- caselaw:end id=x -->\nbody\n<!-- caselaw:begin id=x v=1 hash=abc -->\n'
     assert.throws(
       () => upsert(broken, { id: 'x', body: 'new', version: 1, style: 'html' }),
       (err) => err instanceof BlockError && err.code === 'INVERTED',
@@ -137,15 +137,15 @@ describe('managed blocks — comment styles', () => {
   test('hash style for .gitignore', () => {
     assert.equal(styleFor('.gitignore'), 'hash')
     assert.equal(styleFor('/repo/.gitignore'), 'hash')
-    const r = upsert('node_modules/\n', { id: 'ign', body: '.harness/bin/', filePath: '.gitignore' })
-    assert.match(r.text, /^# harness:begin id=ign/m)
+    const r = upsert('node_modules/\n', { id: 'ign', body: '.caselaw/bin/', filePath: '.gitignore' })
+    assert.match(r.text, /^# caselaw:begin id=ign/m)
     assert.match(r.text, /^node_modules\/$/m)
   })
 
   test('slash style for source files', () => {
     assert.equal(styleFor('src/App.swift'), 'slash')
     const r = upsert('', { id: 'h', body: 'note', filePath: 'src/App.swift' })
-    assert.match(r.text, /^\/\/ harness:begin id=h/m)
+    assert.match(r.text, /^\/\/ caselaw:begin id=h/m)
   })
 
   test('html style for markdown, and for unknown extensions', () => {
@@ -168,7 +168,7 @@ describe('managed blocks — removal (the eject path)', () => {
     assert.equal(r.action, 'removed')
     assert.match(r.text, /USER TOP/)
     assert.match(r.text, /USER BOTTOM/)
-    assert.doesNotMatch(r.text, /harness:begin/)
+    assert.doesNotMatch(r.text, /caselaw:begin/)
     assert.doesNotMatch(r.text, /ours/)
   })
 

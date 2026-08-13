@@ -12,7 +12,7 @@ import { hash } from '../../src/core/text.js'
 
 let root
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'harness-rules-'))
+  root = await mkdtemp(join(tmpdir(), 'caselaw-rules-'))
 })
 afterEach(async () => {
   await rm(root, { recursive: true, force: true })

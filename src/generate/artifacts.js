@@ -50,7 +50,7 @@ export function pointerTargets(detected) {
  */
 export function claudeHookSettings() {
   const cmd = (mode) =>
-    `node "$CLAUDE_PROJECT_DIR/.harness/bin/gate.mjs" --mode ${mode} --host claude --root "$CLAUDE_PROJECT_DIR"`
+    `node "$CLAUDE_PROJECT_DIR/.caselaw/bin/gate.mjs" --mode ${mode} --host claude --root "$CLAUDE_PROJECT_DIR"`
   const entry = (mode) => ({
     matcher: 'Edit|Write|MultiEdit',
     hooks: [{ type: 'command', command: cmd(mode), timeout: 30 }],
@@ -72,7 +72,7 @@ export const MODULES = {
     files: [
       { from: 'decisions/README.md', to: 'docs/decisions/README.md' },
       { from: 'decisions/_template.md', to: 'docs/decisions/_template.md' },
-      { from: 'decisions/0001-adopt-the-harness.md', to: 'docs/decisions/0001-adopt-the-harness.md', templated: true },
+      { from: 'decisions/0001-adopt-caselaw.md', to: 'docs/decisions/0001-adopt-caselaw.md', templated: true },
     ],
   },
   glossary: {
@@ -88,7 +88,7 @@ export const MODULES = {
 export const EMPTY_GATES = {
   version: 1,
   $comment:
-    'Empty on purpose. Gates are created by `harness rule promote <name>`, from a rule that earned one. See docs/rules/README.md.',
+    'Empty on purpose. Gates are created by `caselaw rule promote <name>`, from a rule that earned one. See docs/rules/README.md.',
   gates: [],
 }
 
@@ -130,15 +130,15 @@ export async function buildArtifacts({ doc, detected, adapterIds = null, modules
   const usesClaude = adapters.some((a) => a.id === 'claude-code')
 
   out.push({
-    path: '.harness/bin/gate.mjs', kind: 'file',
+    path: '.caselaw/bin/gate.mjs', kind: 'file',
     body: await readFile(join(RUNTIME_ROOT, 'gate.mjs'), 'utf8'),
   })
   out.push({
-    path: '.harness/schema/gates.schema.json', kind: 'file',
+    path: '.caselaw/schema/gates.schema.json', kind: 'file',
     body: await readFile(join(RUNTIME_ROOT, 'schema/gates.schema.json'), 'utf8'),
   })
   out.push({
-    path: '.harness/gates.json', kind: 'file',
+    path: '.caselaw/gates.json', kind: 'file',
     body: JSON.stringify(EMPTY_GATES, null, 2) + '\n',
   })
 
@@ -177,8 +177,8 @@ export async function buildArtifacts({ doc, detected, adapterIds = null, modules
   }
 
   out.push({
-    path: '.gitignore', kind: 'block', blockId: 'harness', version: 1,
-    body: ['# Local gate telemetry — per-machine, never committed.', '.harness/gate-fires.jsonl'].join('\n'),
+    path: '.gitignore', kind: 'block', blockId: 'caselaw', version: 1,
+    body: ['# Local gate telemetry — per-machine, never committed.', '.caselaw/gate-fires.jsonl'].join('\n'),
   })
 
   return out

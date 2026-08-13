@@ -263,7 +263,7 @@ export async function scanWorkingTree(root, opts = {}) {
     // gitleaks writes its report to a file, so the findings — full, unredacted
     // secrets — land on disk. mkdtemp creates the directory 0700, and the
     // finally block removes it whatever happens.
-    reportDir = await mkdtemp(join(tmpdir(), 'harness-secrets-'))
+    reportDir = await mkdtemp(join(tmpdir(), 'caselaw-secrets-'))
     const reportPath = join(reportDir, 'gitleaks.json')
 
     const args = [

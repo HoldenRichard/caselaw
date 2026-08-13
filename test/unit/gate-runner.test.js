@@ -21,7 +21,7 @@ import { join } from 'node:path'
 import { evaluate, matchGlob, extractHookInput, EXIT, KINDS } from '../../runtime/gate.mjs'
 
 let root
-beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'harness-gate-')) })
+beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'caselaw-gate-')) })
 afterEach(async () => { await rm(root, { recursive: true, force: true }) })
 
 const put = async (rel, content) => {
@@ -306,8 +306,8 @@ describe('severity and self-failure', () => {
   })
 
   test('POSITIVE CONTROL: an unparseable config does not block', async () => {
-    await mkdir(join(root, '.harness'), { recursive: true })
-    await writeFile(join(root, '.harness/gates.json'), '{ broken', 'utf8')
+    await mkdir(join(root, '.caselaw'), { recursive: true })
+    await writeFile(join(root, '.caselaw/gates.json'), '{ broken', 'utf8')
     const r = await evaluate({ root, mode: 'all', telemetry: false })
     assert.equal(r.ok, true, 'the tool failing must never look like the project failing')
     assert.ok(r.config.degraded, 'and it must say so')

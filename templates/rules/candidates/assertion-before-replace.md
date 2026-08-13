@@ -17,4 +17,4 @@ rewrites landed with zero misplaced edits.
 **Enforcement:** memory
 
 ---
-_Candidate, not in force. `harness rule adopt assertion-before-replace --origin "<your incident>"`._
+_Candidate, not in force. `caselaw rule adopt assertion-before-replace --origin "<your incident>"`._

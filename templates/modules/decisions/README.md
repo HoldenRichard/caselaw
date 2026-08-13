@@ -30,4 +30,4 @@ and future-you will trust it.
 
 <!-- Add each record here. A decision nobody can find is a decision that gets made again. -->
 
-- [0001 — Adopt the harness](0001-adopt-the-harness.md)
+- [0001 — Adopt caselaw](0001-adopt-caselaw.md)

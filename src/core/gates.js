@@ -19,8 +19,8 @@
 import { readFile, writeFile, mkdir, appendFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
-export const GATES_PATH = '.harness/gates.json'
-export const FIRES_PATH = '.harness/gate-fires.jsonl'
+export const GATES_PATH = '.caselaw/gates.json'
+export const FIRES_PATH = '.caselaw/gate-fires.jsonl'
 export const SCHEMA_VERSION = 1
 
 /** Fires a gate must record before `promote` will let it block. */
@@ -194,7 +194,7 @@ export async function promotionStatus(root, gateId, { threshold = PROMOTION_THRE
 
 export async function promote(root, gateId, { force = false, threshold = PROMOTION_THRESHOLD } = {}) {
   const config = await load(root)
-  if (!config) throw new GateError('No .harness/gates.json in this project.', { code: 'NO_CONFIG' })
+  if (!config) throw new GateError('No .caselaw/gates.json in this project.', { code: 'NO_CONFIG' })
 
   const gate = config.gates.find((g) => g.id === gateId)
   if (!gate) throw new GateError(`No gate "${gateId}".`, { code: 'NO_SUCH_GATE' })

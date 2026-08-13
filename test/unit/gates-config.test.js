@@ -9,7 +9,7 @@ import {
 } from '../../src/core/gates.js'
 
 let root
-beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'harness-gates-')) })
+beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'caselaw-gates-')) })
 afterEach(async () => { await rm(root, { recursive: true, force: true }) })
 
 const goodGate = (over = {}) => ({
@@ -84,8 +84,8 @@ describe('gate config — persistence', () => {
   })
 
   test('POSITIVE CONTROL: a future schema version is refused, not guessed at', async () => {
-    await mkdir(join(root, '.harness'), { recursive: true })
-    await writeFile(join(root, '.harness/gates.json'), JSON.stringify({ version: 99, gates: [] }))
+    await mkdir(join(root, '.caselaw'), { recursive: true })
+    await writeFile(join(root, '.caselaw/gates.json'), JSON.stringify({ version: 99, gates: [] }))
     await assert.rejects(() => load(root), (e) => e instanceof GateError && e.code === 'SCHEMA_MISMATCH')
   })
 })
@@ -148,8 +148,8 @@ describe('promotion is earned, not chosen', () => {
   })
 
   test('a corrupt fire log degrades to what is readable rather than crashing', async () => {
-    await mkdir(join(root, '.harness'), { recursive: true })
-    await writeFile(join(root, '.harness/gate-fires.jsonl'), '{"gate":"a"}\nNOT JSON\n{"gate":"a"}\n')
+    await mkdir(join(root, '.caselaw'), { recursive: true })
+    await writeFile(join(root, '.caselaw/gate-fires.jsonl'), '{"gate":"a"}\nNOT JSON\n{"gate":"a"}\n')
     assert.equal((await readFires(root)).length, 2)
   })
 })

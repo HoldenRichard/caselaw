@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 /**
- * harness — bootstrap a governance harness into a project.
+ * caselaw — case law for your codebase.
+ *
+ * Interviews a project, generates its own governance, and enforces the part
+ * that is mechanical.
  *
  * The whole tool obeys the discipline it installs: it detects before it asks,
  * shows the full change set before it writes, refuses to overwrite anything a
@@ -37,17 +40,17 @@ import { formatReport, toJson, agentPrompt } from '../src/audit/report.js'
 const CLI_VERSION = '0.1.0'
 const TEMPLATE_VERSION = '1.0'
 
-const USAGE = `harness ${CLI_VERSION}
+const USAGE = `caselaw ${CLI_VERSION}
 
-  harness init [dir]     interview this project and generate its governance
-  harness check [dir]    CI: are the committed docs still what the answers produce?
-  harness upgrade [dir]  re-render from your answers at the current template
-  harness doctor [dir]   is any of this actually wired up?
-  harness eject [dir]    remove the harness, keep everything you wrote
-  harness audit [dir]    is the governance in this repo still true?
-  harness review [dir]   print a review prompt for a DIFFERENT model to run
-  harness detect [dir]   print what Stage 0 sees, and ask nothing
-  harness --help
+  caselaw init [dir]     interview this project and generate its governance
+  caselaw check [dir]    CI: are the committed docs still what the answers produce?
+  caselaw upgrade [dir]  re-render from your answers at the current template
+  caselaw doctor [dir]   is any of this actually wired up?
+  caselaw eject [dir]    remove the tooling, keep everything you wrote
+  caselaw audit [dir]    is the governance in this repo still true?
+  caselaw review [dir]   print a review prompt for a DIFFERENT model to run
+  caselaw detect [dir]   print what Stage 0 sees, and ask nothing
+  caselaw --help
 
 Options
   --dry-run              build and show the plan, write nothing
@@ -84,7 +87,7 @@ async function cmdCheck(args) {
   const detected = await detect(root)
   const r = await check({ root, detected, strict: args.strict })
 
-  if (!r.installed) { say('No harness installed here; nothing to check.'); return }
+  if (!r.installed) { say('No caselaw install here; nothing to check.'); return }
 
   for (const m of r.missing) say(`  MISSING   ${m.path}`)
   for (const st of r.stale) say(`  STALE     ${st.path}`)
@@ -92,7 +95,7 @@ async function cmdCheck(args) {
 
   if (r.ok && !r.diverged.length) say('  Up to date. The committed docs are what the answers produce.')
   else if (r.ok) say(`\n  ${r.diverged.length} file(s) you edited. \`upgrade\` leaves those alone; --strict fails on them.`)
-  else say('\n  Run `harness upgrade` to bring these back in line.')
+  else say('\n  Run `caselaw upgrade` to bring these back in line.')
 
   if (!r.ok) exit(1)
 }
@@ -223,7 +226,7 @@ async function cmdDetect(args) {
 async function cmdInit(args) {
   const root = resolve(args.dir || cwd())
 
-  say(`\nharness ${CLI_VERSION} — ${root}`)
+  say(`\ncaselaw ${CLI_VERSION} — ${root}`)
   say('Reading the repository before asking you anything…')
   const detected = await detect(root)
   say(renderDetection(detected))
@@ -278,7 +281,7 @@ async function finishInit({ root, doc, detected, args, prompt }) {
     const leaks = scanMachinePaths(a.body)
     if (leaks.length) {
       say(`\n  ! ${a.path} would contain a machine-specific path (${leaks[0].redacted}).`)
-      say('    Refusing to write it. This is the rule the harness ships, applied to itself.')
+      say('    Refusing to write it. This is a rule caselaw ships, applied to itself.')
       return exit(1)
     }
   }
@@ -390,7 +393,7 @@ const RUNTIME_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../runtime')
  */
 function claudeHookSettings() {
   const cmd = (mode) =>
-    `node "$CLAUDE_PROJECT_DIR/.harness/bin/gate.mjs" --mode ${mode} --host claude --root "$CLAUDE_PROJECT_DIR"`
+    `node "$CLAUDE_PROJECT_DIR/.caselaw/bin/gate.mjs" --mode ${mode} --host claude --root "$CLAUDE_PROJECT_DIR"`
   const entry = (mode) => ({
     matcher: 'Edit|Write|MultiEdit',
     hooks: [{ type: 'command', command: cmd(mode), timeout: 30 }],
@@ -413,7 +416,7 @@ async function templateFiles(sub) {
 const say = (s) => stdout.write(s + '\n')
 
 main().catch((err) => {
-  say(`\nharness failed: ${err.message}`)
-  if (process.env.HARNESS_DEBUG) say(String(err.stack))
+  say(`\ncaselaw failed: ${err.message}`)
+  if (process.env.CASELAW_DEBUG) say(String(err.stack))
   exit(1)
 })

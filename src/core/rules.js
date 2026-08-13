@@ -409,7 +409,7 @@ export function validateRule(parsed, opts = {}) {
         'origin-unverified',
         ratifying ? 'error' : 'warn',
         'This candidate carries no Origin of your own.',
-        'Adopt it with your own incident: `harness rule adopt <name> --origin "<what happened here>"`.',
+        'Adopt it with your own incident: `caselaw rule adopt <name> --origin "<what happened here>"`.',
       )
     } else {
       add('missing-section', 'error', '**Origin:** is missing or empty.', 'Cite the incident that proved this rule — a commit SHA, a dated session, an issue.')
@@ -854,7 +854,7 @@ export async function adopt(root, name, opts = {}) {
  */
 const ADOPTED_FOOTER =
   '---\n' +
-  "_Adopted from the harness candidate set. The upstream Origin above is that project's_\n" +
+  "_Adopted from the caselaw candidate set. The upstream Origin above is that project's_\n" +
   '_evidence, not yours._'
 
 // ---------------------------------------------------------------------------

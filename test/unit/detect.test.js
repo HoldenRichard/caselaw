@@ -17,14 +17,14 @@ import { detectEnvironment, detectVisibility } from '../../src/detect/environmen
  * shell-out on purpose — the point of a positive control is that the failure
  * path is exercised, not merely believed in.
  */
-const MISSING_BIN = 'harness-nonexistent-binary-9f3a'
+const MISSING_BIN = 'caselaw-nonexistent-binary-9f3a'
 
 /** Never let a test reach the network or a real Xcode/gh install. */
 const OFFLINE = { gh: false, xcode: false, timeoutMs: 8000 }
 
 let root
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'harness-detect-'))
+  root = await mkdtemp(join(tmpdir(), 'caselaw-detect-'))
 })
 afterEach(async () => {
   await rm(root, { recursive: true, force: true })
@@ -581,11 +581,11 @@ describe('detect/environment', () => {
     assert.equal(environment.agentConfig.existingHarness, false)
   })
 
-  test('an existing .harness/manifest.json marks this an upgrade, not a fresh install', async () => {
-    await put('.harness/manifest.json', '{"schemaVersion":1,"entries":{}}')
+  test('an existing .caselaw/manifest.json marks this an upgrade, not a fresh install', async () => {
+    await put('.caselaw/manifest.json', '{"schemaVersion":1,"entries":{}}')
     const { environment } = await detectEnvironment(root, OFFLINE, {})
     assert.equal(environment.agentConfig.existingHarness, true)
-    assert.ok(environment.agentConfig.files.includes('.harness/manifest.json'))
+    assert.ok(environment.agentConfig.files.includes('.caselaw/manifest.json'))
   })
 
   test('hook frameworks are told apart', async () => {
@@ -786,7 +786,7 @@ describe('detect() — the full report', () => {
 
   test('the upgrade path is distinguishable from a fresh install', async () => {
     await nodeApp()
-    await put('.harness/manifest.json', '{"schemaVersion":1,"entries":{}}')
+    await put('.caselaw/manifest.json', '{"schemaVersion":1,"entries":{}}')
     const r = await detect(root, OFFLINE)
     assert.equal(r.agentConfig.existingHarness, true)
   })

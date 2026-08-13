@@ -10,7 +10,7 @@ import { formatReport, toJson, agentPrompt } from '../../src/audit/report.js'
 
 let root
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'harness-audit-'))
+  root = await mkdtemp(join(tmpdir(), 'caselaw-audit-'))
   execFileSync('git', ['init', '-q'], { cwd: root })
 })
 afterEach(async () => { await rm(root, { recursive: true, force: true }) })
@@ -186,8 +186,8 @@ Generated 2026-08-13. Boundary re-check due **2026-09-12**.
   })
 
   test('a root-relative backticked path is not reported as broken', async () => {
-    await put('.harness/answers.json', '{}')
-    await put('docs/authority-split.md', 'edit `.harness/answers.json`, not this file')
+    await put('.caselaw/answers.json', '{}')
+    await put('docs/authority-split.md', 'edit `.caselaw/answers.json`, not this file')
     commit()
     const g = await gather(root)
     const r = runChecks(g)

@@ -132,7 +132,7 @@ async function gatherRefs(root, docTexts) {
       if (clean.startsWith('~')) continue // home-relative, not a repo path
       // Two conventions live side by side in these documents: a markdown
       // link is relative to the file containing it, while a backticked path
-      // like `.harness/answers.json` is written repo-root-relative. Resolving
+      // like `.caselaw/answers.json` is written repo-root-relative. Resolving
       // only one way flags every instance of the other as broken. A reference
       // counts as resolved if EITHER reading finds a real file — a false
       // "broken link" teaches people to ignore this check, and an ignored
@@ -212,7 +212,7 @@ async function gatherStaleCommands(root, answers, docTexts) {
     if (!entry?.cmd) continue
     if (!entry.cmd.startsWith('npm ')) continue // only npm is cheaply verifiable
     if (!declared.has(entry.cmd)) {
-      out.push({ cmd: entry.cmd, from: '.harness/answers.json' })
+      out.push({ cmd: entry.cmd, from: '.caselaw/answers.json' })
     }
   }
   return out

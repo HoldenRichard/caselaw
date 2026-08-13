@@ -21,7 +21,7 @@ wrong this session with a root cause you can actually name?
 - First occurrence of something → note it as an observation, not a rule. One event is not
   yet a pattern.
 - Second occurrence of the same class → that is a rule. Run
-  `harness rule propose <kebab-name>` and fill in the Trigger, the Rule, and — mandatory —
+  `caselaw rule propose <kebab-name>` and fill in the Trigger, the Rule, and — mandatory —
   the Origin: the specific commit, session, or issue that proved it.
 
 You draft proposals. You never ratify them. Moving a rule into `docs/rules/active/` is a

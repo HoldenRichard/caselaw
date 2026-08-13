@@ -1,6 +1,6 @@
 # This directory is empty on purpose
 
-`harness` ships **zero ratified rules**.
+`caselaw` ships **zero ratified rules**.
 
 Every rule in a case-law system exists because something specific went wrong in a
 specific codebase. Handing you a starter pack of other people's rules would give
@@ -15,7 +15,7 @@ When an agent gets something wrong here and you can name the root cause, that is
 rule. Draft it:
 
 ```
-harness rule propose no-schema-edits-without-a-migration
+caselaw rule propose no-schema-edits-without-a-migration
 ```
 
 Then ratify it yourself once the Origin is real. Watch one number: **how long
@@ -30,7 +30,7 @@ universal enough to be worth reading, and they are **not in force**. Adopting on
 requires writing your own Origin:
 
 ```
-harness rule adopt trace-the-premise --origin "PR #418: built against a spec line that did not exist"
+caselaw rule adopt trace-the-premise --origin "PR #418: built against a spec line that did not exist"
 ```
 
 That requirement is the point. If you cannot name a time it bit you, you do not

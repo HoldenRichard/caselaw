@@ -199,5 +199,5 @@ export function render(template, data, opts = {}) {
   return out.join('')
 }
 
-/** Expose for tests and for a `harness doctor` template lint. */
+/** Expose for tests and for a `caselaw doctor` template lint. */
 export { parse }

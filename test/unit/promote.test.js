@@ -102,7 +102,7 @@ describe('promote — what it generates must be what the runner reads', () => {
     const { tmpdir } = await import('node:os')
     const { join } = await import('node:path')
 
-    const root = await mkdtemp(join(tmpdir(), 'harness-promote-e2e-'))
+    const root = await mkdtemp(join(tmpdir(), 'caselaw-promote-e2e-'))
     await mkdir(join(root, 'src'), { recursive: true })
     await writeFile(join(root, 'src/a.js'), 'const s = "BANNED"\n', 'utf8')
 

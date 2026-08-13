@@ -166,7 +166,7 @@ export async function detectEnvironment(root, opts = {}, ctx = {}) {
   ac.windsurfRules = mark(fileSet.has('.windsurfrules'), '.windsurfrules')
   // Fresh install vs upgrade. This one changes what the CLI does next, so it
   // is checked on disk rather than inferred from a possibly truncated walk.
-  ac.existingHarness = mark(await isFile(join(root, '.harness/manifest.json')), '.harness/manifest.json')
+  ac.existingHarness = mark(await isFile(join(root, '.caselaw/manifest.json')), '.caselaw/manifest.json')
 
   // --- deploy surface ------------------------------------------------------
   const byKind = new Map()

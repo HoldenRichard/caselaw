@@ -135,7 +135,7 @@ export const CHECKS = [
         `${total} active rule(s): ${by.machine} machine (${pct(by.machine)}%), ` +
         `${by.checklist} checklist, ${by.memory} memory`, {
           hint: by.memory > 0
-            ? `${by.memory} rule(s) rest on model memory, which degrades silently. \`harness rule promote <name>\` builds a gate.`
+            ? `${by.memory} rule(s) rest on model memory, which degrades silently. \`caselaw rule promote <name>\` builds a gate.`
             : undefined,
           data: { total, ...by },
         })]
@@ -204,7 +204,7 @@ export const CHECKS = [
     run({ answers }) {
       return (answers?.unanswered || []).map((u) =>
         finding('open-questions', SEVERITY.WARN, `unanswered: ${u.prompt}`, {
-          hint: `It is marked as a hole in ${(u.generates || []).join(', ') || 'the generated docs'} rather than guessed at. Answer it with \`harness init --reconfigure\`.`,
+          hint: `It is marked as a hole in ${(u.generates || []).join(', ') || 'the generated docs'} rather than guessed at. Answer it with \`caselaw init --reconfigure\`.`,
         }),
       )
     },
@@ -238,7 +238,7 @@ export const CHECKS = [
         .map((g) =>
           finding('gates-earned', SEVERITY.INFO,
             `gate "${g.id}" has fired ${fireCounts[g.id]} times and is still only warning`, {
-              hint: `\`harness gate promote ${g.id}\` — it has the evidence.`,
+              hint: `\`caselaw gate promote ${g.id}\` — it has the evidence.`,
             }),
         )
     },
@@ -337,8 +337,8 @@ export const CHECKS = [
             : `${d.path} is recorded as generated but is missing`, {
             path: d.path,
             hint: d.kind === 'modified'
-              ? 'Fine if deliberate — but `harness upgrade` will not touch it, so the change will not survive a template update.'
-              : 'Re-run `harness init` to restore it, or `harness eject` if you meant to remove the harness.',
+              ? 'Fine if deliberate — but `caselaw upgrade` will not touch it, so the change will not survive a template update.'
+              : 'Re-run `caselaw init` to restore it, or `caselaw eject` if you meant to remove caselaw.',
           }),
       )
     },

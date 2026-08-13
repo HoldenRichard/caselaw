@@ -4,8 +4,8 @@ node_modules/
 
 # Local gate telemetry — fire counts that justify advisory→blocking promotion.
 # Operational, per-machine, never committed.
-.harness/gate-fires.jsonl
-.harness/.gate-stats.json
+.caselaw/gate-fires.jsonl
+.caselaw/.gate-stats.json
 
 # Scratch output from dry runs
-harness-preview/
+caselaw-preview/

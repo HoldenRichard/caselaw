@@ -1,5 +1,5 @@
 /**
- * `harness review --emit` — a review prompt for a DIFFERENT model.
+ * `caselaw review --emit` — a review prompt for a DIFFERENT model.
  *
  * The source methodology runs one review deliberately on another model family,
  * on the reasoning that same-model review shares the same blind spots: the

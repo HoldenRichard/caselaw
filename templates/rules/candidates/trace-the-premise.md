@@ -19,6 +19,6 @@ the correct fix was contrast, not hit area.
 **Enforcement:** memory
 
 ---
-_Candidate, not in force. `harness rule adopt trace-the-premise --origin "<your incident>"`._
+_Candidate, not in force. `caselaw rule adopt trace-the-premise --origin "<your incident>"`._
 _You must supply your own Origin: inheriting someone else's evidence is the cargo-culting
 this system exists to prevent._

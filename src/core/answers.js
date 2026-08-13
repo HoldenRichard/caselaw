@@ -15,7 +15,7 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
-export const ANSWERS_PATH = '.harness/answers.json'
+export const ANSWERS_PATH = '.caselaw/answers.json'
 export const SCHEMA_VERSION = 1
 
 export function emptyAnswers({ templateVersion = '1.0', project = {} } = {}) {
@@ -36,7 +36,7 @@ export async function load(root) {
     if (parsed.schemaVersion !== SCHEMA_VERSION) {
       throw new AnswersError(
         `answers.json is schema v${parsed.schemaVersion}, this CLI speaks v${SCHEMA_VERSION}. ` +
-          `Run \`harness upgrade\` — refusing to act on a shape I do not understand.`,
+          `Run \`caselaw upgrade\` — refusing to act on a shape I do not understand.`,
         { code: 'SCHEMA_MISMATCH' },
       )
     }
@@ -61,7 +61,7 @@ export async function save(root, doc) {
  * asked, and different again from an answer of "none". Generators render it as
  * a visible hole; the audit reports it. A confident generated lie is worse.
  */
-export const SKIPPED = Symbol.for('harness.skipped')
+export const SKIPPED = Symbol.for('caselaw.skipped')
 
 export function setAnswer(doc, id, value, { question } = {}) {
   if (value === SKIPPED) {

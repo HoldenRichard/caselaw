@@ -64,7 +64,7 @@ describe('adapters — the support list is the test list', () => {
 const GOLDEN = {
   'claude-code': { path: 'CLAUDE.md', kind: 'block', blockId: 'pointer' },
   'agents-md': { path: 'AGENTS.md', kind: 'block', blockId: 'pointer' },
-  cursor: { path: '.cursor/rules/harness.mdc', kind: 'file' },
+  cursor: { path: '.cursor/rules/caselaw.mdc', kind: 'file' },
   copilot: { path: '.github/copilot-instructions.md', kind: 'block', blockId: 'pointer' },
 }
 
@@ -139,7 +139,7 @@ describe('adapters — command collisions', () => {
 describe('adapters — end to end through buildArtifacts', () => {
   let root
   const setup = async () => {
-    root = await mkdtemp(join(tmpdir(), 'harness-adapters-'))
+    root = await mkdtemp(join(tmpdir(), 'caselaw-adapters-'))
     return root
   }
 
@@ -151,7 +151,7 @@ describe('adapters — end to end through buildArtifacts', () => {
       doc, detected: detectedWith({ cursorRules: true, agentsMd: true }),
     })
     const paths = arts.map((a) => a.path)
-    assert.ok(paths.includes('.cursor/rules/harness.mdc'))
+    assert.ok(paths.includes('.cursor/rules/caselaw.mdc'))
     assert.ok(paths.includes('AGENTS.md'))
     assert.ok(!paths.includes('CLAUDE.md'))
     assert.ok(!paths.some((p) => p.startsWith('.claude/')),
@@ -258,14 +258,14 @@ describe('optional modules', () => {
 
   test('POSITIVE CONTROL: the seed ADR renders a real date, never a placeholder', async () => {
     const arts = await buildArtifacts({ doc: doc(), detected: detectedWith({ claudeMd: true }), modules: ['decisions'] })
-    const adr = arts.find((a) => a.path.endsWith('0001-adopt-the-harness.md'))
+    const adr = arts.find((a) => a.path.endsWith('0001-adopt-caselaw.md'))
     assert.match(adr.body, /\*\*Date:\*\* 2026-08-13/)
     assert.doesNotMatch(adr.body, /\{\{/, 'an unrendered template token would ship to the user')
   })
 
   test('the ADR records the costs it accepts, not only the benefits', async () => {
     const arts = await buildArtifacts({ doc: doc(), detected: detectedWith({ claudeMd: true }), modules: ['decisions'] })
-    const adr = arts.find((a) => a.path.endsWith('0001-adopt-the-harness.md'))
+    const adr = arts.find((a) => a.path.endsWith('0001-adopt-caselaw.md'))
     assert.match(adr.body.replace(/\s+/g, ' '), /Costs accepted knowingly/,
       'a decision record listing only benefits is marketing')
   })

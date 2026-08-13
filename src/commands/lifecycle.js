@@ -83,7 +83,7 @@ export async function check({ root, detected, strict = false }) {
  */
 export async function planUpgrade({ root, detected, force = false }) {
   const doc = await answersStore.load(root)
-  if (!doc) throw new LifecycleError('No .harness/answers.json here. Run `harness init` first.', { code: 'NOT_INSTALLED' })
+  if (!doc) throw new LifecycleError('No .caselaw/answers.json here. Run `caselaw init` first.', { code: 'NOT_INSTALLED' })
 
   const artifacts = await buildArtifacts({ doc, detected })
   const manifest = (await manifestStore.load(root)) ?? manifestStore.emptyManifest()
@@ -119,7 +119,7 @@ function cmpVersion(a, b) {
  */
 export async function planEject({ root, purge = false }) {
   const manifest = await manifestStore.load(root)
-  if (!manifest) throw new LifecycleError('Nothing to eject — no .harness/manifest.json here.', { code: 'NOT_INSTALLED' })
+  if (!manifest) throw new LifecycleError('Nothing to eject — no .caselaw/manifest.json here.', { code: 'NOT_INSTALLED' })
 
   const reconciliation = await manifestStore.reconcile(root, manifest, { locate })
   const raw = manifestStore.ejectPlan(manifest, reconciliation)
@@ -136,7 +136,7 @@ export async function planEject({ root, purge = false }) {
   const keptDoctrine = purge ? [] : raw.deleteFiles.filter(isDoctrine)
   const deleteFiles = purge ? raw.deleteFiles : raw.deleteFiles.filter((p) => !isDoctrine(p))
 
-  const bookkeeping = ['.harness/answers.json', '.harness/manifest.json']
+  const bookkeeping = ['.caselaw/answers.json', '.caselaw/manifest.json']
   return { manifest, reconciliation, ...raw, deleteFiles, keptDoctrine, bookkeeping, purge }
 }
 
@@ -197,15 +197,15 @@ export async function doctor({ root }) {
 
   const answers = await answersStore.load(root).catch(() => null)
   if (!answers) {
-    bad('installed', 'no .harness/answers.json', 'Run `harness init`.')
+    bad('installed', 'no .caselaw/answers.json', 'Run `caselaw init`.')
     return { findings, ok: false }
   }
   ok('installed', `answers.json, template ${answers.templateVersion}`)
 
   // The vendored runner must exist AND execute.
-  const runner = join(root, '.harness/bin/gate.mjs')
+  const runner = join(root, '.caselaw/bin/gate.mjs')
   if (!(await exists(runner))) {
-    bad('gate runner', '.harness/bin/gate.mjs is missing', 'Run `harness upgrade` to restore it.')
+    bad('gate runner', '.caselaw/bin/gate.mjs is missing', 'Run `caselaw upgrade` to restore it.')
   } else {
     try {
       await pExecFile(process.execPath, [runner, '--mode', 'all', '--root', root], { timeout: 20000 })
@@ -247,7 +247,7 @@ export async function doctor({ root }) {
     else {
       const { ok: valid, problems } = gatesStore.validateConfig(gates)
       if (valid) ok('gates', `${gates.gates.length} gate(s), config valid`)
-      else bad('gates', `${problems.filter((p) => p.severity === 'error').length} config error(s)`, 'Run `harness audit` for detail.')
+      else bad('gates', `${problems.filter((p) => p.severity === 'error').length} config error(s)`, 'Run `caselaw audit` for detail.')
     }
   } catch (err) {
     bad('gates', err.message, 'A gates.json that does not parse means no gate runs at all.')

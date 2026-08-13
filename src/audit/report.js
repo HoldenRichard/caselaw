@@ -15,11 +15,11 @@ export function formatReport(result, ctx, { color = false } = {}) {
   const dim = (s) => (color ? `\x1b[2m${s}\x1b[0m` : s)
   const bold = (s) => (color ? `\x1b[1m${s}\x1b[0m` : s)
 
-  lines.push(bold(`harness audit — ${ctx.projectName || ctx.root}`))
+  lines.push(bold(`caselaw audit — ${ctx.projectName || ctx.root}`))
   lines.push('')
   if (!ctx.installed) {
-    lines.push(dim('  No harness installed here — running only the checks that do not need one.'))
-    lines.push(dim('  `harness init` to get the rest.'))
+    lines.push(dim('  No caselaw install here — running only the checks that do not need one.'))
+    lines.push(dim('  `caselaw init` to get the rest.'))
     lines.push('')
   }
 

@@ -11,7 +11,7 @@ import { hash } from '../../src/core/text.js'
 
 let root
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'harness-manifest-'))
+  root = await mkdtemp(join(tmpdir(), 'caselaw-manifest-'))
 })
 afterEach(async () => {
   await rm(root, { recursive: true, force: true })
@@ -39,9 +39,9 @@ describe('manifest — persistence', () => {
   })
 
   test('POSITIVE CONTROL: a future schema version is refused, not guessed at', async () => {
-    await mkdir(join(root, '.harness'), { recursive: true })
+    await mkdir(join(root, '.caselaw'), { recursive: true })
     await writeFile(
-      join(root, '.harness/manifest.json'),
+      join(root, '.caselaw/manifest.json'),
       JSON.stringify({ schemaVersion: 99, entries: {} }),
       'utf8',
     )
@@ -52,8 +52,8 @@ describe('manifest — persistence', () => {
   })
 
   test('POSITIVE CONTROL: malformed JSON is refused', async () => {
-    await mkdir(join(root, '.harness'), { recursive: true })
-    await writeFile(join(root, '.harness/manifest.json'), '{ not json', 'utf8')
+    await mkdir(join(root, '.caselaw'), { recursive: true })
+    await writeFile(join(root, '.caselaw/manifest.json'), '{ not json', 'utf8')
     await assert.rejects(
       () => load(root),
       (e) => e instanceof ManifestError && e.code === 'UNREADABLE',

@@ -20,7 +20,7 @@ import { readFile, writeFile, mkdir, stat } from 'node:fs/promises'
 import { dirname, join, relative, sep } from 'node:path'
 import { hash } from './text.js'
 
-export const MANIFEST_PATH = '.harness/manifest.json'
+export const MANIFEST_PATH = '.caselaw/manifest.json'
 export const SCHEMA_VERSION = 1
 
 export function emptyManifest({ cliVersion = '0.0.0', templateVersion = '0' } = {}) {
@@ -41,7 +41,7 @@ export async function load(root) {
     if (parsed.schemaVersion !== SCHEMA_VERSION) {
       throw new ManifestError(
         `Manifest schema v${parsed.schemaVersion} is not v${SCHEMA_VERSION}. ` +
-          `Run \`harness upgrade\` — refusing to act on a manifest shape I do not understand.`,
+          `Run \`caselaw upgrade\` — refusing to act on a manifest shape I do not understand.`,
         { code: 'SCHEMA_MISMATCH', found: parsed.schemaVersion },
       )
     }

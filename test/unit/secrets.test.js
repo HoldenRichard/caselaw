@@ -37,7 +37,7 @@ before(async () => {
 })
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'harness-secrets-test-'))
+  root = await mkdtemp(join(tmpdir(), 'caselaw-secrets-test-'))
 })
 
 afterEach(async () => {
@@ -325,7 +325,7 @@ describe('probeScanners', () => {
 
   test('POSITIVE CONTROL: a binary that does not exist probes as null', async () => {
     const p = await probeScanners({
-      bins: { gitleaks: 'harness-no-such-gitleaks', trufflehog: 'harness-no-such-trufflehog' },
+      bins: { gitleaks: 'caselaw-no-such-gitleaks', trufflehog: 'caselaw-no-such-trufflehog' },
     })
     assert.equal(p.gitleaks, null)
     assert.equal(p.trufflehog, null)
@@ -355,7 +355,7 @@ describe('probeScanners', () => {
 
 describe('scanWorkingTree — degradation', () => {
   test('POSITIVE CONTROL: an unavailable tool degrades, succeeds, and does not throw', async () => {
-    const r = await scanWorkingTree(root, { bin: 'harness-no-such-gitleaks' })
+    const r = await scanWorkingTree(root, { bin: 'caselaw-no-such-gitleaks' })
     assert.equal(r.ok, true, 'a missing tool must never block')
     assert.equal(r.degraded, true, 'a missing tool must never look like a clean scan')
     assert.deepEqual(r.findings, [])
@@ -563,7 +563,7 @@ describe('scanWorkingTree — real gitleaks', () => {
 describe('scanHistory — degradation', () => {
   test('POSITIVE CONTROL: an unavailable tool degrades, succeeds, and does not throw', async () => {
     await gitRepo(root)
-    const r = await scanHistory(root, { bin: 'harness-no-such-trufflehog' })
+    const r = await scanHistory(root, { bin: 'caselaw-no-such-trufflehog' })
     assert.equal(r.ok, true)
     assert.equal(r.degraded, true)
     assert.deepEqual(r.findings, [])

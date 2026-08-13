@@ -16,4 +16,4 @@ the gallery could disagree with each other in production.
 **Enforcement:** memory
 
 ---
-_Candidate, not in force. `harness rule adopt rename-greps-the-tree --origin "<your incident>"`._
+_Candidate, not in force. `caselaw rule adopt rename-greps-the-tree --origin "<your incident>"`._
