@@ -1,7 +1,6 @@
 {
   "name": "caselaw",
   "version": "0.1.0",
-  "private": true,
   "description": "Case law for your codebase: an interview that generates your project's own rules, gates that earn their teeth, and an audit that keeps them honest.",
   "type": "module",
   "engines": {
@@ -20,5 +19,18 @@
   "license": "MIT",
   "bin": {
     "caselaw": "bin/cli.mjs"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HoldenRichard/caselaw.git"
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "claude-code",
+    "governance",
+    "codegen",
+    "guardrails",
+    "cli"
+  ]
 }
