@@ -1,0 +1,11 @@
+node_modules/
+.DS_Store
+*.log
+
+# Local gate telemetry — fire counts that justify advisory→blocking promotion.
+# Operational, per-machine, never committed.
+.harness/gate-fires.jsonl
+.harness/.gate-stats.json
+
+# Scratch output from dry runs
+harness-preview/
