@@ -25,6 +25,9 @@ import { hash } from '../src/core/text.js'
 import { generate as generateAuthoritySplit } from '../src/generate/authority-split.js'
 import { generate as generateCloseOut } from '../src/generate/close-out.js'
 import { scanMachinePaths } from '../src/core/secrets.js'
+import { gather } from '../src/audit/gather.js'
+import { runChecks } from '../src/audit/checks.js'
+import { formatReport, toJson, agentPrompt } from '../src/audit/report.js'
 
 const CLI_VERSION = '0.1.0'
 const TEMPLATE_VERSION = '1.0'
@@ -32,6 +35,7 @@ const TEMPLATE_VERSION = '1.0'
 const USAGE = `harness ${CLI_VERSION}
 
   harness init [dir]     interview this project and generate its governance
+  harness audit [dir]    is the governance in this repo still true?
   harness detect [dir]   print what Stage 0 sees, and ask nothing
   harness --help
 
@@ -39,6 +43,8 @@ Options
   --dry-run              build and show the plan, write nothing
   --yes                  accept the plan without the final confirmation
   --force                overwrite content you have edited (read the diff first)
+  --json                 machine-readable audit output, for CI
+  --agent                print a model-agnostic prompt for a second opinion
 `
 
 async function main() {
@@ -47,12 +53,31 @@ async function main() {
 
   switch (args.command) {
     case 'init': return cmdInit(args)
+    case 'audit': return cmdAudit(args)
     case 'detect': return cmdDetect(args)
     default:
       say(`Unknown command "${args.command}".\n`)
       say(USAGE)
       exit(2)
   }
+}
+
+async function cmdAudit(args) {
+  const root = resolve(args.dir || cwd())
+  const ctx = await gather(root)
+  ctx.projectName = ctx.answers?.project?.name ?? basename(root)
+  const result = runChecks(ctx)
+
+  if (args.json) {
+    say(JSON.stringify(toJson(result, ctx), null, 2))
+  } else if (args.agent) {
+    say(agentPrompt(result, ctx))
+  } else {
+    say(formatReport(result, ctx, { color: stdout.isTTY }))
+  }
+  // Errors fail CI. Warnings and notes never do — an audit that fails a build
+  // for a note is an audit somebody removes from the build.
+  if (!result.ok) exit(1)
 }
 
 async function cmdDetect(args) {
@@ -308,12 +333,14 @@ function summarizeDetection(d) {
 }
 
 function parseArgs(list) {
-  const out = { command: null, dir: null, dryRun: false, yes: false, force: false, help: false }
+  const out = { command: null, dir: null, dryRun: false, yes: false, force: false, help: false, json: false, agent: false }
   for (const a of list) {
     if (a === '--help' || a === '-h') out.help = true
     else if (a === '--dry-run') out.dryRun = true
     else if (a === '--yes' || a === '-y') out.yes = true
     else if (a === '--force') out.force = true
+    else if (a === '--json') out.json = true
+    else if (a === '--agent') out.agent = true
     else if (a.startsWith('-')) { /* ignore unknown flags rather than dying */ }
     else if (!out.command) out.command = a
     else if (!out.dir) out.dir = a
