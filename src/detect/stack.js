@@ -269,9 +269,10 @@ export async function detectStack(root, opts = {}, walked = null) {
   stack.buildSystem = stack.buildSystems[0] ?? null
 
   if (!stack.buildSystem) {
-    // The Kabu-shaped case: the directory you opened is a parent folder and the
-    // real project is one level down. Saying "no build system" would be true
-    // and useless; naming the nested one lets the interview ask the right thing.
+    // The parent-folder case: the directory you opened holds no project of
+    // its own, and the real one is a level down. Saying "no build system"
+    // would be true and useless; naming the nested manifest lets the
+    // interview ask the right question instead.
     const nested = findNestedManifest(w)
     if (nested) {
       warnings.push({
