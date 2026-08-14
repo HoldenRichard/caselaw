@@ -37,7 +37,7 @@ jobs:
 
       # Nothing to install — zero dependencies. Run the suite anyway: a release
       # is the worst possible moment to discover the tests were red.
-      - run: node --test 'test/unit/*.test.js'
+      - run: node --test test/unit/*.test.js
 
       # The tool must pass its own audit before it ships. A governance tool
       # whose own governance is stale has already lost the argument.
