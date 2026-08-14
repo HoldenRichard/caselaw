@@ -22,12 +22,22 @@ const exec = promisify(execFile)
  *
  * They are shaped like the real thing so the real gitleaks actually fires on
  * them — a positive control is worthless if the "known bad" input is not
- * recognised as bad. Which is also why each needs a `gitleaks:allow` marker:
- * without it our own CI gate fails on our own fixtures, and the first thing
- * anyone would do about that is weaken the gate.
+ * recognised as bad. They are assembled at runtime rather than written as
+ * literals, so the source itself carries nothing a scanner would flag.
  */
-const PLANTED = ["ghp","A1b2C3d4E5f6G7h8I9j0KlMnOpQrStUvWxYz"].join("_") // gitleaks:allow
-const PLANTED_STRIPE = ["sk","live","51HxAbCdEfGhIjKlMnOpQrStU"].join("_") // gitleaks:allow
+// Assembled at runtime, never written as a literal.
+//
+// A literal here is a real problem even though the value is fake: GitHub's
+// push protection blocks the push, every fork inherits the block, and a
+// security-adjacent repo that trips secret scanners teaches its users to
+// click through those warnings. Joining the parts keeps the runtime value
+// byte-identical — the scanner under test still sees a complete credential
+// in the temp file — while the source contains nothing scanner-shaped.
+//
+// This also removes the need for `gitleaks:allow` pragmas. An exception is a
+// weakened gate; not needing one is strictly better than being excused from it.
+const PLANTED = ['ghp', 'A1b2C3d4E5f6G7h8I9j0KlMnOpQrStUvWxYz'].join('_')
+const PLANTED_STRIPE = ['sk', 'live', '51HxAbCdEfGhIjKlMnOpQrStU'].join('_')
 
 let root
 let scanners
