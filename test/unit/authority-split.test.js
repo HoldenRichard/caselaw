@@ -5,7 +5,7 @@ import { boundaryCandidates } from '../../src/interview/questions.js'
 
 const NOW = new Date('2026-08-12T00:00:00Z')
 
-const KABU_LIKE = {
+const MOBILE_APP = {
   answers: {
     'authority.cannot': ['device', 'prod-data', 'prod-logs'],
     'authority.triage': { device: 'physical', 'prod-data': 'chosen', 'prod-logs': 'untested' },
@@ -18,37 +18,37 @@ const KABU_LIKE = {
     deploySurface: [{ kind: 'firebase' }],
     commands: { test: { cmd: 'xcodebuild test', exitCode: 0, verifiedAt: '2026-08-12', durationMs: 41000 } },
   },
-  projectName: 'Kabu',
+  projectName: 'Northwind',
   now: NOW,
 }
 
 describe('authority split — model', () => {
   test('sorts boundaries into physical / chosen / unverified', () => {
-    const m = buildModel(KABU_LIKE)
+    const m = buildModel(MOBILE_APP)
     assert.deepEqual(m.physical.map((x) => x.value), ['device'])
     assert.deepEqual(m.chosen.map((x) => x.value), ['prod-data'])
     assert.deepEqual(m.unverified.map((x) => x.value), ['prod-logs'])
   })
 
   test('a re-test date is set only when something is untested', () => {
-    assert.equal(buildModel(KABU_LIKE).retestDue, '2026-09-11')
+    assert.equal(buildModel(MOBILE_APP).retestDue, '2026-09-11')
 
     const allKnown = {
-      ...KABU_LIKE,
-      answers: { ...KABU_LIKE.answers, 'authority.triage': { device: 'physical', 'prod-data': 'chosen', 'prod-logs': 'chosen' } },
+      ...MOBILE_APP,
+      answers: { ...MOBILE_APP.answers, 'authority.triage': { device: 'physical', 'prod-data': 'chosen', 'prod-logs': 'chosen' } },
     }
     assert.equal(buildModel(allKnown).retestDue, '', 'no untested boundaries means no deadline to invent')
   })
 
   test('measured commands carry their proof into the can-list', () => {
-    const m = buildModel(KABU_LIKE)
+    const m = buildModel(MOBILE_APP)
     assert.match(m.can[0], /xcodebuild test/)
     assert.match(m.can[0], /verified 2026-08-12, 41s/)
   })
 
   test('POSITIVE CONTROL: an unverified command is labelled unverified, never as proof', () => {
     const m = buildModel({
-      ...KABU_LIKE,
+      ...MOBILE_APP,
       detected: { commands: { test: { cmd: 'npm test', exitCode: null, verifiedAt: null } } },
     })
     assert.match(m.can[0], /unverified/)
@@ -85,8 +85,8 @@ describe('authority split — settle commands', () => {
 
 describe('authority split — rendered output', () => {
   test('renders every section with real content', async () => {
-    const { content } = await generate(KABU_LIKE)
-    assert.match(content, /# Authority split — Kabu/)
+    const { content } = await generate(MOBILE_APP)
+    assert.match(content, /# Authority split — Northwind/)
     assert.match(content, /## The agent cannot — physical/)
     assert.match(content, /## The agent cannot — chosen/)
     assert.match(content, /## Unverified boundaries — settle these by 2026-09-11/)
@@ -111,7 +111,7 @@ describe('authority split — rendered output', () => {
   })
 
   test('POSITIVE CONTROL: the output contains no absolute machine paths', async () => {
-    const { content } = await generate(KABU_LIKE)
+    const { content } = await generate(MOBILE_APP)
     assert.doesNotMatch(content, /\/Users\/[a-z]/i)
     assert.doesNotMatch(content, /\/home\/[a-z]/i)
   })
@@ -130,7 +130,7 @@ describe('authority split — rendered output', () => {
 
 describe('authority split — markdown shape is publishable', () => {
   const cases = {
-    'all sections': KABU_LIKE,
+    'all sections': MOBILE_APP,
     'only physical': { answers: { 'authority.cannot': ['device'], 'authority.triage': { device: 'physical' } }, detected: {}, projectName: 'P', now: NOW },
     'nothing at all': { answers: {}, detected: {}, projectName: 'P', now: NOW },
   }

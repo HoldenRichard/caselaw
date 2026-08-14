@@ -4,7 +4,7 @@ import { render, RenderError } from '../../src/render/engine.js'
 
 describe('render — interpolation', () => {
   test('substitutes dotted paths', () => {
-    assert.equal(render('Hi {{ name }} of {{ project.name }}', { name: 'H', project: { name: 'Kabu' } }), 'Hi H of Kabu')
+    assert.equal(render('Hi {{ name }} of {{ project.name }}', { name: 'H', project: { name: 'Northwind' } }), 'Hi H of Northwind')
   })
   test('renders null and empty string as empty, not as the word null', () => {
     assert.equal(render('[{{ a }}]', { a: null }), '[]')

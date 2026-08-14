@@ -9,24 +9,24 @@ import { parseRule } from '../../src/core/rules.js'
 const HERE = dirname(fileURLToPath(import.meta.url))
 const TEMPLATES = join(HERE, '../../templates')
 
-const KABU_LIKE = {
+const MOBILE_APP = {
   answers: {
     'authority.cannot': ['device', 'prod-data', 'prod-logs'],
     'authority.triage': { device: 'physical', 'prod-data': 'chosen', 'prod-logs': 'untested' },
   },
   detected: { commands: { test: { cmd: 'xcodebuild test' } } },
-  projectName: 'Kabu',
+  projectName: 'Northwind',
 }
 
 describe('close-out — the handover list is the authority split, not a second list', () => {
   test('carries physical and chosen boundaries through as checkboxes', async () => {
-    const { content } = await generate(KABU_LIKE)
+    const { content } = await generate(MOBILE_APP)
     assert.match(content, /- \[ \] run it on real hardware/)
     assert.match(content, /- \[ \] read production datastore state/)
   })
 
   test('untested boundaries are NOT handed over as if they were known limits', () => {
-    const m = buildModel(KABU_LIKE)
+    const m = buildModel(MOBILE_APP)
     assert.ok(!m.humanOnly.some((h) => h.value === 'prod-logs'),
       'an untested boundary belongs in the re-test table, not on a handover checklist')
   })
@@ -37,14 +37,14 @@ describe('close-out — the handover list is the authority split, not a second l
   })
 
   test('POSITIVE CONTROL: the rule-proposals prompt is present — it is the whole point', async () => {
-    const { content } = await generate(KABU_LIKE)
+    const { content } = await generate(MOBILE_APP)
     assert.match(content, /## Rule proposals/)
     assert.match(content, /caselaw rule propose/,
       'without a standing prompt, proposed/ stays empty and the system is decoration')
   })
 
   test('uses the project’s own detected command in the example, not a generic one', async () => {
-    const { content } = await generate(KABU_LIKE)
+    const { content } = await generate(MOBILE_APP)
     assert.match(content, /xcodebuild test/)
   })
 })
@@ -81,7 +81,12 @@ describe('shipped case-law templates', () => {
       if (!f.endsWith('.md')) continue
       const text = await readFile(join(dir, f), 'utf8')
       assert.doesNotMatch(text, /\/Users\/|\/home\/[a-z]/, `${f} contains a machine path`)
-      assert.doesNotMatch(text, /Kabu|TradeSim|SwiftFormat|Firebase/i, `${f} names the source project`)
+      // Domain terms, not proper nouns. The realistic failure is someone
+      // pasting a stack-specific rule into the candidate set; naming the
+      // upstream project here would leak the association this repo is
+      // deliberately without, and would catch less.
+      assert.doesNotMatch(text, /\b(Swift|SwiftUI|SwiftFormat|Xcode|Firebase|Firestore|xcresult|simulator)\b/i,
+        `${f} contains a stack-specific term — candidates must be domain-free`)
     }
   })
 
