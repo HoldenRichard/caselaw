@@ -213,7 +213,7 @@ async function install() {
     await writeFile(join(root, e.path), e.nextText, 'utf8')
     manifestStore.record(manifest, {
       path: e.path, kind: e.kind, blockId: e.blockId,
-      contentHash: e.kind === 'block' ? e.interiorHash : hash(e.nextText),
+      contentHash: e.kind === 'file' ? hash(e.nextText) : e.interiorHash,
     })
   }
   await manifestStore.save(root, manifest)

@@ -19,6 +19,7 @@
 import { readFile, writeFile, mkdir, stat } from 'node:fs/promises'
 import { dirname, join, relative, sep } from 'node:path'
 import { hash } from './text.js'
+import { parseSettings, extractOurs, hashOurs } from './jsonmerge.js'
 
 export const MANIFEST_PATH = '.caselaw/manifest.json'
 export const SCHEMA_VERSION = 1
@@ -69,10 +70,10 @@ export async function save(root, manifest, { now = new Date().toISOString() } = 
  * block interior for kind 'block'.
  */
 export function record(manifest, { path, kind, contentHash, blockId, templateId }) {
-  if (kind !== 'file' && kind !== 'block') {
+  if (kind !== 'file' && kind !== 'block' && kind !== 'json-merge') {
     throw new ManifestError(`Unknown ownership kind "${kind}"`, { code: 'BAD_KIND' })
   }
-  if (kind === 'block' && !blockId) {
+  if ((kind === 'block' || kind === 'json-merge') && !blockId) {
     throw new ManifestError(`A 'block' entry for ${path} must name its blockId`, {
       code: 'MISSING_BLOCK_ID',
     })
@@ -123,6 +124,18 @@ export async function reconcile(root, manifest, { locate } = {}) {
       continue
     }
 
+    if (entry.kind === 'json-merge') {
+      // Only our entries are ours to judge; the rest of the file is the
+      // project's and may change freely.
+      const p = parseSettings(text)
+      if (!p.ok) { unreadable.push({ path, reason: p.reason }); continue }
+      const ours = extractOurs(p.settings)
+      if (!Object.values(ours).some((list) => list.length)) missing.push(path)
+      else if (hashOurs(ours) === entry.hash) clean.push(path)
+      else modified.push(path)
+      continue
+    }
+
     // kind === 'block'
     if (!locate) {
       throw new ManifestError(
@@ -168,7 +181,7 @@ export function ejectPlan(manifest, reconciliation) {
       continue
     }
     if (entry.kind === 'file') deleteFiles.push(path)
-    else stripBlocks.push({ path, blockId: entry.blockId })
+    else stripBlocks.push({ path, blockId: entry.blockId, kind: entry.kind })
   }
   return { deleteFiles, stripBlocks, leaveAlone }
 }

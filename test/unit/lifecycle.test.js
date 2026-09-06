@@ -47,7 +47,7 @@ async function install(answers = {}) {
     await writeFile(join(root, e.path), e.nextText, 'utf8')
     manifestStore.record(manifest, {
       path: e.path, kind: e.kind, blockId: e.blockId,
-      contentHash: e.kind === 'block' ? e.interiorHash : hash(e.nextText),
+      contentHash: e.kind === 'file' ? hash(e.nextText) : e.interiorHash,
     })
   }
   await manifestStore.save(root, manifest)
@@ -139,7 +139,8 @@ describe('eject', () => {
     const plan = await planEject({ root })
 
     assert.ok(plan.deleteFiles.includes('.caselaw/bin/gate.mjs'))
-    assert.ok(plan.deleteFiles.includes('.claude/settings.json'))
+    assert.ok(plan.stripBlocks.some((b) => b.path === '.claude/settings.json' && b.kind === 'json-merge'),
+      'settings.json is a merge target: only our hook entries are ours to remove')
     assert.ok(!plan.deleteFiles.some((p) => p.startsWith('docs/')),
       'docs are the user\'s answers as prose; an uninstall must not destroy them')
     assert.ok(plan.keptDoctrine.length > 0)
@@ -278,7 +279,7 @@ describe('the whole round trip', () => {
       await writeFile(join(root, e.path), e.nextText, 'utf8')
       manifestStore.record(manifest, {
         path: e.path, kind: e.kind, blockId: e.blockId,
-        contentHash: e.kind === 'block' ? e.interiorHash : hash(e.nextText),
+        contentHash: e.kind === 'file' ? hash(e.nextText) : e.interiorHash,
       })
     }
     await manifestStore.save(root, manifest)

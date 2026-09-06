@@ -153,9 +153,13 @@ export async function buildArtifacts({ doc, detected, adapterIds = null, modules
   })
 
   if (usesClaude) {
+    // Merged into whatever settings.json the project already keeps, never
+    // written whole: our managed content is the two hook entries and nothing
+    // else in the file (src/core/jsonmerge.js).
+    const hooks = claudeHookSettings().hooks
     out.push({
-      path: '.claude/settings.json', kind: 'file',
-      body: JSON.stringify(claudeHookSettings(), null, 2) + '\n',
+      path: '.claude/settings.json', kind: 'json-merge', blockId: 'hooks', merge: hooks,
+      body: JSON.stringify({ hooks }, null, 2) + '\n',
     })
     const commandFiles = await templateFiles('adapters/claude/commands')
     // A generated command that shadows a host built-in changes behaviour the

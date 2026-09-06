@@ -426,7 +426,7 @@ async function writePlan({ root, plan, manifest, doc }) {
       path: e.path,
       kind: e.kind,
       blockId: e.blockId,
-      contentHash: e.kind === 'block' ? e.interiorHash : hash(e.nextText),
+      contentHash: e.kind === 'file' ? hash(e.nextText) : e.interiorHash,
     })
   }
   await manifestStore.save(root, manifest)

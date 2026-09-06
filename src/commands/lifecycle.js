@@ -25,6 +25,7 @@ import * as gatesStore from '../core/gates.js'
 import { buildArtifacts } from '../generate/artifacts.js'
 import { buildPlan, SKIP, UNCHANGED } from '../core/plan.js'
 import { locate, remove as removeBlock } from '../core/blocks.js'
+import { strip as stripJson } from '../core/jsonmerge.js'
 import { hash } from '../core/text.js'
 
 const pExecFile = promisify(execFile)
@@ -154,9 +155,23 @@ export async function applyEject({ root, plan }) {
     }
   }
 
-  for (const { path, blockId } of plan.stripBlocks) {
+  for (const { path, blockId, kind } of plan.stripBlocks) {
     try {
       const text = await readFile(join(root, path), 'utf8')
+      if (kind === 'json-merge') {
+        const r = stripJson(text)
+        if (!r.ok) { failed.push({ path, reason: r.reason }); continue }
+        if (r.action === 'absent') continue
+        if (r.action === 'emptied') {
+          // Nothing of the project's was in the file: it was ours, and it goes.
+          await rm(join(root, path), { force: true })
+          removed.push(path)
+        } else {
+          await writeFile(join(root, path), r.text, 'utf8')
+          stripped.push(path)
+        }
+        continue
+      }
       const out = removeBlock(text, blockId)
       if (out.action !== 'removed') continue
       if (out.text.trim() === '') {

@@ -16,6 +16,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { hash } from './text.js'
 import { upsert, locate, BlockError } from './blocks.js'
+import { merge as mergeJson, parseSettings, extractOurs, hashOurs } from './jsonmerge.js'
 
 export const NEW = 'NEW'
 export const MERGE = 'MERGE'
@@ -62,6 +63,40 @@ export async function buildPlan(root, artifacts, opts = {}) {
           nextText: existing,
         })
       }
+      continue
+    }
+
+    if (a.kind === 'json-merge') {
+      // Our content is a set of entries inside a file the project owns. The
+      // file is merged into, never skipped for existing and never replaced —
+      // with --force or without — beyond those entries.
+      const owned = opts.manifest?.entries?.[a.path]
+      // A 0.1.x install recorded this file whole (kind 'file'); its content was
+      // ours alone, so merging is exactly right and needs no --force. Only an
+      // entry already recorded as a merge can have had OUR entries edited.
+      if (existing !== null && owned?.kind === 'json-merge' && !force) {
+        const p = parseSettings(existing)
+        if (p.ok && hashOurs(extractOurs(p.settings)) !== owned.hash) {
+          entries.push({ ...a, action: SKIP, reason: 'you edited the caselaw hook entries since they were written', nextText: existing })
+          continue
+        }
+      }
+      const r = mergeJson(existing, a.merge)
+      if (!r.ok) {
+        entries.push({ ...a, action: SKIP, reason: `${r.reason} — fix it; nothing in it was touched`, nextText: existing })
+        continue
+      }
+      if (r.action === 'unchanged') {
+        entries.push({ ...a, action: UNCHANGED, nextText: existing })
+        continue
+      }
+      entries.push({
+        ...a,
+        action: existing === null ? NEW : MERGE,
+        nextText: r.text,
+        interiorHash: hashOurs(r.ours),
+        bytes: r.text.length,
+      })
       continue
     }
 
@@ -125,6 +160,7 @@ export function formatPlan({ entries, summary }, { root = '.' } = {}) {
   for (const e of entries) {
     const note =
       e.action === SKIP ? `  ← ${e.reason}`
+      : e.action === MERGE && e.kind === 'json-merge' ? '  adds the caselaw hook entries, nothing else touched'
       : e.action === MERGE ? `  managed block "${e.blockId}", nothing else touched`
       : e.action === PATCH ? `  appends a managed block, nothing removed`
       : e.action === UNCHANGED ? '  already correct'

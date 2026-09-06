@@ -183,7 +183,7 @@ describe('manifest — orphans and eject', () => {
 
     const plan = ejectPlan(m, { clean: ['docs/a.md', 'CLAUDE.md'], modified: ['docs/edited.md'], missing: [], unreadable: [] })
     assert.deepEqual(plan.deleteFiles, ['docs/a.md'])
-    assert.deepEqual(plan.stripBlocks, [{ path: 'CLAUDE.md', blockId: 'pointer' }])
+    assert.deepEqual(plan.stripBlocks, [{ path: 'CLAUDE.md', blockId: 'pointer', kind: 'block' }])
     assert.deepEqual(plan.leaveAlone, [{ path: 'docs/edited.md', reason: 'you edited it' }])
   })
 })
