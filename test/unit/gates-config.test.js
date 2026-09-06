@@ -38,7 +38,10 @@ describe('gate config — validation', () => {
 
   test('POSITIVE CONTROL: an unscoped gate is rejected', () => {
     const p = validateGate(goodGate({ paths: [] }))
-    assert.ok(p.some((x) => x.code === 'no-paths' && x.severity === 'error'))
+    // The schema says omitted paths mean every candidate file, and the runtime
+    // agrees; that is a warning here. It is an error only where scope IS the gate.
+    assert.ok(p.some((x) => x.code === 'no-paths' && x.severity === 'warn'))
+    assert.ok(validateGate(goodGate({ kind: 'shell', command: 'eslint', paths: [] })).some((x) => x.code === 'no-paths' && x.severity === 'error'))
   })
 
   test('POSITIVE CONTROL: an unknown kind is rejected rather than ignored', () => {

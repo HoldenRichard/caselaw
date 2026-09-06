@@ -48,7 +48,9 @@ export async function gather(root, { now = new Date() } = {}) {
   const untracked = await gatherUntracked(root, [...Object.keys(docTexts), ...allRuleFiles(rules)], notes)
   const authority = parseAuthority(docTexts['docs/authority-split.md'], 'docs/authority-split.md')
   const staleCommands = await gatherStaleCommands(root, answers, docTexts)
-  const fireCounts = countFires(await gatesStore.readFires(root))
+  const fires = countFires(await gatesStore.readFires(root))
+  const fireCounts = fires.all
+  const earnedFires = fires.earned
   const drifted = await gatherDrift(root, manifest, notes)
   const installAgeDays = answers?.generatedAt ? daysBetween(new Date(answers.generatedAt), now) : null
   const adrs = await gatherAdrs(root)
@@ -59,7 +61,7 @@ export async function gather(root, { now = new Date() } = {}) {
     answers, manifest,
     gatesConfig: gatesConfig ?? gatesStore.emptyConfig(),
     rules, docTexts, docRefs, untracked, authority, staleCommands, adrs, gitignoreClaims,
-    fireCounts, drifted, installAgeDays,
+    fireCounts, earnedFires, drifted, installAgeDays,
     installed: Boolean(answers || manifest),
   }
 }
@@ -253,10 +255,20 @@ async function gatherStaleCommands(root, answers, docTexts) {
   return out
 }
 
+/**
+ * Two counts. `all` answers "has this gate ever matched anything?" (the
+ * dead-gates check). `earned` counts only fires from the hook and staged
+ * modes — the ones that caught a change as it happened — and is what
+ * promotion reads. A whole-tree scan over old violations is neither.
+ */
 function countFires(fires) {
-  const counts = {}
-  for (const f of fires) counts[f.gate] = (counts[f.gate] || 0) + 1
-  return counts
+  const all = {}
+  const earned = {}
+  for (const f of fires) {
+    all[f.gate] = (all[f.gate] || 0) + 1
+    if (gatesStore.EVIDENCE_MODES.includes(f.mode)) earned[f.gate] = (earned[f.gate] || 0) + 1
+  }
+  return { all, earned }
 }
 
 async function gatherDrift(root, manifest, notes) {

@@ -30,7 +30,7 @@ const ctx = (over = {}) => ({
   rules: { active: [], proposed: [], candidates: [] },
   gatesConfig: { version: 1, gates: [] },
   docRefs: [], untracked: [], docTexts: {}, staleCommands: [],
-  fireCounts: {}, drifted: [], authority: null, answers: null,
+  fireCounts: {}, earnedFires: {}, drifted: [], authority: null, answers: null,
   adrs: null, gitignoreClaims: [], installAgeDays: 100, installed: true,
   ...over,
 })
@@ -68,7 +68,7 @@ describe('audit — the checks fire on what they claim to', () => {
   test('POSITIVE CONTROL: a warn gate past the threshold is flagged for promotion', () => {
     const r = runChecks(ctx({
       gatesConfig: { version: 1, gates: [{ id: 'g', severity: 'warn' }] },
-      fireCounts: { g: 5 },
+      earnedFires: { g: 5 },
     }))
     assert.ok(r.findings.some((f) => f.code === 'gates-earned'))
   })

@@ -23,7 +23,7 @@
 import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { isOverdue, isoDate, daysBetween } from '../core/dates.js'
-import { crossCheck } from '../core/gates.js'
+import { crossCheck, PROMOTION_THRESHOLD, EVIDENCE_MODES } from '../core/gates.js'
 import { scanMachinePaths } from '../core/secrets.js'
 
 export const SEVERITY = { ERROR: 'error', WARN: 'warn', INFO: 'info' }
@@ -232,12 +232,14 @@ export const CHECKS = [
   {
     id: 'gates-earned',
     describe: 'warn-level gates that have earned promotion',
-    run({ gatesConfig, fireCounts, threshold = 3 }) {
+    run({ gatesConfig, earnedFires = {}, threshold = PROMOTION_THRESHOLD }) {
+      // Only hook and staged fires count: a whole-tree scan over pre-existing
+      // violations is an observation, not a catch.
       return (gatesConfig.gates || [])
-        .filter((g) => g.severity === 'warn' && (fireCounts[g.id] || 0) >= threshold)
+        .filter((g) => g.severity === 'warn' && (earnedFires[g.id] || 0) >= threshold)
         .map((g) =>
           finding('gates-earned', SEVERITY.INFO,
-            `gate "${g.id}" has fired ${fireCounts[g.id]} times and is still only warning`, {
+            `gate "${g.id}" has caught ${earnedFires[g.id]} real violations (${EVIDENCE_MODES.join('/')}) and is still only warning`, {
               hint: `\`caselaw gate promote ${g.id}\` — it has the evidence.`,
             }),
         )

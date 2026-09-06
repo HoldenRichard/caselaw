@@ -26,6 +26,17 @@ export const SCHEMA_VERSION = 1
 /** Fires a gate must record before `promote` will let it block. */
 export const PROMOTION_THRESHOLD = 3
 
+/** The runner's modes, in one place here as in runtime/gate.mjs; a test keeps them equal. */
+export const MODES = ['pre', 'post', 'staged', 'all']
+
+/**
+ * Only fires from these modes count as evidence for promotion. A fire from a
+ * whole-tree `all` scan is a pre-existing violation being counted, not a
+ * catch: one CI run over three old violations used to make a brand-new warn
+ * gate promotable to block on the spot.
+ */
+export const EVIDENCE_MODES = ['pre', 'post', 'staged']
+
 export const KINDS = [
   'banned-content',
   'required-content',
@@ -76,57 +87,138 @@ export async function save(root, config) {
 export function validateGate(gate, { index = 0 } = {}) {
   const problems = []
   const at = gate?.id ? `gate "${gate.id}"` : `gate #${index + 1}`
+  const add = (code, severity, message, hint) => problems.push(hint ? { code, severity, message, hint } : { code, severity, message })
 
   if (!gate || typeof gate !== 'object') {
     return [{ code: 'not-an-object', severity: 'error', message: `${at} is not an object` }]
   }
   if (!gate.id || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(gate.id)) {
-    problems.push({ code: 'bad-id', severity: 'error', message: `${at} needs a kebab-case id` })
+    add('bad-id', 'error', `${at} needs a kebab-case id`)
   }
   if (!KINDS.includes(gate.kind)) {
-    problems.push({
-      code: 'unknown-kind', severity: 'error',
-      message: `${at} has kind "${gate.kind}"; expected one of ${KINDS.join(', ')}`,
-    })
+    add('unknown-kind', 'error', `${at} has kind "${gate.kind}"; expected one of ${KINDS.join(', ')}`)
   }
-  if (gate.severity !== 'warn' && gate.severity !== 'block') {
-    problems.push({
-      code: 'bad-severity', severity: 'error',
-      message: `${at} severity must be "warn" or "block"`,
-    })
+  // A missing severity is the schema's default, warn: a new gate is born
+  // warning. A present-but-wrong one is an error. This validator used to
+  // reject the default the runtime applies, so a schema-legal hand-written
+  // config failed `doctor` while the runner enforced it fine.
+  if (gate.severity !== undefined && gate.severity !== 'warn' && gate.severity !== 'block') {
+    add('bad-severity', 'error', `${at} severity must be "warn" or "block"`)
   }
   if (!gate.origin) {
-    problems.push({
-      code: 'missing-origin', severity: 'error',
-      message: `${at} has no origin`,
-      hint: 'Point it at the rule file it mechanises. Without that backlink an audit cannot tell an orphaned gate from a live one.',
-    })
+    add('missing-origin', 'error', `${at} has no origin`,
+      'Point it at the rule file it mechanises. Without that backlink an audit cannot tell an orphaned gate from a live one.')
   }
-  if (!Array.isArray(gate.paths) || gate.paths.length === 0) {
-    problems.push({
-      code: 'no-paths', severity: 'error',
-      message: `${at} has no paths`,
-      hint: 'An unscoped gate fires on everything, which is how gates get disabled.',
-    })
+
+  const strList = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string' && x.length > 0)
+  const scoped = gate.paths !== undefined && gate.paths !== null
+  if (scoped && !strList(gate.paths)) {
+    add('bad-paths', 'error', `${at} \`paths\` must be an array of non-empty glob strings`)
+  }
+  const hasPaths = scoped && strList(gate.paths) && gate.paths.length > 0
+  if (!hasPaths) {
+    // The schema says omitted paths mean every candidate file, and the runtime
+    // agrees. That is a warning, not an error — except where scope IS the gate.
+    if (gate.kind === 'path-scope' || gate.kind === 'shell') {
+      add('no-paths', 'error', `${at} has no paths`,
+        gate.kind === 'shell'
+          ? 'A shell gate with no scope runs its command against every changed file.'
+          : 'path-scope needs the forbidden globs; without them there is nothing to forbid.')
+    } else {
+      add('no-paths', 'warn', `${at} has no paths, so it applies to every candidate file`,
+        'Scope it. An unscoped gate fires on everything, which is how gates get disabled.')
+    }
+  }
+  if (gate.exclude !== undefined && !strList(gate.exclude)) {
+    add('bad-exclude', 'error', `${at} \`exclude\` must be an array of non-empty glob strings`)
+  }
+  if (gate.modes !== undefined) {
+    if (!Array.isArray(gate.modes) || gate.modes.length === 0 || gate.modes.some((m) => !MODES.includes(m))) {
+      add('bad-modes', 'error', `${at} \`modes\` must list one or more of ${MODES.join(', ')}`,
+        'The runtime drops a gate whose modes it does not recognise.')
+    }
   }
   if (!gate.message) {
-    problems.push({
-      code: 'no-message', severity: 'warn',
-      message: `${at} has no message; the person it blocks will not know what to do`,
-    })
+    add('no-message', 'warn', `${at} has no message; the person it blocks will not know what to do`)
+  }
+
+  // Kind-specific fields: exactly what runtime/gate.mjs reads. A gate that
+  // validated here, was written, and was then dropped by the runner at load
+  // is a gate that checks nothing while looking configured — the failure this
+  // whole tool is aimed at, and one it shipped: a shell command with
+  // whitespace passed this function and was silently dropped by the runtime.
+  const patternList = (v) =>
+    Array.isArray(v) && v.length > 0 && v.every((p) =>
+      typeof p === 'string'
+        ? p.length > 0
+        : p && typeof p === 'object' && ((typeof p.literal === 'string' && p.literal.length > 0) || typeof p.regex === 'string'))
+  switch (gate.kind) {
+    case 'banned-content':
+      if (!patternList(gate.patterns)) add('no-patterns', 'error', `${at} needs a non-empty \`patterns\` array of {literal} or {regex}`)
+      break
+    case 'required-content':
+      if (!patternList(gate.requires ?? gate.patterns)) add('no-requires', 'error', `${at} needs a non-empty \`requires\` array of {literal} or {regex}`)
+      break
+    case 'cross-file':
+      if (!Array.isArray(gate.extract) || !gate.extract.length || !gate.extract.every((e) => e && typeof e.name === 'string' && typeof e.file === 'string')) {
+        add('no-extract', 'error', `${at} needs \`extract\`: [{name, file, ...}]`)
+      }
+      if (!Array.isArray(gate.assert) || !gate.assert.length || !gate.assert.every((a) => a && typeof a.type === 'string')) {
+        add('no-assert', 'error', `${at} needs \`assert\`: [{type, ...}]`)
+      }
+      break
+    case 'file-invariant':
+      if (gate.parses === undefined && gate.endsWithNewline === undefined && gate.maxBytes === undefined && gate.requiredFrontmatter === undefined) {
+        add('no-assertion', 'error', `${at} asserts nothing; give it parses, endsWithNewline, maxBytes or requiredFrontmatter`)
+      }
+      break
+    case 'paired-edit':
+      if (!strList(gate.when) || !gate.when.length) add('no-when', 'error', `${at} needs \`when\`: the globs whose change triggers the pairing`)
+      if (!strList(gate.require) || !gate.require.length) add('no-require', 'error', `${at} needs \`require\`: the globs that must change alongside`)
+      break
+    case 'shell': {
+      const cmd = gate.command
+      if (typeof cmd !== 'string' || !/^\S+$/.test(cmd)) {
+        add('bad-command', 'error', `${at} \`command\` must be a single executable name or path with no whitespace; put arguments in \`args\``,
+          typeof cmd === 'string' && /\s/.test(cmd) ? 'The runtime drops "npm run lint"-style commands at load: it never sees a shell.' : undefined)
+      }
+      if (gate.args !== undefined && !(Array.isArray(gate.args) && gate.args.every((a) => typeof a === 'string'))) {
+        add('bad-args', 'error', `${at} \`args\` must be an array of strings`)
+      }
+      if (gate.cwd !== undefined) {
+        const c = typeof gate.cwd === 'string' ? gate.cwd : ''
+        if (!c || /^([a-zA-Z]:)?[\\/]/.test(c) || c.split(/[\\/]/).includes('..')) {
+          add('bad-cwd', 'error', `${at} \`cwd\` must be a repo-relative path with no \`..\` segments`,
+            'A cwd that resolves outside the repository runs the command somewhere the gate does not own.')
+        }
+      }
+      break
+    }
+    default:
+      break
   }
 
   for (const g of gate.grandfather || []) {
+    if (!g || typeof g !== 'object') {
+      add('grandfather-not-object', 'error', `${at} has a grandfather entry that is not an object`)
+      continue
+    }
+    if (!g.context) {
+      add('grandfather-no-context', 'error', `${at} has a grandfather entry with no context`,
+        'Without `context` the runtime suppresses nothing — the entry is decoration.')
+    }
     if (!g.reason) {
-      problems.push({ code: 'grandfather-no-reason', severity: 'error', message: `${at} has a grandfather entry with no reason` })
+      add('grandfather-no-reason', 'error', `${at} has a grandfather entry with no reason`)
     }
     if (!g.expires) {
-      problems.push({
-        code: 'grandfather-no-expiry', severity: 'error',
-        message: `${at} has a grandfather entry with no expiry`,
-        hint: 'An exception without a date outlives the reason for it. That is how a gate quietly stops covering the thing it was written for.',
-      })
+      add('grandfather-no-expiry', 'error', `${at} has a grandfather entry with no expiry`,
+        'An exception without a date outlives the reason for it. That is how a gate quietly stops covering the thing it was written for.')
+    } else if (Number.isNaN(new Date(g.expires).getTime())) {
+      add('grandfather-bad-expiry', 'error', `${at} has a grandfather entry whose expires "${g.expires}" is not a date`)
     }
+  }
+  if (gate.grandfather !== undefined && KINDS.includes(gate.kind) && gate.kind !== 'banned-content') {
+    add('grandfather-ignored', 'warn', `${at}: only banned-content gates honour \`grandfather\`; on a ${gate.kind} gate it suppresses nothing`)
   }
 
   return problems
@@ -182,7 +274,7 @@ export async function recordFire(root, entry) {
  * nobody trusts, which get bypassed and then deleted.
  */
 export async function promotionStatus(root, gateId, { threshold = PROMOTION_THRESHOLD } = {}) {
-  const fires = (await readFires(root)).filter((f) => f.gate === gateId)
+  const fires = (await readFires(root)).filter((f) => f.gate === gateId && EVIDENCE_MODES.includes(f.mode))
   return {
     gate: gateId,
     fires: fires.length,
