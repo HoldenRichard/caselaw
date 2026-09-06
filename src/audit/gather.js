@@ -75,23 +75,54 @@ async function gatherRules(root, { now, notes }) {
     return empty
   }
 
+  // listRules() keeps a rule's content under .parsed, its problems under
+  // .validation, and .file as a bare basename. The checks read the content at
+  // the top level and hand .file to git and stat(). For a whole release the
+  // two shapes never met: every active rule audited as "has no Origin", the
+  // mechanisation ratio always read 100% memory, and dead-rules,
+  // proposed-backlog and enforcement-truth could not fire on real data —
+  // while their tests, built by hand in the shape the checks expected, stayed
+  // green. This is the one place the two shapes are reconciled, and
+  // test/unit/audit-real.test.js pins the contract.
   const enrich = async (r) => {
-    const ageDays = await fileAgeDays(join(root, r.file || ''), now)
-    return {
+    const parsed = r.parsed || {}
+    const problems = r.validation?.problems || []
+    const merged = {
       ...r,
-      ageDays,
-      unresolvedRefs: (r.problems || [])
+      file: r.path, // repo-relative — what git and stat() need; the basename is kept alongside
+      basename: r.file,
+      trigger: parsed.trigger ?? null,
+      rule: parsed.rule ?? null,
+      origin: parsed.origin ?? null,
+      ratified: parsed.ratified ?? null,
+      enforcement: parseEnforcement(parsed.enforcement),
+      problems,
+      ageDays: await fileAgeDays(join(root, r.path || ''), now),
+      unresolvedRefs: problems
         .filter((p) => p.code === 'origin-unresolvable')
         .map((p) => p.ref || p.message),
-      missingSubjects: await missingSubjects(root, r),
     }
+    merged.missingSubjects = await missingSubjects(root, merged)
+    return merged
   }
 
   return {
     active: await Promise.all((listed.active || []).map(enrich)),
     proposed: await Promise.all((listed.proposed || []).map(enrich)),
-    candidates: listed.candidates || [],
+    candidates: await Promise.all((listed.candidates || []).map(enrich)),
   }
+}
+
+/**
+ * `**Enforcement:** memory | checklist | machine:<gate-id>` as the checks and
+ * the gates cross-check read it. Null when absent; the raw text travels along
+ * so a report can quote what the file actually says.
+ */
+export function parseEnforcement(text) {
+  const raw = typeof text === 'string' ? text.trim() : ''
+  if (!raw) return null
+  const [mode, ...rest] = raw.toLowerCase().split(':')
+  return { mode, gateId: rest.length ? rest.join(':') : null, raw }
 }
 
 /**
@@ -154,7 +185,7 @@ async function gatherUntracked(root, paths, notes) {
   const unique = [...new Set(paths.filter(Boolean))]
   if (unique.length === 0) return []
   try {
-    const { stdout } = await pExecFile('git', ['ls-files', '--error-unmatch', ...unique], {
+    const { stdout } = await pExecFile('git', ['ls-files', '--error-unmatch', '--', ...unique], {
       cwd: root, encoding: 'utf8',
     })
     const tracked = new Set(stdout.split('\n').map((s) => s.trim()).filter(Boolean))
@@ -315,7 +346,7 @@ async function gatherGitignoreClaims(root, docTexts) {
     seen.add(key)
     if (!(await exists(join(root, c.path)))) continue
     try {
-      await pExecFile('git', ['check-ignore', '-q', c.path], { cwd: root })
+      await pExecFile('git', ['check-ignore', '-q', '--', c.path], { cwd: root })
       checked.push({ ...c, actuallyIgnored: true })
     } catch (err) {
       // exit 1 = a real "no, it is tracked"; anything else = git could not say
