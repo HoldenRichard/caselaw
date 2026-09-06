@@ -25,12 +25,16 @@
 
 /** @typedef {'multiselect'|'triage'|'select'|'text'|'confirm'|'number'} QuestionType */
 
+/**
+ * One session ships. Four more were designed — verification cadence,
+ * boundaries and escalation, invariants worth machine-checking, modules and
+ * adapters — and are not implemented. They are not declared here on purpose:
+ * a declared-but-empty session printed "Session 1/5" to every user, and the
+ * README promised a fifteen-minute interview that took four. The list grows
+ * when a session's questions exist, not before.
+ */
 export const SESSIONS = [
   { n: 1, key: 'authority', title: 'The authority split', budget: 5, minutes: 4 },
-  { n: 2, key: 'verification', title: 'Verification cadence', budget: 5, minutes: 3 },
-  { n: 3, key: 'boundaries', title: 'Boundaries and escalation', budget: 4, minutes: 2 },
-  { n: 4, key: 'gates', title: 'Invariants worth machine-checking', budget: 3, minutes: 3 },
-  { n: 5, key: 'modules', title: 'Modules and adapters', budget: 3, minutes: 1 },
 ]
 
 /**
@@ -95,7 +99,7 @@ export const QUESTIONS = [
       'This is the question the whole harness is built around. Everything the agent cannot check itself is work that has to come back to you — naming it is what makes the handoff explicit instead of assumed.',
     options: (ctx) => boundaryCandidates(ctx.detected),
     allowOther: true,
-    generates: ['docs/authority-split.md#cannot', 'docs/verification-tiers.md#tier3'],
+    generates: ['docs/authority-split.md#the-agent-cannot-physical', 'docs/authority-split.md#the-agent-cannot-chosen', 'docs/close-out.md#not-verified-over-to-you'],
   },
   {
     id: 'authority.triage',
@@ -109,7 +113,7 @@ export const QUESTIONS = [
       'A silent misconfiguration reads exactly like a permanent boundary, and boundaries do not get re-tested. Anything you mark untested gets written down with a one-command way to settle it, and a date.',
     options: TRIAGE_OPTIONS,
     when: (a) => (a['authority.cannot'] || []).length > 0,
-    generates: ['docs/authority-split.md#physical', 'docs/authority-split.md#chosen', 'docs/authority-split.md#unverified'],
+    generates: ['docs/authority-split.md#the-agent-cannot-physical', 'docs/authority-split.md#the-agent-cannot-chosen', 'docs/authority-split.md#unverified-boundaries'],
   },
   {
     id: 'authority.human_proof',
@@ -122,7 +126,7 @@ export const QUESTIONS = [
     help: 'Specific enough that a stranger could follow it. This becomes the handover section of every close-out.',
     placeholder: 'e.g. build to a real iPhone, tap through onboarding, confirm the badge appears',
     when: (a) => (a['authority.cannot'] || []).length > 0,
-    generates: ['docs/verification-tiers.md#tier3', 'docs/close-out.md#handed-over'],
+    generates: ['docs/authority-split.md#what-a-human-still-has-to-do'],
   },
   {
     id: 'authority.agent_reach',
@@ -135,7 +139,7 @@ export const QUESTIONS = [
     help:
       'Screenshots, a local run, a read-only query, a staging call. This tier is where the leverage is — it moves work off you, not onto you.',
     placeholder: 'e.g. it could boot the simulator and screenshot both colour schemes',
-    generates: ['docs/verification-tiers.md#tier2'],
+    generates: ['docs/authority-split.md#the-agent-can'],
   },
   {
     id: 'authority.retest_days',
@@ -148,7 +152,7 @@ export const QUESTIONS = [
     max: 365,
     prompt: 'How many days before the boundary list should be re-checked for staleness?',
     when: (a) => Object.values(a['authority.triage'] || {}).includes('untested'),
-    generates: ['docs/authority-split.md#unverified'],
+    generates: ['docs/authority-split.md#unverified-boundaries'],
   },
 ]
 

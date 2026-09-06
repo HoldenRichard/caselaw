@@ -7,7 +7,7 @@ rules, gates that earn their teeth, and an audit that keeps both honest.
 npx caselaw init
 ```
 
-Fifteen minutes. It reads your repo first, asks only what it cannot detect, and
+About four minutes. It reads your repo first, asks only what it cannot detect, and
 shows you every file before it writes anything.
 
 ---
@@ -72,8 +72,7 @@ which already existed gets disabled on day one.
 
 ```
 docs/
-  authority-split.md      what you and your agent can each verify
-  verification-tiers.md   what to run, when, and what it measured
+  authority-split.md      what you and your agent can each verify, and what a human still has to do
   close-out.md            the session template that asks for rules
   rules/                  README, template, EMPTY active/, 5 candidates
 .caselaw/

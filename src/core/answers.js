@@ -8,8 +8,7 @@
  *
  * Written after EVERY answer, not at the end. An interview interrupted at
  * question three leaves a valid file that re-running `caselaw init` picks up, which
- * is the difference between a fifteen-minute commitment and a fifteen-minute
- * gamble.
+ * is the difference between a commitment and a gamble.
  */
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises'

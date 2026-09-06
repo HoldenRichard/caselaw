@@ -142,3 +142,38 @@ describe('ranking spends the budget where it buys most', () => {
     assert.deepEqual(rank(qs, { b: 'answered' }).map((q) => q.id), ['a', 'b'])
   })
 })
+
+describe('question set — what it says it generates', () => {
+  test('POSITIVE CONTROL: every `generates` anchor names a heading a real artifact renders', async () => {
+    const { buildArtifacts } = await import('../../src/generate/artifacts.js')
+    const { emptyAnswers } = await import('../../src/core/answers.js')
+    // Three questions used to claim sections of docs/verification-tiers.md,
+    // a file nothing ever wrote. The README listed it too. The answers behind
+    // it were rendered — into docs/authority-split.md — so only the claim
+    // was false, which is the kind of false that nothing notices.
+    const doc = emptyAnswers({ templateVersion: '1.0', project: { name: 'P' } })
+    doc.generatedAt = '2026-08-13T00:00:00.000Z'
+    Object.assign(doc.answers, {
+      'authority.cannot': ['device', 'deploy', 'prod-data'],
+      'authority.triage': { device: 'physical', deploy: 'chosen', 'prod-data': 'untested' },
+      'authority.human_proof': 'Tap through onboarding on a phone.',
+      'authority.agent_reach': 'It can boot the simulator and screenshot both colour schemes.',
+      'authority.retest_days': 30,
+    })
+    const artifacts = await buildArtifacts({ doc, detected: { agentConfig: { claudeMd: true }, commands: {}, deploySurface: [] } })
+    const byPath = new Map(artifacts.map((a) => [a.path, a.body]))
+    const slug = (h) => h.toLowerCase().replace(/[^a-z0-9 -]/g, '').trim().replace(/\s+/g, '-').replace(/-+/g, '-')
+
+    for (const q of QUESTIONS) {
+      for (const g of q.generates) {
+        const [path, anchor] = g.split('#')
+        assert.ok(byPath.has(path), `"${q.id}" claims to generate ${path}, which no artifact produces`)
+        const headings = [...byPath.get(path).matchAll(/^#{1,6}\s+(.+)$/gm)].map((m) => slug(m[1]))
+        assert.ok(
+          anchor && headings.some((h) => h === anchor || h.startsWith(`${anchor}-`)),
+          `"${q.id}" claims ${g}, but the rendered ${path} has no such heading (it has: ${headings.join(', ')})`,
+        )
+      }
+    }
+  })
+})

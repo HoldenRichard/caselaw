@@ -1,8 +1,8 @@
 /**
  * The interview runner.
  *
- * Enforces the four rules that keep a fifteen-minute interview at fifteen
- * minutes, all of which are checkable rather than aspirational:
+ * Enforces the four rules that keep a short interview short, all of which
+ * are checkable rather than aspirational:
  *
  *  1. A hard question budget per session. The runner refuses to exceed it —
  *     if a session grows, a question gets cut, not the cap raised.
@@ -38,7 +38,8 @@ export async function runSession({ session, doc, detected, prompt, persist, reco
     !reconfigure &&
     (Object.prototype.hasOwnProperty.call(doc.answers, id) || doc.unanswered.some((u) => u.id === id))
 
-  prompt.note(`\n── Session ${meta.n}/${SESSIONS.length}: ${meta.title} · ~${meta.minutes} min`)
+  const numbered = SESSIONS.length > 1 ? `Session ${meta.n}/${SESSIONS.length}: ` : ''
+  prompt.note(`\n── ${numbered}${meta.title} · ~${meta.minutes} min`)
 
   const asked = []
   const seen = new Set()

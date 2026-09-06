@@ -148,8 +148,11 @@ required to have a **positive control** — a test where a known-bad input must
 actually fail.
 
 So: no check counts as existing until it has been watched failing. This
-repository has 468 tests, 163 of them positive controls, and a meta-test that
-fails the build if any gate kind lacks one.
+repository's suite has 498 `test()` cases in source, 168 of them named POSITIVE
+CONTROL (`npm test` runs a few more, generated per adapter), a meta-test that
+fails the build if any gate kind lacks one — and another that fails if this
+sentence goes stale, because the previous version of it was wrong on both
+numbers and nothing had noticed.
 
 ---
 
