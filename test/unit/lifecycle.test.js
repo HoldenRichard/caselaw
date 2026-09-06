@@ -216,15 +216,43 @@ describe('doctor — is any of this actually wired up?', () => {
     assert.ok(r.findings.some((f) => f.name === 'hooks' && f.status === 'fail'))
   })
 
-  test('POSITIVE CONTROL: hooks that never mention the runner are flagged', async () => {
+  test('POSITIVE CONTROL: hooks that never invoke the runner are a FAIL, not a warning', async () => {
+    // The Kabu retrofit: a committed settings.json meant the gate hooks were
+    // never written, doctor said "warn" and then "Wiring looks live", exit 0.
     await install()
     await put('.claude/settings.json', JSON.stringify({
       hooks: { PreToolUse: [{ matcher: 'Edit', hooks: [{ type: 'command', command: 'echo hi' }] }] },
     }))
     const r = await doctor({ root })
     const f = r.findings.find((x) => x.name === 'hooks')
-    assert.equal(f.status, 'warn')
-    assert.match(f.hint, /nothing invokes/)
+    assert.equal(f.status, 'fail')
+    assert.equal(r.ok, false, 'an installed, inert harness must not pass doctor')
+  })
+
+  test('POSITIVE CONTROL: a hook whose runner path does not exist is not "wired"', async () => {
+    await install()
+    const good = await doctor({ root })
+    assert.equal(good.findings.find((f) => f.name === 'hooks').status, 'ok', 'the settings.json init writes is genuinely wired')
+    // Same shape, same "gate.mjs" substring, but nothing is at that path.
+    await put('.claude/settings.json', JSON.stringify({
+      hooks: { PreToolUse: [{ matcher: 'Edit|Write', hooks: [{
+        type: 'command',
+        command: 'node "/nonexistent/does/not/exist/gate.mjs" --mode pre --host claude',
+      }] }] },
+    }))
+    const r = await doctor({ root })
+    const f = r.findings.find((x) => x.name === 'hooks')
+    assert.equal(f.status, 'fail', 'doctor only substring-matched "gate.mjs": this hook can never execute')
+    assert.equal(r.ok, false)
+  })
+
+  test('an install with zero gates is wired but not yet enforcing, and doctor says so', async () => {
+    await install()
+    const r = await doctor({ root })
+    const g = r.findings.find((x) => x.name === 'gates')
+    assert.equal(g.status, 'warn')
+    assert.match(g.detail, /nothing is enforced yet/)
+    assert.equal(r.ok, true, 'a warning, not a failure: expected until a rule earns a gate')
   })
 
   test('an uninstalled repo fails clearly rather than pretending', async () => {

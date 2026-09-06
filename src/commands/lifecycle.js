@@ -17,7 +17,7 @@
 
 import { readFile, writeFile, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import * as answersStore from '../core/answers.js'
 import * as manifestStore from '../core/manifest.js'
@@ -229,12 +229,21 @@ export async function doctor({ root }) {
         .flat()
         .flatMap((e) => (e.hooks ?? []).map((h) => h.command))
         .filter(Boolean)
+      const ours = commands.filter((c) => c.includes('gate.mjs'))
       if (!commands.length) {
         warn('hooks', 'settings.json has no hook commands', 'Gates will only run in CI or by hand.')
-      } else if (!commands.some((c) => c.includes('gate.mjs'))) {
-        warn('hooks', 'no hook invokes the gate runner', 'Config that nothing invokes is the failure this tool exists to prevent.')
+      } else if (!ours.length) {
+        // A settings file that exists and never invokes the runner is the
+        // harness installed and inert — the failure this tool exists to
+        // prevent, and it used to be reported as a warning under a green
+        // "Wiring looks live".
+        bad('hooks', 'settings.json exists but nothing invokes the gate runner', 'Re-run `caselaw init` (or `upgrade`) so the hook entries are merged in; until then no gate runs on any edit.')
       } else {
-        ok('hooks', `${commands.length} hook command(s) wired`)
+        // Run the command exactly as Claude Code would. A substring match on
+        // "gate.mjs" used to pass a hook whose path could never execute.
+        const probe = await exerciseHook(ours[0], root)
+        if (probe.ok) ok('hooks', `${ours.length} hook command(s) wired and answering`)
+        else bad('hooks', `the installed hook command does not reach the runner: ${probe.reason}`, 'The hook is configured but cannot execute; nothing is enforced on any edit.')
       }
     } catch (err) {
       bad('hooks', `.claude/settings.json is unreadable: ${err.message}`, 'Fix the JSON; a broken settings file disables every hook.')
@@ -249,7 +258,8 @@ export async function doctor({ root }) {
     if (!gates) warn('gates', 'no gates.json', 'Expected until a rule earns one.')
     else {
       const { ok: valid, problems } = gatesStore.validateConfig(gates)
-      if (valid) ok('gates', `${gates.gates.length} gate(s), config valid`)
+      if (valid && gates.gates.length === 0) warn('gates', '0 gates: nothing is enforced yet', 'Expected until a rule earns one — `caselaw rule promote <name>`.')
+      else if (valid) ok('gates', `${gates.gates.length} gate(s), config valid`)
       else bad('gates', `${problems.filter((p) => p.severity === 'error').length} config error(s)`, 'Run `caselaw audit` for detail.')
     }
   } catch (err) {
@@ -261,6 +271,40 @@ export async function doctor({ root }) {
 
 async function exists(p) {
   try { await stat(p); return true } catch { return false }
+}
+
+/**
+ * Run an installed hook command the way the host does — through a shell,
+ * with CLAUDE_PROJECT_DIR set, a PreToolUse payload on stdin — and read what
+ * comes back. A clean payload must produce neither a block nor any sign the
+ * runner was never reached.
+ */
+function exerciseHook(command, root) {
+  if (process.platform === 'win32') return Promise.resolve({ ok: true, reason: 'not exercised on Windows' })
+  const payload = JSON.stringify({
+    hook_event_name: 'PreToolUse', tool_name: 'Edit', cwd: root,
+    tool_input: { file_path: join(root, 'README.md'), old_string: '', new_string: '' },
+  })
+  return new Promise((resolvePromise) => {
+    const child = spawn('sh', ['-c', command], {
+      cwd: root, env: { ...process.env, CLAUDE_PROJECT_DIR: root }, stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    let out = ''
+    let err = ''
+    child.stdout.on('data', (d) => (out += d))
+    child.stderr.on('data', (d) => (err += d))
+    const timer = setTimeout(() => child.kill('SIGKILL'), 15000)
+    child.on('error', (e) => { clearTimeout(timer); resolvePromise({ ok: false, reason: e.message }) })
+    child.on('close', (code) => {
+      clearTimeout(timer)
+      if (/runner not found|Cannot find module|MODULE_NOT_FOUND|internal error/i.test(out + err)) {
+        return resolvePromise({ ok: false, reason: (out + err).trim().split('\n')[0].slice(0, 200) })
+      }
+      if (code !== 0 && code !== 2) return resolvePromise({ ok: false, reason: `exit ${code}: ${(err || out).trim().split('\n')[0].slice(0, 200)}` })
+      resolvePromise({ ok: true, reason: null })
+    })
+    child.stdin.end(payload)
+  })
 }
 
 export class LifecycleError extends Error {

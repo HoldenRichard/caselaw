@@ -49,10 +49,20 @@ export function pointerTargets(detected) {
  * keep working with this CLI uninstalled.
  */
 export function claudeHookSettings() {
+  // $CLAUDE_PROJECT_DIR is the directory the session STARTED in and stays there
+  // across a cd or a worktree (hooks reference) — right for locating the
+  // runner, wrong for naming the root, so no --root is passed: the runner
+  // finds the install that owns the file being written. The guard makes a
+  // missing runner visible; node's own exit 1 on a missing module is shown to
+  // no one on a hook, and the harness would be silently inert.
+  const runner = '"$CLAUDE_PROJECT_DIR/.caselaw/bin/gate.mjs"'
   const cmd = (mode) =>
-    `node "$CLAUDE_PROJECT_DIR/.caselaw/bin/gate.mjs" --mode ${mode} --host claude --root "$CLAUDE_PROJECT_DIR"`
+    `if [ -f ${runner} ]; then node ${runner} --mode ${mode} --host claude; ` +
+    `else echo "{\\"systemMessage\\":\\"caselaw: gate runner not found at $CLAUDE_PROJECT_DIR/.caselaw/bin/gate.mjs; nothing was checked. Run caselaw doctor.\\"}"; fi`
   const entry = (mode) => ({
-    matcher: 'Edit|Write|MultiEdit',
+    // Exact-string list, not a regex (hooks reference): the write tools today
+    // are Write, Edit and NotebookEdit. MultiEdit no longer exists.
+    matcher: 'Edit|Write|NotebookEdit',
     hooks: [{ type: 'command', command: cmd(mode), timeout: 30 }],
   })
   return { hooks: { PreToolUse: [entry('pre')], PostToolUse: [entry('post')] } }

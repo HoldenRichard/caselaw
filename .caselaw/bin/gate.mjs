@@ -38,6 +38,7 @@
  */
 
 import { execFile } from 'node:child_process'
+import { realpathSync } from 'node:fs'
 import { appendFile, mkdir, readFile, readdir, stat } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, posix } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -1919,7 +1920,16 @@ export async function evaluate(opts = {}) {
   const gates = opts.config ? normalizeInline(opts.config, loaded) : loaded.gates
 
   const { sets, notes: setNotes } = await deriveSets(root, mode, opts)
-  const ctx = await makeContext({ ...opts, ...sets, root, mode })
+  // Every path a gate compares against a glob is spelled the way the
+  // filesystem spells it: real path, relative to the real root. A symlinked
+  // root or a case variant (DOCS/x on a case-folding disk) is the same file
+  // on disk, and used to be a different string here.
+  const canon = makeCanon(root)
+  for (const k of ['targets', 'writes', 'changeSet']) {
+    if (Array.isArray(sets[k])) sets[k] = uniq(sets[k].map(canon))
+  }
+  const proposed = (opts.proposed ?? []).map((p) => (p && typeof p.path === 'string' ? { ...p, path: canon(p.path) } : p))
+  const ctx = await makeContext({ ...opts, ...sets, proposed, root, mode })
   ctx.notes.push(...setNotes)
 
   /** @type {GateResult[]} */
@@ -1989,7 +1999,8 @@ export function extractHookInput(payload) {
   if (!input || typeof input !== 'object') {
     return { ok: false, reason: 'hook payload has no tool_input object', path: null, texts: [], whole: false, toolName }
   }
-  const path = str(input.file_path) || null
+  // NotebookEdit carries `notebook_path` and `new_source`; MultiEdit no longer exists.
+  const path = str(input.file_path) || str(input.notebook_path) || null
   const texts = []
   let whole = false
   if (typeof input.content === 'string') {
@@ -1997,6 +2008,7 @@ export function extractHookInput(payload) {
     whole = true
   }
   if (typeof input.new_string === 'string') texts.push(input.new_string)
+  if (typeof input.new_source === 'string') texts.push(input.new_source)
   if (Array.isArray(input.edits)) {
     for (const e of input.edits) if (e && typeof e.new_string === 'string') texts.push(e.new_string)
   }
@@ -2082,11 +2094,14 @@ function fireLine(f) {
 
 /** The one-line reason a PreToolUse block puts on stderr, for the agent to read. */
 function blockReason(result) {
+  // One header, then exactly one bounded line per fire. `message` and
+  // `origin` come from config an agent can write; a newline in either used
+  // to start a line of its own on the transcript the model reads.
   const lines = result.blocking.map((f) => {
     const at = f.path ? `${f.path}${f.line ? `:${f.line}` : ''}` : ''
-    const msg = f.message ? ` ${f.message}` : ''
-    const origin = f.origin ? ` [rule: ${f.origin}]` : ''
-    return `${f.gate} (${f.kind}) ${at}: ${f.detail}.${msg}${origin}`
+    const msg = f.message ? ` ${oneLine(f.message, 300)}` : ''
+    const origin = f.origin ? ` [rule: ${oneLine(f.origin, 200)}]` : ''
+    return oneLine(`${f.gate} (${f.kind}) ${at}: ${oneLine(f.detail, 300)}.${msg}${origin}`, 900)
   })
   return `caselaw gate: blocked this change:\n  ${lines.join('\n  ')}`
 }
@@ -2232,6 +2247,107 @@ export async function main(argv = process.argv.slice(2), io = {}) {
   }
 }
 
+/**
+ * Find the install that owns the file being written.
+ *
+ * `$CLAUDE_PROJECT_DIR` is the directory the session STARTED in and stays there
+ * across a `cd` or a worktree (hooks reference), so a root taken from it goes
+ * stale and the runner used to answer "outside the root; nothing was checked"
+ * — on exit 0, where nobody sees it. The file's own location is authoritative:
+ * the nearest ancestor holding `.caselaw/` is the install whose gates apply.
+ * Paths are compared as REAL paths, so a root reached through a symlink
+ * (/tmp vs /private/tmp) or a case variant on a case-folding filesystem
+ * (DOCS/ vs docs/) is the same directory here, as it is on disk.
+ */
+async function locateRoot({ hint, cwd, filePath }) {
+  const abs = isAbsolute(filePath) ? filePath : resolve(cwd || process.cwd(), filePath)
+  const real = realpathLenient(abs)
+  let dir = posixDirname(real)
+  for (;;) {
+    if (await isDirectory(join(dir, '.caselaw'))) {
+      return { ok: true, root: dir, rel: toPosix(relative(dir, real)), file: real }
+    }
+    const parent = posixDirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
+  if (hint) {
+    const realHint = realpathLenient(resolve(hint))
+    const rel = toPosix(relative(realHint, real))
+    if (rel && !rel.startsWith('../') && rel !== '..' && !isAbsolute(rel)) {
+      return { ok: true, root: realHint, rel, file: real }
+    }
+  }
+  return {
+    ok: false,
+    reason: `${filePath} is outside any caselaw install (no .caselaw/ above it${hint ? `, and not under ${hint}` : ''})`,
+  }
+}
+
+function posixDirname(p) {
+  const d = resolve(p, '..')
+  return d
+}
+
+async function isDirectory(p) {
+  try {
+    return (await stat(p)).isDirectory()
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The real path of `p`, or of its deepest existing ancestor with the missing
+ * tail appended — a file about to be written does not exist yet, but the
+ * directory it lands in does, and that is where symlinks and case live.
+ */
+function realpathLenient(p) {
+  const abs = resolve(p)
+  try {
+    return realpathSync.native(abs)
+  } catch {
+    const parent = resolve(abs, '..')
+    if (parent === abs) return abs
+    return join(realpathLenient(parent), abs.slice(parent.length + 1))
+  }
+}
+
+/** Canonical, root-relative spellings for every path a run compares against globs. */
+function makeCanon(root) {
+  const realRoot = realpathLenient(root)
+  return (rel) => {
+    const abs = isAbsolute(rel) ? rel : resolve(root, rel)
+    const r = relative(realRoot, realpathLenient(abs))
+    return toPosix(r)
+  }
+}
+
+/** One line, bounded. Config strings reach the agent's transcript; none may add lines of its own. */
+function oneLine(s, max) {
+  return String(s ?? '').replace(/[\r\n\t\v\f\u2028\u2029]+/g, ' ').replace(/\s{2,}/g, ' ').trim().slice(0, max)
+}
+
+/**
+ * Anything that is not a block, on exit 0, must go to STDOUT as hook JSON:
+ * stderr from a hook that exits 0 goes to the debug log only and neither the
+ * user nor the model ever sees it (hooks reference). `systemMessage` reaches
+ * the user; `additionalContext` reaches the model.
+ */
+function emitAsides(stdout, mode, lines, extra = {}) {
+  const payload = { ...extra }
+  if (lines.length) {
+    const text = `caselaw gate (${mode}):\n  ${lines.join('\n  ')}`
+    payload.systemMessage = text
+    payload.hookSpecificOutput = {
+      hookEventName: mode === 'pre' ? 'PreToolUse' : 'PostToolUse',
+      additionalContext: text,
+    }
+  }
+  if (Object.keys(payload).length === 0) return
+  stdout(JSON.stringify(payload) + '\n')
+}
+
 async function runHookMode(mode, common, args, stdout, stderr) {
   const raw = await readStdin()
   if (!raw.ok) {
@@ -2257,23 +2373,24 @@ async function runHookMode(mode, common, args, stdout, stderr) {
     return EXIT.OK
   }
 
-  const root = common.root
-  const rel = isAbsolute(hook.path) ? toPosix(relative(root, hook.path)) : toPosix(hook.path)
-  if (!rel || rel.startsWith('../')) {
-    stderr(`caselaw gate: ${hook.path} is outside ${root}; nothing was checked\n`)
+  const located = await locateRoot({ hint: args.root, cwd: str(payload.cwd) || null, filePath: hook.path })
+  if (!located.ok) {
+    stderr(`caselaw gate: ${located.reason}; nothing was checked\n`)
+    emitAsides(stdout, mode, [`${located.reason}; nothing was checked`])
     return EXIT.OK
   }
+  const root = located.root
+  const rel = located.rel
 
   /** @type {any} */
-  const opts = { ...common, writes: [rel] }
+  const opts = { ...common, root, writes: [rel] }
   if (mode === 'pre') {
     opts.proposed = hook.texts.map((t) => ({ path: rel, text: t, whole: hook.whole }))
     opts.targets = hook.texts.length ? [rel] : []
     opts.changeSet = null
     opts.changeSetReason = 'pre mode sees only the proposed write'
     // Several fragments for one path collapse in the overrides map, so join
-    // them: a banned string split across two edits of one MultiEdit still has
-    // to be caught, and joining is what makes each fragment reachable.
+    // them: a banned string split across two edits still has to be caught.
     if (hook.texts.length > 1) {
       opts.proposed = [{ path: rel, text: hook.texts.join('\n'), whole: false }]
     }
@@ -2286,27 +2403,40 @@ async function runHookMode(mode, common, args, stdout, stderr) {
 
   const result = await evaluate(opts)
 
+  const asides = []
+  if (result.config.degraded) asides.push(`config not usable: ${oneLine(result.config.reason, 300)}`)
+  for (const f of result.warnings) asides.push(oneLine(`warn ${f.gate}: ${f.detail}${f.message ? ` — ${f.message}` : ''}`, 400))
+  for (const r of result.degraded) for (const d of r.degradations) asides.push(oneLine(`degraded ${r.gate}: ${d.reason}`, 400))
+  for (const r of result.results) for (const n of r.notes ?? []) asides.push(oneLine(`note ${r.gate}: ${n}`, 400))
+
   if (args.json) {
-    stdout(JSON.stringify(result, null, 2) + '\n')
+    // --json changes the report format, never the verdict. It used to return
+    // EXIT.OK before the block branches were reached, in both hook modes.
+    if (result.blocking.length === 0) {
+      stdout(JSON.stringify(result, null, 2) + '\n')
+      return EXIT.OK
+    }
+    if (mode === 'pre') {
+      stderr(blockReason(result) + '\n')
+      stdout(JSON.stringify(result, null, 2) + '\n')
+      return EXIT.PRE_BLOCK
+    }
+    stdout(JSON.stringify({ decision: 'block', reason: blockReason(result), result }, null, 2) + '\n')
     return EXIT.OK
   }
 
-  // Everything that is not a block goes to stderr: in Claude Code, stderr is
-  // shown in the transcript without altering the tool's fate, which is exactly
-  // what a warning and a degraded check should do.
-  const asides = []
-  if (result.config.degraded) asides.push(`config not usable: ${result.config.reason}`)
-  for (const f of result.warnings) asides.push(`warn ${f.gate}: ${f.detail}${f.message ? ` — ${f.message}` : ''}`)
-  for (const r of result.degraded) for (const d of r.degradations) asides.push(`degraded ${r.gate}: ${d.reason}`)
-  if (asides.length) stderr(`caselaw gate (${mode}):\n  ${asides.join('\n  ')}\n`)
-
-  if (result.blocking.length === 0) return EXIT.OK
+  if (result.blocking.length === 0) {
+    emitAsides(stdout, mode, asides)
+    return EXIT.OK
+  }
 
   if (mode === 'pre') {
+    // Exit 2 blocks and its stderr IS shown to the model (hooks reference).
+    if (asides.length) stderr(`caselaw gate (${mode}):\n  ${asides.join('\n  ')}\n`)
     stderr(blockReason(result) + '\n')
     return EXIT.PRE_BLOCK
   }
-  stdout(JSON.stringify({ decision: 'block', reason: blockReason(result) }) + '\n')
+  emitAsides(stdout, mode, asides, { decision: 'block', reason: blockReason(result) })
   return EXIT.OK
 }
 
