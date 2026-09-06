@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "cliVersion": "0.1.0",
+  "cliVersion": "0.1.1",
   "templateVersion": "1.0",
-  "generatedAt": "2026-09-06T15:23:49.757Z",
+  "generatedAt": "2026-09-06T15:34:14.567Z",
   "entries": {
     "docs/authority-split.md": {
       "kind": "file",
@@ -51,7 +51,7 @@
     },
     ".caselaw/bin/gate.mjs": {
       "kind": "file",
-      "hash": "35c11bb18c931d16413d1877be4dcaac5050d6547d078145e298c231cb3b3489"
+      "hash": "55bd10a9fa7d924fdd12a3d7b7662f621d07a65bf3074a0e9020008df11a01e4"
     },
     ".caselaw/schema/gates.schema.json": {
       "kind": "file",
@@ -62,8 +62,9 @@
       "hash": "3a827edc6bf290a11fae2df2c823065136dece4c87a6e2a84a62da0929baa1cb"
     },
     ".claude/settings.json": {
-      "kind": "file",
-      "hash": "9e3744e41ea116d236512f8cab7b927719daf6227e27aa1b8e575c6434a87ccd"
+      "kind": "json-merge",
+      "hash": "32e1fb79bb845498621c1e1b967d5c15f572b5ae53d1becf48ccfd6eb346d2e0",
+      "blockId": "hooks"
     },
     ".claude/commands/close-out.md": {
       "kind": "file",

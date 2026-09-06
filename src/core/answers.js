@@ -12,6 +12,7 @@
  */
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import { normalize } from './text.js'
 import { dirname, join } from 'node:path'
 
 export const ANSWERS_PATH = '.caselaw/answers.json'
@@ -31,7 +32,7 @@ export function emptyAnswers({ templateVersion = '1.0', project = {} } = {}) {
 export async function load(root) {
   try {
     const raw = await readFile(join(root, ANSWERS_PATH), 'utf8')
-    const parsed = JSON.parse(raw)
+    const parsed = JSON.parse(normalize(raw)) // a BOM from a Windows editor is not a parse error
     if (parsed.schemaVersion !== SCHEMA_VERSION) {
       throw new AnswersError(
         `answers.json is schema v${parsed.schemaVersion}, this CLI speaks v${SCHEMA_VERSION}. ` +

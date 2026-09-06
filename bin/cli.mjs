@@ -25,6 +25,7 @@ import { pathToFileURL } from 'node:url'
 
 import { detect } from '../src/detect/index.js'
 import { runInterview } from '../src/interview/runner.js'
+import { QUESTIONS } from '../src/interview/questions.js'
 import { ttyPrompt } from '../src/interview/prompt.js'
 import * as answersStore from '../src/core/answers.js'
 import * as manifestStore from '../src/core/manifest.js'
@@ -32,7 +33,7 @@ import { buildPlan, formatPlan, SKIP, UNCHANGED } from '../src/core/plan.js'
 import { hash } from '../src/core/text.js'
 import { scanMachinePaths } from '../src/core/secrets.js'
 import { buildArtifacts } from '../src/generate/artifacts.js'
-import { check, planUpgrade, planEject, applyEject, doctor } from '../src/commands/lifecycle.js'
+import { check, planUpgrade, planEject, applyEject, doctor, newQuestionsSince } from '../src/commands/lifecycle.js'
 import { buildReviewPrompt } from '../src/commands/review.js'
 import { selectAdapters } from '../src/adapters/index.js'
 import { gather } from '../src/audit/gather.js'
@@ -48,7 +49,7 @@ const require = createRequire(import.meta.url)
  * announced itself as 0.1.0 and stamped that into every manifest it wrote.
  */
 export const CLI_VERSION = require('../package.json').version
-const TEMPLATE_VERSION = '1.0'
+export const TEMPLATE_VERSION = '1.0'
 
 /** The dispatch table. test/unit/cli-surface.test.js checks every advertised command against it. */
 export const COMMANDS = {
@@ -187,7 +188,26 @@ async function cmdUpgrade(args, root) {
     say(`  ${err.message}`)
     return 1
   }
-  const { doc, manifest, plan } = planned
+  let { doc, manifest, plan } = planned
+
+  // Questions added since this install's template are asked now, and only
+  // those. Without a terminal they stay holes the docs mark and the audit
+  // reports, which is better than guessing.
+  const fresh = newQuestionsSince(doc.templateVersion, QUESTIONS).filter((q) => !(q.id in doc.answers))
+  if (fresh.length) {
+    if (stdin.isTTY && stdout.isTTY && !args.dryRun) {
+      say(`\n  ${fresh.length} question(s) added since template ${doc.templateVersion}.`)
+      const prompt = ttyPrompt()
+      try {
+        await runInterview({ doc, detected, prompt, persist: (d) => answersStore.save(root, d), sessions: [1] })
+      } finally {
+        await prompt.close()
+      }
+      ;({ doc, manifest, plan } = await planUpgrade({ root, detected, force: args.force }))
+    } else {
+      say(`\n  ${fresh.length} question(s) added since template ${doc.templateVersion}; run \`caselaw init\` at a terminal to answer them. Until then they are marked as holes.`)
+    }
+  }
 
   say('')
   say(formatPlan(plan, { root }))
@@ -415,13 +435,19 @@ async function finishInit({ root, doc, detected, args, prompt }) {
   return 0
 }
 
-/** Write an approved plan and record what we wrote. Shared by init and upgrade. */
+/** Write an approved plan and record what we own. Shared by init and upgrade. */
 async function writePlan({ root, plan, manifest, doc }) {
   for (const e of plan.entries) {
-    if (e.action === SKIP || e.action === UNCHANGED) continue
-    const abs = join(root, e.path)
-    await mkdir(dirname(abs), { recursive: true })
-    await writeFile(abs, e.nextText, 'utf8')
+    if (e.action === SKIP) continue
+    if (e.action !== UNCHANGED) {
+      const abs = join(root, e.path)
+      await mkdir(dirname(abs), { recursive: true })
+      await writeFile(abs, e.nextText, 'utf8')
+    }
+    // UNCHANGED is recorded too. A file already on disk in exactly our shape
+    // — after an interrupted install, or an eject that kept the docs — used
+    // to stay unowned forever: upgrade could not update it, eject could not
+    // remove it.
     manifestStore.record(manifest, {
       path: e.path,
       kind: e.kind,
@@ -429,6 +455,12 @@ async function writePlan({ root, plan, manifest, doc }) {
       contentHash: e.kind === 'file' ? hash(e.nextText) : e.interiorHash,
     })
   }
+  // Every write is by THIS build at THIS template. The stamps used to be set
+  // only when the files were first created, so an upgrade never advanced them
+  // and the new-questions mechanism could never converge.
+  manifest.cliVersion = CLI_VERSION
+  manifest.templateVersion = TEMPLATE_VERSION
+  if (doc) doc.templateVersion = TEMPLATE_VERSION
   await manifestStore.save(root, manifest)
   if (doc) await answersStore.save(root, doc)
 }

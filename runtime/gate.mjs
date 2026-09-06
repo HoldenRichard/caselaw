@@ -1453,6 +1453,14 @@ async function runExtract(ex, ctx, out, name) {
   } else {
     files = [toPosix(spec)]
   }
+  // Config is data, not code, everywhere but the shell kind — and a config an
+  // agent can write must not be a read-any-file primitive. An escaping path
+  // degrades the gate rather than being read.
+  const escaping = files.filter((f) => f === '..' || f.startsWith('../') || isAbsolute(f))
+  if (escaping.length) {
+    addDegradation(out, `extract "${name}": ${escaping[0]} is outside the repository; the invariant was NOT checked`, 'extract.file must be a repo-relative path or glob')
+    return null
+  }
 
   const values = []
   const sources = []

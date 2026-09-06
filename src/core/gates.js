@@ -17,6 +17,7 @@
  */
 
 import { readFile, writeFile, mkdir, appendFile } from 'node:fs/promises'
+import { normalize } from './text.js'
 import { dirname, join } from 'node:path'
 
 export const GATES_PATH = '.caselaw/gates.json'
@@ -54,7 +55,7 @@ export function emptyConfig() {
 export async function load(root) {
   try {
     const raw = await readFile(join(root, GATES_PATH), 'utf8')
-    const parsed = JSON.parse(raw)
+    const parsed = JSON.parse(normalize(raw))
     if (parsed.version !== SCHEMA_VERSION) {
       throw new GateError(
         `gates.json is version ${parsed.version}, this CLI speaks ${SCHEMA_VERSION}.`,

@@ -14,7 +14,7 @@ import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { render } from '../render/engine.js'
-import { BOUNDARY_LABELS } from './authority-split.js'
+import { BOUNDARY_LABELS, plain } from './authority-split.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 export const TEMPLATE_PATH = join(HERE, '../../templates/docs/close-out.md.tmpl')
@@ -27,13 +27,13 @@ export function buildModel({ answers = {}, detected = {}, projectName }) {
   // list is the same list, not a second one that drifts from the first.
   const humanOnly = selected
     .filter((b) => triage[b] === 'physical' || triage[b] === 'chosen')
-    .map((b) => ({ value: b, label: BOUNDARY_LABELS[b] || b }))
+    .map((b) => ({ value: b, label: BOUNDARY_LABELS[b] || plain(b, 200) }))
 
   const anyCommand =
     detected.commands?.test?.cmd || detected.commands?.build?.cmd || 'npm test'
 
   return {
-    project: { name: projectName || 'this project' },
+    project: { name: plain(projectName || 'this project', 120) },
     humanOnly,
     tier1Example: anyCommand,
   }

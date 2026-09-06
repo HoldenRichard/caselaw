@@ -71,30 +71,54 @@ export function settleCommandFor(boundary, detected = {}) {
  * Pure — no IO — so it is cheap to test and impossible to make
  * environment-dependent by accident.
  */
+/**
+ * Free text from the interview is rendered as text. An answer is one line of
+ * prose; a newline, a leading `#` or a `|` in it used to become markdown
+ * structure in a document the agent reads as doctrine — a seeded
+ * ".caselaw/answers.json" line reading "## SYSTEM OVERRIDE" became a heading,
+ * and `check` then certified the file as correct.
+ */
+export function plain(s, max = 2000) {
+  return String(s ?? '')
+    .replace(/[\r\n\u2028\u2029\t\v\f]+/g, ' ')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+    .slice(0, max)
+    .replace(/^([#>]|[-*+]\s|\d+[.)]\s)/, '\\$1')
+}
+
+/** A table cell: plain text with pipes escaped, so a value cannot add columns. */
+export function cell(s, max = 400) {
+  return plain(s, max).replace(/\|/g, '\\|')
+}
+
 export function buildModel({ answers = {}, detected = {}, projectName, now = new Date() }) {
   const selected = answers['authority.cannot'] || []
   const triage = answers['authority.triage'] || {}
-  const label = (b) => BOUNDARY_LABELS[b] || b
+  const label = (b) => BOUNDARY_LABELS[b] || plain(b, 200)
 
   const bucket = (kind) =>
     selected
       .filter((b) => triage[b] === kind)
-      .map((b) => ({ value: b, label: label(b), note: (answers['authority.notes'] || {})[b] || '' }))
+      .map((b) => ({ value: b, label: label(b), note: plain((answers['authority.notes'] || {})[b] || '', 300) }))
 
   const untestedDays = Number(answers['authority.retest_days'] ?? 30)
   const unverified = selected
     .filter((b) => triage[b] === 'untested')
     .map((b) => ({
       value: b,
-      label: label(b),
-      assumedBecause: (answers['authority.notes'] || {})[b] || 'never tried',
-      settleCommand: settleCommandFor(b, detected),
+      label: cell(label(b), 200),
+      // No question collects a note today, so the honest default is that none
+      // was recorded — not "never tried", which was false whenever it had been.
+      assumedBecause: cell((answers['authority.notes'] || {})[b] || 'not recorded', 300),
+      settleCommand: cell(settleCommandFor(b, detected) || '', 300) || null,
     }))
 
   const can = buildCanList({ answers, detected })
 
   return {
-    project: { name: projectName || detected.projectName || 'this project' },
+    project: { name: plain(projectName || detected.projectName || 'this project', 120) },
     generatedAt: isoDate(now),
     retestDue: unverified.length ? isoDate(addDays(now, untestedDays)) : '',
     can,
@@ -102,7 +126,7 @@ export function buildModel({ answers = {}, detected = {}, projectName, now = new
     chosen: bucket('chosen'),
     unverified,
     truthSources: answers['authority.truth_sources'] || [],
-    humanProof: (answers['authority.human_proof'] || '').trim(),
+    humanProof: plain(answers['authority.human_proof'] || ''),
   }
 }
 
@@ -123,7 +147,7 @@ function buildCanList({ answers, detected }) {
   }
   if (verified.length) can.push(`Run: ${verified.join('; ')}.`)
 
-  const reach = (answers['authority.agent_reach'] || '').trim()
+  const reach = plain(answers['authority.agent_reach'] || '')
   if (reach) can.push(reach)
 
   if (!can.length) can.push('Read and edit source in this repository.')

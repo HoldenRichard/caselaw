@@ -26,6 +26,7 @@ import { buildArtifacts } from '../generate/artifacts.js'
 import { buildPlan, SKIP, UNCHANGED } from '../core/plan.js'
 import { locate, remove as removeBlock } from '../core/blocks.js'
 import { strip as stripJson } from '../core/jsonmerge.js'
+import { kindAt, refusal } from '../core/fsguard.js'
 import { hash } from '../core/text.js'
 
 const pExecFile = promisify(execFile)
@@ -103,11 +104,12 @@ export function newQuestionsSince(templateVersion, questions) {
 }
 
 function versionTuple(v) {
-  const [maj = 0, min = 0] = String(v ?? '0').split('.').map((n) => Number(n) || 0)
-  return [maj, min]
+  // Three parts: a question added at "1.0.1" used to be invisible.
+  const [maj = 0, min = 0, patch = 0] = String(v ?? '0').split('.').map((n) => Number(n) || 0)
+  return [maj, min, patch]
 }
 function cmpVersion(a, b) {
-  return a[0] - b[0] || a[1] - b[1]
+  return a[0] - b[0] || a[1] - b[1] || a[2] - b[2]
 }
 
 /**
@@ -148,6 +150,8 @@ export async function applyEject({ root, plan }) {
 
   for (const path of plan.deleteFiles) {
     try {
+      const refused = refusal(await kindAt(join(root, path)))
+      if (refused) { failed.push({ path, reason: refused }); continue }
       await rm(join(root, path), { force: true })
       removed.push(path)
     } catch (err) {
@@ -157,6 +161,8 @@ export async function applyEject({ root, plan }) {
 
   for (const { path, blockId, kind } of plan.stripBlocks) {
     try {
+      const refused = refusal(await kindAt(join(root, path)))
+      if (refused) { failed.push({ path, reason: refused }); continue }
       const text = await readFile(join(root, path), 'utf8')
       if (kind === 'json-merge') {
         const r = stripJson(text)
@@ -210,12 +216,23 @@ export async function doctor({ root }) {
   const bad = (name, detail, hint) => findings.push({ name, status: 'fail', detail, hint })
   const warn = (name, detail, hint) => findings.push({ name, status: 'warn', detail, hint })
 
-  const answers = await answersStore.load(root).catch(() => null)
-  if (!answers) {
+  let answers = null
+  let answersError = null
+  try {
+    answers = await answersStore.load(root)
+  } catch (err) {
+    answersError = err
+  }
+  if (answersError) {
+    // The file is there and does not parse. That is not "not installed", and
+    // `init` cannot help — it reads the same file and dies the same way.
+    bad('installed', `.caselaw/answers.json is unreadable: ${answersError.message}`, 'Restore it from git, or `caselaw eject` (which removes it) and install again. The wiring below is still checked.')
+  } else if (!answers) {
     bad('installed', 'no .caselaw/answers.json', 'Run `caselaw init`.')
     return { findings, ok: false }
+  } else {
+    ok('installed', `answers.json, template ${answers.templateVersion}`)
   }
-  ok('installed', `answers.json, template ${answers.templateVersion}`)
 
   // The vendored runner must exist AND execute.
   const runner = join(root, '.caselaw/bin/gate.mjs')

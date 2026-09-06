@@ -17,6 +17,8 @@ import { join } from 'node:path'
 import { hash } from './text.js'
 import { upsert, locate, BlockError } from './blocks.js'
 import { merge as mergeJson, parseSettings, extractOurs, hashOurs } from './jsonmerge.js'
+import { kindAt, refusal } from './fsguard.js'
+import { toPosix } from './manifest.js'
 
 export const NEW = 'NEW'
 export const MERGE = 'MERGE'
@@ -37,7 +39,15 @@ export async function buildPlan(root, artifacts, opts = {}) {
 
   for (const a of artifacts) {
     const abs = join(root, a.path)
-    const existing = await readIfExists(abs)
+    // Real files only. A symlink here used to hash by its target and be
+    // rewritten through; a directory used to vanish from every plan.
+    const kind = await kindAt(abs)
+    const refused = refusal(kind)
+    if (refused) {
+      entries.push({ ...a, action: SKIP, reason: `${a.path} ${refused}`, nextText: null })
+      continue
+    }
+    const existing = kind === 'missing' ? null : await readFile(abs, 'utf8')
 
     if (a.kind === 'file') {
       if (existing === null) {
@@ -45,13 +55,13 @@ export async function buildPlan(root, artifacts, opts = {}) {
         continue
       }
       if (hash(existing) === hash(a.body)) {
-        entries.push({ ...a, action: UNCHANGED, nextText: existing })
+        entries.push({ ...a, action: UNCHANGED, nextText: existing, interiorHash: hash(existing) })
         continue
       }
       // A whole-file artifact that already exists and differs: only ours to
       // rewrite if the manifest says we wrote it and the user has not touched
       // it since. Otherwise it is someone else's file with our name.
-      const owned = opts.manifest?.entries?.[a.path]
+      const owned = opts.manifest?.entries?.[toPosix(a.path)]
       const untouched = owned && owned.hash === hash(existing)
       if (untouched || force) {
         entries.push({ ...a, action: NEW, nextText: a.body, replacing: true, bytes: a.body.length })
@@ -70,7 +80,7 @@ export async function buildPlan(root, artifacts, opts = {}) {
       // Our content is a set of entries inside a file the project owns. The
       // file is merged into, never skipped for existing and never replaced —
       // with --force or without — beyond those entries.
-      const owned = opts.manifest?.entries?.[a.path]
+      const owned = opts.manifest?.entries?.[toPosix(a.path)]
       // A 0.1.x install recorded this file whole (kind 'file'); its content was
       // ours alone, so merging is exactly right and needs no --force. Only an
       // entry already recorded as a merge can have had OUR entries edited.
@@ -87,7 +97,7 @@ export async function buildPlan(root, artifacts, opts = {}) {
         continue
       }
       if (r.action === 'unchanged') {
-        entries.push({ ...a, action: UNCHANGED, nextText: existing })
+        entries.push({ ...a, action: UNCHANGED, nextText: existing, interiorHash: hashOurs(r.ours) })
         continue
       }
       entries.push({
@@ -112,7 +122,7 @@ export async function buildPlan(root, artifacts, opts = {}) {
       if (result.blocked === 'user-modified') {
         entries.push({ ...a, action: SKIP, reason: 'you edited inside the managed block', nextText: existing })
       } else if (result.action === 'unchanged') {
-        entries.push({ ...a, action: UNCHANGED, nextText: result.text })
+        entries.push({ ...a, action: UNCHANGED, nextText: result.text, interiorHash: result.hash })
       } else {
         const present = existing !== null && locate(existing, a.blockId).present
         entries.push({
@@ -176,11 +186,3 @@ export function formatPlan({ entries, summary }, { root = '.' } = {}) {
   return lines.join('\n')
 }
 
-async function readIfExists(abs) {
-  try {
-    return await readFile(abs, 'utf8')
-  } catch (err) {
-    if (err.code === 'ENOENT') return null
-    throw err
-  }
-}

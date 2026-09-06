@@ -18,8 +18,9 @@
 
 import { readFile, writeFile, mkdir, stat } from 'node:fs/promises'
 import { dirname, join, relative, sep } from 'node:path'
-import { hash } from './text.js'
+import { hash, normalize } from './text.js'
 import { parseSettings, extractOurs, hashOurs } from './jsonmerge.js'
+import { kindAt, refusal } from './fsguard.js'
 
 export const MANIFEST_PATH = '.caselaw/manifest.json'
 export const SCHEMA_VERSION = 1
@@ -38,7 +39,7 @@ export async function load(root) {
   const p = join(root, MANIFEST_PATH)
   try {
     const raw = await readFile(p, 'utf8')
-    const parsed = JSON.parse(raw)
+    const parsed = JSON.parse(normalize(raw))
     if (parsed.schemaVersion !== SCHEMA_VERSION) {
       throw new ManifestError(
         `Manifest schema v${parsed.schemaVersion} is not v${SCHEMA_VERSION}. ` +
@@ -110,12 +111,15 @@ export async function reconcile(root, manifest, { locate } = {}) {
 
   for (const [path, entry] of Object.entries(manifest.entries)) {
     const abs = join(root, path)
+    const kind = await kindAt(abs)
+    if (kind === 'missing') { missing.push(path); continue }
+    const refused = refusal(kind)
+    if (refused) { unreadable.push({ path, reason: refused }); continue }
     let text
     try {
       text = await readFile(abs, 'utf8')
     } catch (err) {
-      if (err.code === 'ENOENT') missing.push(path)
-      else unreadable.push({ path, reason: err.code || err.message })
+      unreadable.push({ path, reason: err.code || err.message })
       continue
     }
 
@@ -171,6 +175,7 @@ export function orphans(manifest, plannedPaths) {
 /** Everything eject would touch, split by how it must be removed. */
 export function ejectPlan(manifest, reconciliation) {
   const modified = new Set(reconciliation.modified)
+  const unreadable = new Map((reconciliation.unreadable || []).map((u) => [u.path, u.reason]))
   const deleteFiles = []
   const stripBlocks = []
   const leaveAlone = []
@@ -178,6 +183,12 @@ export function ejectPlan(manifest, reconciliation) {
   for (const [path, entry] of Object.entries(manifest.entries)) {
     if (modified.has(path)) {
       leaveAlone.push({ path, reason: 'you edited it' })
+      continue
+    }
+    if (unreadable.has(path)) {
+      // Cannot tell what is there, so cannot delete it. It used to fall out of
+      // every list and disappear from the plan.
+      leaveAlone.push({ path, reason: unreadable.get(path) })
       continue
     }
     if (entry.kind === 'file') deleteFiles.push(path)
