@@ -34,6 +34,7 @@ function run(argv, { input = '', cwd, env } = {}) {
     child.stdout.on('data', (d) => (out += d))
     child.stderr.on('data', (d) => (err += d))
     child.on('close', (code) => resolve({ code, out, err }))
+    child.stdin.on('error', () => {}) // a child that exits without reading stdin closes the pipe first (EPIPE)
     child.stdin.end(input)
   })
 }

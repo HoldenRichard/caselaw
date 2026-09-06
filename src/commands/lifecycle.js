@@ -363,6 +363,7 @@ function exerciseHook(command, root) {
       if (code !== 0 && code !== 2) return resolvePromise({ ok: false, reason: `exit ${code}: ${(err || out).trim().split('\n')[0].slice(0, 200)}` })
       resolvePromise({ ok: true, reason: null })
     })
+    child.stdin.on('error', () => {}) // a hook that never reads stdin closes the pipe first; that is not a failure of the hook
     child.stdin.end(payload)
   })
 }
