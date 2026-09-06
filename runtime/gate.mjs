@@ -948,13 +948,23 @@ function normalizeGrandfathers(gate, now, out) {
       out.notes.push(`${where} (${excerpt(context) || 'unnamed'}) suppresses NOTHING: ${problems.join(', ')}`)
       continue
     }
-    if (when.getTime() < now.getTime()) {
+    // Calendar days, compared as UTC days. `expires` is a date, not an
+    // instant: a grandfather expiring today suppresses for the whole of today,
+    // which is also what the audit's isOverdue() says. The two used to
+    // disagree from 00:00Z on the expiry day — the runner (and a block gate)
+    // fired while the audit reported "not expired".
+    if (utcDay(when) < utcDay(now)) {
       out.notes.push(`${where} expired ${expires} — "${excerpt(context, 48)}" is no longer grandfathered`)
       continue
     }
     live.push({ context, reason, expires, path: str(e.path) || null, window: Number.isFinite(e.window) ? e.window : GRANDFATHER_WINDOW })
   }
   return live
+}
+
+/** Midnight UTC of the day `d` falls on, as a number — the same comparison src/core/dates.js makes. */
+function utcDay(d) {
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())
 }
 
 function suppressedBy(grandfathers, text, index, matchText, path) {
