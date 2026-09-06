@@ -38,6 +38,7 @@ let root
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'caselaw-init-'))
   execFileSync('git', ['init', '-q'], { cwd: root })
+  execFileSync('git', ['config', 'gc.auto', '0'], { cwd: root }) // no background gc racing the temp-dir cleanup
   execFileSync('git', ['config', 'user.email', 't@t'], { cwd: root })
   execFileSync('git', ['config', 'user.name', 't'], { cwd: root })
   execFileSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: root })

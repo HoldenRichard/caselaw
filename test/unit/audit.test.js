@@ -12,6 +12,7 @@ let root
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'caselaw-audit-'))
   execFileSync('git', ['init', '-q'], { cwd: root })
+  execFileSync('git', ['config', 'gc.auto', '0'], { cwd: root }) // no background gc racing the temp-dir cleanup
 })
 afterEach(async () => { await rm(root, { recursive: true, force: true }) })
 

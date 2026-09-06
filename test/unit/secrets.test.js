@@ -63,6 +63,7 @@ async function put(rel, content) {
 
 async function gitRepo(dir) {
   await exec('git', ['init', '-q', dir])
+  await exec('git', ['-C', dir, 'config', 'gc.auto', '0']) // no background gc racing the temp-dir cleanup
   await exec('git', ['-C', dir, 'config', 'user.email', 'test@example.invalid'])
   await exec('git', ['-C', dir, 'config', 'user.name', 'test'])
   await exec('git', ['-C', dir, 'config', 'commit.gpgsign', 'false'])

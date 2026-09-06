@@ -70,6 +70,7 @@ test('the audit counts only evidence-mode fires toward promotion, but any fire k
   const root = await mkdtemp(join(tmpdir(), 'caselaw-evidence-'))
   try {
     execFileSync('git', ['init', '-q'], { cwd: root })
+    execFileSync('git', ['config', 'gc.auto', '0'], { cwd: root }) // no background gc racing the temp-dir cleanup
     await mkdir(join(root, '.caselaw'), { recursive: true })
     await writeFile(join(root, '.caselaw/gates.json'), JSON.stringify({
       version: 1,

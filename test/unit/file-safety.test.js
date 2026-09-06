@@ -49,6 +49,7 @@ const answersDoc = (templateVersion = '1.0') => {
 }
 async function installAt(root) {
   execFileSync('git', ['init', '-q'], { cwd: root })
+  execFileSync('git', ['config', 'gc.auto', '0'], { cwd: root }) // no background gc racing the temp-dir cleanup
   await writeFile(join(root, 'CLAUDE.md'), '# Project\n\nMy own notes.\n', 'utf8')
   const doc = answersDoc()
   const artifacts = await buildArtifacts({ doc, detected: DETECTED })
@@ -130,6 +131,7 @@ describe('ownership survives what it should', () => {
     const root = await mkdtemp(join(tmpdir(), 'caselaw-unchanged-'))
     try {
       execFileSync('git', ['init', '-q'], { cwd: root })
+      execFileSync('git', ['config', 'gc.auto', '0'], { cwd: root }) // no background gc racing the temp-dir cleanup
       await answersStore.save(root, answersDoc())
       const run = () => execFileSync(process.execPath, [CLI, 'upgrade', '--yes', root], { cwd: root, encoding: 'utf8' })
       run()
@@ -154,6 +156,7 @@ describe('ownership survives what it should', () => {
     const root = await mkdtemp(join(tmpdir(), 'caselaw-vstall-'))
     try {
       execFileSync('git', ['init', '-q'], { cwd: root })
+      execFileSync('git', ['config', 'gc.auto', '0'], { cwd: root }) // no background gc racing the temp-dir cleanup
       await writeFile(join(root, 'CLAUDE.md'), '# Project\n\nMy own notes.\n', 'utf8')
       await answersStore.save(root, answersDoc('0.9'))
       await manifestStore.save(root, manifestStore.emptyManifest({ cliVersion: '0.0.1', templateVersion: '0.9' }))
