@@ -39,7 +39,7 @@
 
 import { execFile } from 'node:child_process'
 import { appendFile, mkdir, readFile, readdir, stat } from 'node:fs/promises'
-import { isAbsolute, join, relative, resolve } from 'node:path'
+import { isAbsolute, join, relative, resolve, posix } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 // ---------------------------------------------------------------------------
@@ -245,9 +245,20 @@ export function compileGlob(pattern) {
   return result
 }
 
-/** POSIX-ify a path and drop a leading `./` so Windows and `./x` compare equal. */
+/**
+ * POSIX-ify a path, drop a leading `./`, and collapse `.` and `..` segments —
+ * so Windows and `./x` compare equal, and `x/../src/a.js` IS `src/a.js`,
+ * which is where the bytes land. Matching the raw string let a traversal pick
+ * its own scope: a write to `x/../src/secret.js` slipped every gate scoped to
+ * `src/**`. A path that escapes upward keeps its leading `..` so the caller
+ * can refuse it.
+ */
 export function toPosix(p) {
-  return String(p ?? '').replace(/\\/g, '/').replace(/^\.\//, '')
+  const s = String(p ?? '').replace(/\\/g, '/')
+  if (!s) return ''
+  const n = posix.normalize(s)
+  if (n === '.' || n === './') return ''
+  return n.startsWith('./') ? n.slice(2) : n
 }
 
 /**
@@ -562,8 +573,24 @@ export function validateGates(parsed) {
       }
     }
 
+    if (kind === 'shell' && g.cwd !== undefined) {
+      // The schema documents cwd as repo-relative. Without this check a
+      // `cwd` of `../..` ran the command two levels above the repository.
+      const c = str(g.cwd)
+      if (!c || isAbsolute(c) || c.split(/[\\/]/).includes('..')) {
+        problems.push({ gate: id, level: 'dropped', message: '`cwd` must be a repo-relative path with no `..` segments; the command would run outside the repository' })
+        continue
+      }
+    }
+
     const modes = Array.isArray(g.modes) ? g.modes.filter((m) => MODES.includes(m)) : null
     if (Array.isArray(g.modes) && modes.length !== g.modes.length) {
+      // Declared modes that name nothing the runner knows must not widen the
+      // gate: an empty list after filtering used to mean "every mode".
+      if (modes.length === 0) {
+        problems.push({ gate: id, level: 'dropped', message: `\`modes\` lists no known mode (${MODES.join('|')}); the gate would run in none, so it is dropped` })
+        continue
+      }
       problems.push({ gate: id, level: 'problem', message: `\`modes\` contains values outside ${MODES.join('|')}` })
     }
 
@@ -830,7 +857,10 @@ function gateGlobs(gate, out) {
     }
     return good
   }
-  return { paths: take(gate.paths, '`paths`'), exclude: take(gate.exclude, '`exclude`') }
+  // `declared` separates "no paths given" (every file, per the schema) from
+  // "paths given, none compiled" — which used to fall through to every file.
+  const declared = Array.isArray(gate.paths) && gate.paths.length > 0
+  return { paths: take(gate.paths, '`paths`'), exclude: take(gate.exclude, '`exclude`'), declared }
 }
 
 /** No `paths` means every candidate file. `exclude` always wins. */
@@ -846,6 +876,12 @@ function inScope(path, globs) {
  */
 async function selectUnits(gate, ctx, out) {
   const globs = gateGlobs(gate, out)
+  if (globs.declared && globs.paths.length === 0) {
+    // Every declared glob failed to compile. Falling back to "every file"
+    // would widen a gate its author scoped; it checks nothing, and says so.
+    out.filesChecked = 0
+    return { skip: 'none of the declared `paths` globs compiled, so this gate checked nothing (see the degradation)', units: [], matched: 0 }
+  }
   if (ctx.targets === null) {
     return { skip: `no file list is available in mode "${ctx.mode}"`, units: [], matched: 0 }
   }
@@ -864,6 +900,37 @@ async function selectUnits(gate, ctx, out) {
   return { skip: null, units, matched: picked.length }
 }
 
+/**
+ * A conservative screen for the regex shape that takes exponential time on
+ * ordinary input: a quantified group whose body is itself quantified —
+ * `(\w+)+`, `(a*)*`, `(.+){2,}`. One 55-byte source line against such a
+ * pattern hung the runner for good, and because the runner is one process it
+ * silenced every other gate with it. A heuristic, not a proof: it screens the
+ * common shape and says so in its hint.
+ */
+function catastrophicRegex(src) {
+  const s = String(src)
+  const stack = []
+  let inClass = false
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]
+    if (ch === '\\') { i++; continue }
+    if (inClass) { if (ch === ']') inClass = false; continue }
+    if (ch === '[') { inClass = true; continue }
+    if (ch === '(') { stack.push(i); continue }
+    if (ch !== ')') continue
+    const open = stack.pop()
+    if (open === undefined) continue
+    const next = s[i + 1]
+    if (next !== '+' && next !== '*' && next !== '{') continue
+    const body = s.slice(open + 1, i).replace(/\\.|\[(?:\\.|[^\]])*\]/g, 'x')
+    if (/[+*]|\{\d/.test(body)) {
+      return `a quantified group whose body is itself quantified (${excerpt(s.slice(open, i + 2), 40)}) can take exponential time`
+    }
+  }
+  return null
+}
+
 /** Compile `{literal|regex, label}` entries; a bad regex degrades, never throws. */
 function compilePatterns(list, out, field = '`patterns`') {
   const compiled = []
@@ -880,6 +947,11 @@ function compilePatterns(list, out, field = '`patterns`') {
     }
     const label = str(spec.label) || str(spec.literal) || str(spec.regex) || `pattern ${i}`
     if (typeof spec.regex === 'string') {
+      const risky = catastrophicRegex(spec.regex)
+      if (risky) {
+        addDegradation(out, `${field}[${i}] regex: ${risky}`, 'rewrite without the nested quantifier (e.g. `[\\w.]+@x`, not `([\\w.]+)+@x`); this pattern is checking nothing')
+        continue
+      }
       try {
         // `g` is forced on so scanning finds every occurrence; a caller-supplied
         // `g`/`y` would otherwise make lastIndex behaviour config-dependent.
@@ -1392,6 +1464,11 @@ async function runExtract(ex, ctx, out, name) {
     sources.push(f)
 
     if (typeof ex.regex === 'string') {
+      const risky = catastrophicRegex(ex.regex)
+      if (risky) {
+        addDegradation(out, `extract "${name}": regex: ${risky}`, 'rewrite without the nested quantifier; the invariant was NOT checked')
+        return null
+      }
       let re
       try {
         re = new RegExp(ex.regex, 'g' + (str(ex.flags).replace(/[^imsu]/g, '') || ''))
@@ -1633,11 +1710,16 @@ async function kindShell(gate, ctx, out) {
   if (!command) return addDegradation(out, 'shell gate has no `command`', null)
 
   const globs = gateGlobs(gate, out)
+  if (globs.declared && globs.paths.length === 0) {
+    out.filesChecked = 0
+    return skipResult(out, 'none of the declared `paths` globs compiled, so the command was not run')
+  }
   const source = ctx.targets ?? ctx.changeSet ?? []
-  const paths = Array.isArray(gate.paths) && gate.paths.length > 0
-    ? uniq(source.map(toPosix)).filter((p) => inScope(p, globs))
-    : []
-  if (Array.isArray(gate.paths) && gate.paths.length > 0 && paths.length === 0) {
+  // Filter with the COMPILED globs and gate on the DECLARED ones, both from
+  // gateGlobs; checking raw gate.paths here used to hand every file to the
+  // command when the declared globs were unusable.
+  const paths = globs.declared ? uniq(source.map(toPosix)).filter((p) => inScope(p, globs)) : []
+  if (globs.declared && paths.length === 0) {
     return skipResult(out, 'nothing in scope changed, so the command was not run')
   }
   out.filesChecked = paths.length

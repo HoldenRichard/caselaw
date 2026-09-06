@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "cliVersion": "0.1.0",
   "templateVersion": "1.0",
-  "generatedAt": "2026-09-06T11:30:47.428Z",
+  "generatedAt": "2026-09-06T15:16:28.181Z",
   "entries": {
     "docs/authority-split.md": {
       "kind": "file",
@@ -51,7 +51,7 @@
     },
     ".caselaw/bin/gate.mjs": {
       "kind": "file",
-      "hash": "61bae05be367f297ab89ddc5af0050cfd0a7c129277653ff41a46ef0d29f8ce8"
+      "hash": "e83f5152fa1430e4d42281d1855b6dc34c85b9dd020a962bbfe94ef83ecc155b"
     },
     ".caselaw/schema/gates.schema.json": {
       "kind": "file",

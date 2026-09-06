@@ -18,6 +18,8 @@ import assert from 'node:assert/strict'
 import { mkdtemp, rm, mkdir, writeFile, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { execFile } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { evaluate, matchGlob, extractHookInput, EXIT, KINDS } from '../../runtime/gate.mjs'
 
 let root
@@ -409,5 +411,60 @@ describe('exit codes', () => {
     assert.equal(EXIT.OK, 0)
     assert.equal(EXIT.FAILED, 1)
     assert.equal(EXIT.PRE_BLOCK, 2, 'Claude Code reads exit 2 as "block and show stderr"')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Scope and time: two ways one input could defeat every gate
+// ---------------------------------------------------------------------------
+describe('path scoping: interior `..`', () => {
+  test('POSITIVE CONTROL: an interior `..` does not carry a write out of a gate scope', async () => {
+    // `x/../src/x.js` lands the bytes at <root>/src/x.js, because join() collapses
+    // the `..`. A gate scoped to src/** therefore has to see it as src/x.js; if it
+    // matches the raw string instead, the agent picks its own scope.
+    await put('src/x.js', 'clean\n')
+    await mkdir(join(root, 'x'), { recursive: true })
+    const config = cfg(
+      gate({ id: 'no-secret', kind: 'banned-content', paths: ['src/**'],
+        patterns: [{ literal: 'SECRET_TOKEN', label: 'secret token' }] }),
+      gate({ id: 'no-src-writes', kind: 'path-scope', paths: ['src/**'] }),
+    )
+    const evil = 'x/../src/x.js'
+    const r = await run({
+      mode: 'pre', config, writes: [evil], targets: [evil],
+      proposed: [{ path: evil, text: 'const t = "SECRET_TOKEN"\n', whole: true }],
+      changeSet: null, changeSetReason: 'pre mode sees only the proposed write',
+    })
+    assert.deepEqual(r.blocking.map((f) => f.gate).sort(), ['no-secret', 'no-src-writes'],
+      `a traversal path must not silence a src/** gate; got ${JSON.stringify(r.blocking)}`)
+  })
+})
+describe('a pattern must not be able to stop the runner', () => {
+  test('POSITIVE CONTROL: one ordinary file cannot stop the runner finishing', async () => {
+    await put('.caselaw/gates.json', JSON.stringify(cfg(
+      gate({ id: 'no-secret-token', kind: 'banned-content', paths: ['src/**'],
+             patterns: [{ literal: 'SECRET_TOKEN', label: 'hardcoded token' }] }),
+      // A maintainer-plausible rule: "no hardcoded @example.com address".
+      gate({ id: 'no-inline-email', kind: 'banned-content', paths: ['src/**'],
+             patterns: [{ regex: '([\\w.]+)+@example\\.com', label: 'hardcoded address' }] }),
+    )))
+    await put('src/real-violation.js', 'const t = "SECRET_TOKEN"\n')
+    // Not adversarial: a pinned commit SHA. Any ~40-char identifier-shaped run does it.
+    await put('src/ordinary.js', 'const REV = "6f1d2c3a9b8e7f0d4c5b6a7988990011aabbccdd"\n')
+
+    const runner = fileURLToPath(new URL('../../runtime/gate.mjs', import.meta.url))
+    const BUDGET_MS = 10_000
+    const r = await new Promise((res) => {
+      execFile(process.execPath, [runner, '--mode', 'all', '--root', root],
+        { timeout: BUDGET_MS, killSignal: 'SIGKILL', encoding: 'utf8' },
+        (err, stdout, stderr) => res({ timedOut: Boolean(err && err.killed), stdout, stderr }))
+    })
+
+    // Fails today: the child is SIGKILLed at the budget with zero bytes written.
+    assert.equal(r.timedOut, false,
+      `the runner must finish within ${BUDGET_MS}ms; one 55-byte file must not hang it`)
+    // And the OTHER gate's verdict must survive the bad pattern, not be swallowed.
+    assert.match(r.stdout, /no-secret-token/,
+      "the unrelated gate's BLOCK verdict must still be reported")
   })
 })
