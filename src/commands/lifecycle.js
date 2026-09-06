@@ -208,7 +208,10 @@ export async function doctor({ root }) {
     bad('gate runner', '.caselaw/bin/gate.mjs is missing', 'Run `caselaw upgrade` to restore it.')
   } else {
     try {
-      await pExecFile(process.execPath, [runner, '--mode', 'all', '--root', root], { timeout: 20000 })
+      // A diagnostic is a look, not evidence: without --no-telemetry every
+      // doctor run appended to gate-fires.jsonl and manufactured the fires that
+      // promote a warn gate to block.
+      await pExecFile(process.execPath, [runner, '--mode', 'all', '--root', root, '--no-telemetry'], { timeout: 20000 })
       ok('gate runner', 'runs')
     } catch (err) {
       // Exit 1 means gates fired — the runner works fine.
