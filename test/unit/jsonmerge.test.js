@@ -5,7 +5,7 @@
  * permissions, a model pin, hooks of its own, which is most projects that use
  * Claude Code — got SKIP, no hook was ever installed, and the harness sat
  * inert while doctor said "Wiring looks live". With --force the file was
- * REPLACED: the Kabu retrofit lost its model pin, its effort setting and two
+ * REPLACED: a retrofitted repository lost its model pin, its effort setting and two
  * curriculum hooks to a plan line that said "regenerated". Our content is the
  * two hook entries. Everything else in the file is the project's.
  */
@@ -153,7 +153,7 @@ describe('jsonmerge — through the plan, the manifest and eject', () => {
   })
 
   test('POSITIVE CONTROL: --force replaces our entries and never touches the project\'s', async () => {
-    // The Kabu retrofit: `init --force` on a repo with a committed settings.json
+    // Seen on a retrofit: `init --force` on a repo with a committed settings.json
     // replaced the whole file and destroyed the model pin, the env block and
     // two hooks, under a plan line that read "regenerated".
     await install({ settings: theirsText, force: true })

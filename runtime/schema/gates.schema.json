@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/HoldenRichard/harness/runtime/schema/gates.schema.json",
+  "$id": "https://github.com/HoldenRichard/caselaw/runtime/schema/gates.schema.json",
   "title": "caselaw gate configuration",
   "description": "The declarative form of a rule that kept getting violated. Prose rules live in docs/rules/active/; when one is broken often enough it is PROMOTED into a gate here, and runtime/gate.mjs executes it. No code consumes this schema at runtime; it is documentation. `caselaw doctor` validates the config through src/core/gates.js, and the authority on behaviour is runtime/gate.mjs and its positive-control tests.",
   "type": "object",

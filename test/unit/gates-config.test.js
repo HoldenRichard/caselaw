@@ -145,7 +145,7 @@ describe('promotion is earned, not chosen', () => {
     await assert.rejects(() => promote(root, 'nope'), (e) => e.code === 'NO_SUCH_GATE')
   })
 
-  test('telemetry never throws, even with no writable .harness', async () => {
+  test('telemetry never throws, even with no writable .caselaw', async () => {
     await recordFire('/nonexistent-path-xyz', { gate: 'x' })
     assert.ok(true, 'a failed telemetry write must not fail the run')
   })

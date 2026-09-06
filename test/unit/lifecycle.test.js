@@ -218,7 +218,7 @@ describe('doctor — is any of this actually wired up?', () => {
   })
 
   test('POSITIVE CONTROL: hooks that never invoke the runner are a FAIL, not a warning', async () => {
-    // The Kabu retrofit: a committed settings.json meant the gate hooks were
+    // Seen on a retrofit: a committed settings.json meant the gate hooks were
     // never written, doctor said "warn" and then "Wiring looks live", exit 0.
     await install()
     await put('.claude/settings.json', JSON.stringify({

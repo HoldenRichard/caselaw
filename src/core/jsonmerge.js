@@ -5,7 +5,7 @@
  * most projects that use Claude Code already have one — permissions, a model
  * pin, hooks of their own. It used to be generated as a WHOLE FILE: where one
  * existed the plan skipped it, no hook was installed, and `doctor` reported
- * the harness inert (the Kabu retrofit); with --force it was REPLACED, which
+ * the harness inert (seen on a retrofit); with --force it was REPLACED, which
  * destroyed a model pin, an env block and two hooks (the same retrofit). A
  * managed file is the wrong shape for a shared config.
  *

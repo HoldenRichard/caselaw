@@ -101,7 +101,8 @@ describe('hook mode — the exit-code contract, spawned', () => {
     try {
       const root = join(base, 'repo')
       await mkdir(join(base, 'outside'), { recursive: true })
-      const SECRET = 'API_KEY=sk-live-9f3ac2b7d1e4'
+      // Assembled at runtime so a secret scanner does not flag the fixture (see secrets.test.js).
+      const SECRET = 'API_KEY=' + ['sk', 'live', '9f3ac2b7d1e4'].join('-')
       await writeFile(join(base, 'outside', 'creds.env'), SECRET + '\n', 'utf8')
       await install(root, [gate({ id: 'wide', patterns: [{ regex: '[A-Z_]+=.+', label: 'assignment' }] })])
       const r = await run([process.execPath, RUNNER, '--mode', 'post', '--root', root], {
