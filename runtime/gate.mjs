@@ -413,7 +413,7 @@ export async function loadConfig(root, opts = {}) {
       // No config is a real answer — "this project has no gates yet" — not a
       // degradation. It is still printed, because a runner installed with zero
       // gates is precisely the decorative-guardrail state.
-      return { ...base, reason: `no gate config at ${base.path}`, hint: 'promote a rule with `caselaw gate add`' }
+      return { ...base, reason: `no gate config at ${base.path}`, hint: 'promote a rule with `caselaw rule promote <name>`' }
     }
     return {
       ...base,
@@ -1996,7 +1996,7 @@ function blockReason(result) {
     const origin = f.origin ? ` [rule: ${f.origin}]` : ''
     return `${f.gate} (${f.kind}) ${at}: ${f.detail}.${msg}${origin}`
   })
-  return `caselaw gate blocked this change:\n  ${lines.join('\n  ')}`
+  return `caselaw gate: blocked this change:\n  ${lines.join('\n  ')}`
 }
 
 function humanReport(result) {

@@ -106,7 +106,7 @@ describe('adapters — selection follows what the project already uses', () => {
       'writing config for tools a project has never used is how a harness gets deleted')
   })
 
-  test('an explicit --adapter selection overrides detection', () => {
+  test('an explicit adapter selection (adapterIds) overrides detection', () => {
     const chosen = selectAdapters(detectedWith({ claudeMd: true }), { only: ['cursor'] })
     assert.deepEqual(chosen.map((a) => a.id), ['cursor'])
   })
@@ -183,7 +183,7 @@ describe('adapters — end to end through buildArtifacts', () => {
   })
 })
 
-describe('review --emit', () => {
+describe('review', () => {
   const ctx = {
     root: '/x',
     detected: { stack: { languages: [{ name: 'TypeScript', pct: 90 }] }, commands: { test: { cmd: 'npm test' } }, deploySurface: [{ kind: 'fly' }] },

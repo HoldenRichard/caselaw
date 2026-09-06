@@ -90,15 +90,19 @@ file and no `.claude/` directory.
 
 | | |
 |---|---|
-| `init` | interview and generate |
-| `check` | CI: are the committed docs still what the answers produce? |
-| `upgrade` | re-render; never touches what you edited |
-| `audit` | is the governance still true? |
-| `doctor` | is any of this actually wired up? |
-| `rule` | `propose` · `ratify` · `adopt` · `promote` |
-| `gate` | `test` · `baseline` · `promote` |
-| `review --emit` | a review prompt for a **different** model |
-| `eject` | remove the tooling, keep everything you wrote |
+| `caselaw init` | interview and generate |
+| `caselaw check` | CI: are the committed docs still what the answers produce? |
+| `caselaw upgrade` | re-render; never touches what you edited |
+| `caselaw audit` | is the governance still true? |
+| `caselaw doctor` | is any of this actually wired up? |
+| `caselaw rule propose` · `caselaw rule ratify` · `caselaw rule reject` | an agent drafts; a human ratifies or rejects |
+| `caselaw rule adopt` · `caselaw rule promote` | take a candidate with your own Origin; climb the ladder |
+| `caselaw gate test` · `caselaw gate baseline` · `caselaw gate promote` | run one gate, run them all, warn → block on evidence |
+| `caselaw review` | a review prompt for a **different** model |
+| `caselaw eject` | remove the tooling, keep everything you wrote |
+
+Every command a file in this repository names is checked against the dispatcher by a test. The
+first public release advertised seven that did not exist.
 
 ## Properties worth knowing before you install it
 

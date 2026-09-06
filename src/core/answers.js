@@ -7,7 +7,7 @@
  * hope". Users are meant to edit it by hand; it is committed; it diffs well.
  *
  * Written after EVERY answer, not at the end. An interview interrupted at
- * question three leaves a valid file that `init --resume` can pick up, which
+ * question three leaves a valid file that re-running `caselaw init` picks up, which
  * is the difference between a fifteen-minute commitment and a fifteen-minute
  * gamble.
  */
