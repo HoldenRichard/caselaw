@@ -160,20 +160,21 @@ export function ttyPrompt({ input = stdin, output = stdout } = {}) {
       if (v === DONT_KNOW) return SKIPPED
       if (v === '') return []
 
+      // Numbers are comma-separated; free text runs from the first '+' to the
+      // end of the line, commas included. Splitting the whole answer on ','
+      // first truncated "pair the bridge, then confirm it responds" at the
+      // comma and dropped the rest without a word.
+      const plus = v.indexOf('+')
+      const numbers = plus === -1 ? v : v.slice(0, plus)
+      const extra = plus === -1 ? '' : v.slice(plus + 1).trim()
       const picked = []
-      const extras = []
-      for (const partRaw of v.split(',')) {
+      for (const partRaw of numbers.split(',')) {
         const part = partRaw.trim()
         if (!part) continue
-        if (part.startsWith('+')) {
-          const text = part.slice(1).trim()
-          if (text) extras.push(text)
-          continue
-        }
         const n = Number(part)
         if (Number.isInteger(n) && n >= 1 && n <= q.options.length) picked.push(q.options[n - 1].value)
       }
-      return [...picked, ...extras]
+      return extra ? [...picked, extra] : picked
     },
 
     async confirm(q) {

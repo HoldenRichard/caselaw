@@ -226,12 +226,25 @@ export function remove(rawText, id) {
   const found = locate(text, id)
   if (!found.present) return { text: original, action: 'absent' }
 
-  let next = text.slice(0, found.start) + text.slice(found.end)
-  // Restore the file as closely as possible to how it looked before the block
-  // existed: no leading blank, no run of blanks where the block used to be,
-  // and exactly one trailing newline. An uninstall that leaves a stray blank
-  // line shows up as a diff in someone's next commit for no reason.
-  next = next.replace(/\n{3,}/g, '\n\n').replace(/^\n+/, '').replace(/\n\s*\n+$/, '\n')
+  // Restore the file to how it looked before the block existed, touching
+  // ONLY the seam where the block was. A file-wide collapse used to delete a
+  // host .gitignore's own leading blank line on eject — a diff in someone's
+  // next commit for no reason, which is exactly what this is meant to avoid.
+  const before = text.slice(0, found.start)
+  const after = text.slice(found.end)
+  let next
+  if (after.trim() === '') {
+    // The block was the tail: what remains ends with exactly one newline, or is nothing.
+    const kept = before.replace(/\n+$/, '')
+    next = kept.trim() === '' ? '' : `${kept}\n`
+  } else if (before.trim() === '') {
+    // The block was the head.
+    next = after.replace(/^\n+/, '')
+  } else {
+    const left = (before.match(/\n*$/) || [''])[0].length
+    const right = (after.match(/^\n*/) || [''])[0].length
+    next = before.replace(/\n+$/, '') + '\n'.repeat(Math.min(Math.max(left, right, 1), 2)) + after.replace(/^\n+/, '')
+  }
   let out = applyEol(next, eol)
   if (bom) out = BOM + out
   return { text: out, action: 'removed', previousInterior: found.interior }

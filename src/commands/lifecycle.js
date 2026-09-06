@@ -15,7 +15,7 @@
  * only doctor can see.
  */
 
-import { readFile, writeFile, rm, stat } from 'node:fs/promises'
+import { readFile, writeFile, rm, rmdir, readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -139,8 +139,23 @@ export async function planEject({ root, purge = false }) {
   const keptDoctrine = purge ? [] : raw.deleteFiles.filter(isDoctrine)
   const deleteFiles = purge ? raw.deleteFiles : raw.deleteFiles.filter((p) => !isDoctrine(p))
 
+  // Every strip is inspected now, so the plan can say which files hold nothing
+  // but our block and will therefore go — the plan used to promise "the rest
+  // of the file stays" and then delete the file.
+  const stripBlocks = []
+  for (const s of raw.stripBlocks) {
+    let willRemove = false
+    try {
+      const text = await readFile(join(root, s.path), 'utf8')
+      willRemove = s.kind === 'json-merge' ? stripJson(text).action === 'emptied' : removeBlock(text, s.blockId).text.trim() === ''
+    } catch { /* unreadable: apply will report it */ }
+    stripBlocks.push({ ...s, willRemove })
+  }
+
+  // Bookkeeping is ours too, and it goes; it is listed because answers.json is
+  // the file every generated doc tells the reader is the source of truth.
   const bookkeeping = ['.caselaw/answers.json', '.caselaw/manifest.json']
-  return { manifest, reconciliation, ...raw, deleteFiles, keptDoctrine, bookkeeping, purge }
+  return { manifest, reconciliation, ...raw, stripBlocks, deleteFiles, keptDoctrine, bookkeeping, purge }
 }
 
 export async function applyEject({ root, plan }) {
@@ -196,10 +211,23 @@ export async function applyEject({ root, plan }) {
   }
 
   for (const path of plan.bookkeeping) {
-    try { await rm(join(root, path), { force: true }) } catch { /* best effort */ }
+    try {
+      if (await exists(join(root, path))) { await rm(join(root, path), { force: true }); removed.push(path) }
+    } catch { /* best effort */ }
   }
 
-  return { removed, stripped, failed, left: plan.leaveAlone }
+  // Directories we created and have now emptied. Five of them survived every
+  // eject; git does not track empty directories, so `git status` read clean
+  // and `ls -a` did not.
+  const pruned = []
+  for (const dir of ['.claude/commands', '.caselaw/bin', '.caselaw/schema', '.caselaw', '.claude']) {
+    try {
+      const abs = join(root, dir)
+      if ((await readdir(abs)).length === 0) { await rmdir(abs); pruned.push(dir) }
+    } catch { /* absent or not empty */ }
+  }
+
+  return { removed, stripped, failed, left: plan.leaveAlone, pruned }
 }
 
 /**

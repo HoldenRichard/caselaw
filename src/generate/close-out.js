@@ -28,6 +28,13 @@ export function buildModel({ answers = {}, detected = {}, projectName }) {
   const humanOnly = selected
     .filter((b) => triage[b] === 'physical' || triage[b] === 'chosen')
     .map((b) => ({ value: b, label: BOUNDARY_LABELS[b] || plain(b, 200) }))
+  // Untested boundaries are handed over as their own group: nobody knows yet
+  // whether the agent could have checked them, so a human either settles the
+  // boundary or verifies by hand. They used to be dropped from the handover
+  // entirely — the one boundary the rest of the tool works hardest to flag.
+  const untested = selected
+    .filter((b) => triage[b] === 'untested')
+    .map((b) => ({ value: b, label: BOUNDARY_LABELS[b] || plain(b, 200) }))
 
   const anyCommand =
     detected.commands?.test?.cmd || detected.commands?.build?.cmd || 'npm test'
@@ -35,6 +42,7 @@ export function buildModel({ answers = {}, detected = {}, projectName }) {
   return {
     project: { name: plain(projectName || 'this project', 120) },
     humanOnly,
+    untested,
     tier1Example: anyCommand,
   }
 }

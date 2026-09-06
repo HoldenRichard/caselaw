@@ -112,10 +112,10 @@ export function buildModel({ answers = {}, detected = {}, projectName, now = new
       // No question collects a note today, so the honest default is that none
       // was recorded — not "never tried", which was false whenever it had been.
       assumedBecause: cell((answers['authority.notes'] || {})[b] || 'not recorded', 300),
-      settleCommand: cell(settleCommandFor(b, detected) || '', 300) || null,
+      ...settle(b, detected),
     }))
 
-  const can = buildCanList({ answers, detected })
+  const can = buildCanList({ answers, detected, selected })
 
   return {
     project: { name: plain(projectName || detected.projectName || 'this project', 120) },
@@ -131,16 +131,34 @@ export function buildModel({ answers = {}, detected = {}, projectName, now = new
 }
 
 /**
+ * The "Settle it" cell. A one-liner only when the command has actually been
+ * seen to exit 0 here; an unverified detected command is offered as something
+ * to run by hand and record, because on two of three dogfood repositories the
+ * detected test command did not even compile on a fresh clone, and the audit
+ * would have told the reader to paste it.
+ */
+function settle(boundary, detected) {
+  const cmd = settleCommandFor(boundary, detected)
+  if (!cmd) return { settleCommand: null, settleHint: null }
+  if (boundary === 'full-suite' && detected.commands?.test?.exitCode !== 0) {
+    return { settleCommand: null, settleHint: cell(cmd, 300) }
+  }
+  return { settleCommand: cell(cmd, 300), settleHint: null }
+}
+
+/**
  * What the agent CAN do. Assembled from measured commands and the tier-2
  * answer rather than asked as its own question — the interview budget is
- * spent on what detection cannot settle.
+ * spent on what detection cannot settle. A command the human just named as a
+ * boundary is not listed as a capability four sections above it.
  */
-function buildCanList({ answers, detected }) {
+function buildCanList({ answers, detected, selected = [] }) {
   const can = []
   const cmds = detected.commands || {}
   const verified = []
   for (const [name, entry] of Object.entries(cmds)) {
     if (!entry || !entry.cmd) continue
+    if (name === 'test' && selected.includes('full-suite')) continue
     const timing = entry.durationMs ? `, ${(entry.durationMs / 1000).toFixed(0)}s` : ''
     const proof = entry.exitCode === 0 ? `verified ${entry.verifiedAt}${timing}` : 'unverified'
     verified.push(`${name} (\`${entry.cmd}\`, ${proof})`)

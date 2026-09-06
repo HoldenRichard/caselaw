@@ -32,6 +32,12 @@ Your project's human-only tier, from `docs/authority-split.md`:
 {{^ if humanOnly }}
 - [ ] _Nothing recorded — see `docs/authority-split.md`._
 {{/ if }}
+{{# if untested }}
+Boundaries still marked untested — settle them, or verify by hand until you have:
+
+{{# each untested }}- [ ] {{ label }} _(untested)_
+{{/ each }}
+{{/ if }}
 
 ## Rule proposals
 

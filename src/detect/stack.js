@@ -56,6 +56,10 @@ export const EXCLUDED_DIRS = new Set([
   'Carthage',
   'coverage',
   'bower_components',
+  // Ours. The vendored runner and the installed slash command counted as
+  // project source, so a pure-Python repo read as 98.1% Python after install.
+  '.caselaw',
+  '.claude',
 ])
 
 /** Extension → language. Code only; see the header for why data files are out. */
@@ -205,6 +209,9 @@ export function emptyStack() {
     buildSystems: [],
     filesScanned: 0,
     codeFiles: 0,
+    // From the manifest, never the directory name: a clone called `repo`
+    // produced governance titled "Authority split — repo" for homebridge.
+    projectName: null,
   }
 }
 
@@ -301,7 +308,33 @@ export async function detectStack(root, opts = {}, walked = null) {
     if (declared) stack.packageManager = declared
   }
 
+  stack.projectName = await readProjectName(root, rootFiles, rootDirs)
+
   return { stack, walked: w, warnings }
+}
+
+/** The name the project gives itself in its manifest, or null. */
+export async function readProjectName(root, rootFiles, rootDirs = []) {
+  const read = async (f) => { try { return await readFile(join(root, f), 'utf8') } catch { return null } }
+  const clean = (s) => (typeof s === 'string' && /^[\w.@/-]{1,100}$/.test(s.trim()) ? s.trim() : null)
+  if (rootFiles.has('package.json')) {
+    try { const n = clean(JSON.parse(await read('package.json')).name); if (n) return n.replace(/^@[^/]+\//, '') } catch { /* fall through */ }
+  }
+  if (rootFiles.has('pyproject.toml')) {
+    const m = (await read('pyproject.toml') || '').match(/^\[project\][\s\S]*?^name\s*=\s*["']([^"'\n]+)["']/m)
+    if (m && clean(m[1])) return clean(m[1])
+  }
+  if (rootFiles.has('Cargo.toml')) {
+    const m = (await read('Cargo.toml') || '').match(/^\[package\][\s\S]*?^name\s*=\s*["']([^"'\n]+)["']/m)
+    if (m && clean(m[1])) return clean(m[1])
+  }
+  if (rootFiles.has('go.mod')) {
+    const m = (await read('go.mod') || '').match(/^module\s+(\S+)/m)
+    if (m) { const last = m[1].split('/').pop().replace(/^v\d+$/, '') || m[1].split('/').slice(-2, -1)[0]; if (clean(last)) return clean(last) }
+  }
+  const xcode = rootDirs.find((d) => d.endsWith('.xcodeproj'))
+  if (xcode) return xcode.replace(/\.xcodeproj$/, '')
+  return null
 }
 
 /** @returns {string|null} */

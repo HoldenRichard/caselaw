@@ -17,6 +17,8 @@
  */
 
 import { writeFile, mkdir } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve, basename } from 'node:path'
@@ -24,6 +26,7 @@ import { argv, cwd, stdout, stdin } from 'node:process'
 import { pathToFileURL } from 'node:url'
 
 import { detect } from '../src/detect/index.js'
+import { docsOwner } from '../src/detect/docs-owner.js'
 import { runInterview } from '../src/interview/runner.js'
 import { QUESTIONS } from '../src/interview/questions.js'
 import { ttyPrompt } from '../src/interview/prompt.js'
@@ -43,6 +46,7 @@ import { cmdRule, RULE_SUBCOMMANDS } from '../src/commands/rule.js'
 import { cmdGate, GATE_SUBCOMMANDS } from '../src/commands/gate.js'
 
 const require = createRequire(import.meta.url)
+const pExecFile = promisify(execFile)
 
 /**
  * Read from package.json, never hard-coded. 0.1.1 shipped with a CLI that
@@ -171,8 +175,12 @@ async function cmdCheck(args, root) {
   for (const st of r.stale) say(`  STALE     ${st.path}`)
   for (const d of r.diverged) say(`  DIVERGED  ${d.path}  ← ${d.reason}`)
 
-  if (r.ok && !r.diverged.length) say('  Up to date. The committed docs are what the answers produce.')
+  // "committed" is not something check looks at; it compares the generated
+  // files with what the answers produce. Saying more was false the moment
+  // after install, when nothing is committed yet.
+  if (r.ok && !r.diverged.length) say('  Up to date. The generated docs are what the answers produce.')
   else if (r.ok) say(`\n  ${r.diverged.length} file(s) you edited. \`upgrade\` leaves those alone; --strict fails on them.`)
+  else if (!r.stale.length && !r.missing.length) say('\n  --strict: the files above were edited by hand. Keep the edits (and drop --strict), or `caselaw upgrade --force` to regenerate them.')
   else say('\n  Run `caselaw upgrade` to bring these back in line.')
 
   return r.ok ? 0 : 1
@@ -261,10 +269,15 @@ async function cmdEject(args, root) {
   }
 
   say('')
-  say(`  Eject — ${plan.deleteFiles.length} file(s) removed, ${plan.stripBlocks.length} block(s) stripped`)
+  const goes = plan.deleteFiles.length + plan.bookkeeping.length + plan.stripBlocks.filter((b) => b.willRemove).length
+  say(`  Eject — ${goes} file(s) removed, ${plan.stripBlocks.filter((b) => !b.willRemove).length} block(s) stripped`)
   say('')
   for (const p of plan.deleteFiles) say(`  DELETE  ${p}`)
-  for (const b of plan.stripBlocks) say(`  STRIP   ${b.path}  (block "${b.blockId}", the rest of the file stays)`)
+  for (const p of plan.bookkeeping) say(`  DELETE  ${p}  (caselaw's own bookkeeping)`)
+  for (const b of plan.stripBlocks) {
+    if (b.willRemove) say(`  DELETE  ${b.path}  (it holds nothing but caselaw's ${b.kind === 'json-merge' ? 'hook entries' : 'block'})`)
+    else say(`  STRIP   ${b.path}  (${b.kind === 'json-merge' ? 'the caselaw hook entries' : `block "${b.blockId}"`}, the rest of the file stays)`)
+  }
   for (const l of plan.leaveAlone) say(`  KEEP    ${l.path}  ← ${l.reason}`)
   if (plan.keptDoctrine.length) {
     say(`  KEEP    ${plan.keptDoctrine.length} file(s) under docs/  ← your doctrine; readable without this tool`)
@@ -296,8 +309,8 @@ async function cmdEject(args, root) {
   }
 
   const res = await applyEject({ root, plan })
-  say(`\n  Removed ${res.removed.length}, stripped ${res.stripped.length}.`)
-  if (res.left.length) say(`  Left ${res.left.length} file(s) you had edited.`)
+  say(`\n  Removed ${res.removed.length}, stripped ${res.stripped.length}${res.pruned.length ? `, pruned ${res.pruned.length} empty director${res.pruned.length === 1 ? 'y' : 'ies'}` : ''}.`)
+  if (res.left.length) say(`  Left ${res.left.length} file(s) you had edited or could not read.`)
   for (const f of res.failed) say(`  could not remove ${f.path}: ${f.reason}`)
   return 0
 }
@@ -348,17 +361,34 @@ async function cmdInit(args, root) {
   }
 
   // Refuse to work on a dirty tree unless told otherwise: the plan we show has
-  // to be about our changes, not tangled with in-flight edits.
+  // to be about our changes, not tangled with in-flight edits. Files this
+  // tool wrote and has not yet seen committed are ours, not dirt — every
+  // second `init` used to refuse over the first one's own output.
   if (detected.vcs?.dirty && !args.force && !args.dryRun) {
-    say(`\n  Working tree has uncommitted changes (${detected.vcs.dirtyCount ?? 'some'} paths).`)
-    say('  Commit or stash first so the plan below is unambiguously ours, or pass --force.')
+    const foreign = await foreignDirt(root)
+    if (foreign.length) {
+      say(`\n  Working tree has uncommitted changes that are not caselaw's (${foreign.length} path${foreign.length === 1 ? '' : 's'}): ${foreign.slice(0, 5).join(', ')}${foreign.length > 5 ? ', …' : ''}`)
+      say('  Commit or stash them first so the plan below is unambiguously ours, or pass --force.')
+      return 1
+    }
+  }
+
+  // docs/ is where the doctrine goes, and on two of three dogfood repositories
+  // it was already a build tool's — typedoc output that the next build deletes,
+  // MkDocs source that ships. A configurable doctrine directory is not built
+  // yet, so this refuses and says why rather than writing quietly.
+  const owner = await docsOwner(root)
+  if (owner && !args.force) {
+    say(`\n  docs/ is ${owner.tool}'s ${owner.role} directory (${owner.file}); ${owner.consequence}.`)
+    say('  caselaw writes its doctrine to docs/ and cannot yet be pointed elsewhere. Pass --force to write there anyway.')
     return 1
   }
 
   const existing = await answersStore.load(root)
   const doc = existing ?? answersStore.emptyAnswers({
     templateVersion: TEMPLATE_VERSION,
-    project: { name: basename(root) },
+    // The name the project gives itself, not the directory it was cloned into.
+    project: { name: detected.stack?.projectName || basename(root) },
   })
   doc.detected = summarizeDetection(detected)
   // Stamped once, then reused. If this came from the clock, the generated
@@ -431,8 +461,41 @@ async function finishInit({ root, doc, detected, args, prompt }) {
   if (doc.unanswered.length) {
     say(`  ${doc.unanswered.length} question(s) unanswered — they are marked in the output, not guessed.`)
   }
+  const skippedSettings = plan.entries.find((e) => e.path === '.claude/settings.json' && e.action === SKIP)
+  if (skippedSettings) {
+    say(`  ! .claude/settings.json was skipped (${skippedSettings.reason}). No gate hook is installed until it is fixed.`)
+  }
+  for (const p of await ignoredByGit(root, plan.entries.filter((e) => e.action !== SKIP).map((e) => e.path))) {
+    say(`  ! ${p} is ignored by .gitignore, so it cannot be committed or shared. Add \`!${p}\` to .gitignore if it should be.`)
+  }
+  say('  Commit these files: the audit reports doctrine outside version control as an error, and so will CI.')
   say('  Read docs/authority-split.md. It is the one your agent should read first.\n')
   return 0
+}
+
+/** Uncommitted paths that are NOT this tool's own install. */
+async function foreignDirt(root) {
+  let out
+  try {
+    ;({ stdout: out } = await pExecFile('git', ['status', '--porcelain', '-z', '-uall'], { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }))
+  } catch {
+    return ['(git could not list the working tree)']
+  }
+  const manifest = await manifestStore.load(root).catch(() => null)
+  const owned = new Set(Object.keys(manifest?.entries ?? {}))
+  const paths = out.split('\0').filter(Boolean).map((line) => line.slice(3))
+  return paths.filter((p) => !owned.has(p) && !p.startsWith('.caselaw/'))
+}
+
+/** Which of these paths .gitignore would keep out of the repo. */
+async function ignoredByGit(root, paths) {
+  if (!paths.length) return []
+  try {
+    const { stdout } = await pExecFile('git', ['check-ignore', '--', ...paths], { cwd: root, encoding: 'utf8' })
+    return stdout.split('\n').map((s) => s.trim()).filter(Boolean)
+  } catch (err) {
+    return err?.code === 1 ? [] : [] // exit 1: none ignored; anything else: cannot say
+  }
 }
 
 /** Write an approved plan and record what we own. Shared by init and upgrade. */
@@ -470,7 +533,8 @@ function renderDetection(d) {
   const push = (k, v) => v && rows.push(`  ${k.padEnd(11)}${v}`)
   push('git', d.vcs?.isRepo ? `${d.vcs.branch || 'detached'}${d.vcs.dirty ? ' · dirty' : ' · clean'}${d.vcs.authors90d ? ` · ${d.vcs.authors90d} author(s)/90d` : ''}` : 'not a git repository')
   push('language', (d.stack?.languages || []).slice(0, 2).map((l) => `${l.name} ${l.pct}%`).join(', '))
-  push('build', d.stack?.buildSystem)
+  push('project', d.stack?.projectName)
+  push('stack', d.stack?.buildSystem)
   for (const k of ['test', 'lint', 'format', 'typecheck', 'build']) {
     push(k, d.commands?.[k]?.cmd)
   }
