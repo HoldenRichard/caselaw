@@ -6,4 +6,4 @@
 
 **Origin:** 757415c
 
-**Enforcement:** test: test/unit/cli-surface.test.js
+**Enforcement:** memory
