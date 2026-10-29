@@ -30,6 +30,8 @@ const PUBLISHERS = [
   [/chrome-webstore-upload/, 'the Chrome Web Store'],
   [/\bfastlane\b.*\b(deliver|pilot|upload_to_app_store|upload_to_testflight)\b|\bxcrun altool\b/, 'App Store Connect'],
   [/softprops\/action-gh-release|\bgh release create\b/, 'a GitHub release'],
+  // CI that commits and pushes (ntfy's docs workflow pushes the built site to another repository).
+  [/\bgit push\b/, 'a git push made by CI'],
 ]
 
 export function emptyPublishing() {
@@ -71,11 +73,17 @@ export function publishSteps(text) {
  * `v*`"). `null` when the `on:` block cannot be read; never a guess.
  */
 export function workflowTriggers(text) {
+  const events = workflowEvents(text)
+  return events ? events.flatMap(({ event, filters }) => phrase(event, filters)) : null
+}
+
+/** The `on:` block as [{event, filters: {tags, branches, types, …}}], or null. */
+export function workflowEvents(text) {
   const lines = text.split(/\r?\n/)
   const start = lines.findIndex((l) => /^["']?(on|true)["']?\s*:/.test(l))
   if (start === -1) return null
   const inline = lines[start].replace(/^["']?(on|true)["']?\s*:\s*/, '').replace(/\s+#.*$/, '').trim()
-  if (inline) return list(inline).flatMap((e) => phrase(e, {}))
+  if (inline) return list(inline).map((event) => ({ event, filters: {} }))
 
   const block = []
   for (const l of lines.slice(start + 1)) {
@@ -101,9 +109,9 @@ export function workflowTriggers(text) {
       }
       filters[f[1]] = values
     }
-    events.push(phrase(m[1], filters))
+    events.push({ event: m[1], filters })
   }
-  return events.flat()
+  return events
 }
 
 function phrase(event, f) {

@@ -25,6 +25,7 @@ import { detectCommands, emptyCommands } from './commands.js'
 import { detectEnvironment, emptyEnvironment } from './environment.js'
 import { detectSignals, emptySignals } from './signals.js'
 import { detectPublishing, emptyPublishing } from './publishing.js'
+import { detectCiGates, emptyCiGates } from './ci-gates.js'
 
 export { detectVcs, detectStack, detectCommands, detectEnvironment, detectSignals, detectPublishing, walk }
 
@@ -56,6 +57,7 @@ export function emptyReport(root = '') {
     visibility: env.visibility,
     signals: emptySignals(),
     publishing: emptyPublishing(),
+    ciGates: emptyCiGates(),
     warnings: [],
     elapsedMs: 0,
   }
@@ -120,6 +122,14 @@ export async function detect(root, opts = {}) {
   })
   report.publishing = pubResult.value.publishing
   warn(...pubResult.value.warnings, pubResult.warning)
+
+  // The gates CI runs on a change: what has to pass, as the project wrote it down.
+  const gateResult = await guard('ciGates', () => detectCiGates(root, walked.value), {
+    ciGates: emptyCiGates(),
+    warnings: [],
+  })
+  report.ciGates = gateResult.value.ciGates
+  warn(...gateResult.value.warnings, gateResult.warning)
 
   // These two touch disjoint state and can overlap; between them they hold
   // most of stage 0's wall clock (xcodebuild and gh both live here).

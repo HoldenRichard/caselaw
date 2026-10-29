@@ -200,7 +200,22 @@ function settle(boundary, detected) {
  */
 function buildCanList({ answers, detected, selected = [] }) {
   const can = []
-  const cmds = detected.commands || {}
+  // What CI runs on a change outranks commands inferred from the language: on
+  // the DEF-274 re-score, ntfy's inferred `go test ./...` failed on a fresh
+  // checkout while CI built the docs and web app first and then ran `make checkv`.
+  const gates = detected.ciGates?.gates || []
+  const byFile = new Map()
+  for (const g of gates) byFile.set(g.file, [...(byFile.get(g.file) || []), g])
+  for (const [file, list] of byFile) {
+    const steps = list.map((g) => `\`${plain(g.cmd, 160)}\`${g.step ? ` (${plain(g.step, 80)})` : ''}`).join('; ')
+    can.push(`Run what CI runs on a change, in its order (\`${file}\`): ${steps}.`)
+  }
+  const shared = detected.ciGates?.shared || []
+  if (shared.length) {
+    can.push(`CI also runs workflows kept in another repository, whose steps are not visible here: ${shared.map((s) => `\`${plain(s.uses, 160)}\``).join(', ')}.`)
+  }
+
+  const cmds = gates.length ? {} : detected.commands || {}
   const verified = []
   for (const [name, entry] of Object.entries(cmds)) {
     if (!entry || !entry.cmd) continue
