@@ -25,6 +25,7 @@ export const TEMPLATE_PATH = join(HERE, '../../templates/docs/authority-split.md
 export const BOUNDARY_LABELS = {
   device: 'run it on real hardware',
   hardware: 'drive or observe the real hardware it talks to',
+  'pair-controller': 'pair it with a real smart-home controller and watch it respond',
   'rendered-ui': 'see what the UI actually renders',
   'prod-data': 'read production datastore state',
   'prod-logs': 'read production logs',
@@ -114,6 +115,7 @@ const ANSWER_NAMES = {
   'outside.authority': 'Outside authority',
   'outside.claims': 'Where it makes public claims',
   declarations: 'The public claims themselves',
+  'authority.notes': 'Why a boundary is assumed',
 }
 
 /**

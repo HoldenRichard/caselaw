@@ -131,11 +131,16 @@ describe('signals: what the manifests declare', () => {
     assert.deepEqual(signals.datastore, [])
   })
 
-  test('homebridge: hardware from the HomeKit and Matter dependencies, and an npm registry', async () => {
+  test('homebridge: pairing with a controller, not hardware, from the HomeKit and Matter libraries; and an npm registry', async () => {
+    // These were counted as hardware until the DEF-274 reviewer pointed out that
+    // homebridge's core talks to controllers (Apple Home, a Matter controller).
     await put('package.json', HOMEBRIDGE_PACKAGE)
     const { signals } = await detectSignals(root, { files: ['package.json'] })
-    assert.deepEqual(signals.hardware.map((s) => s.signal), ['@homebridge/hap-nodejs', '@matter/main'])
+    assert.deepEqual(signals.pairing.map((s) => s.signal), ['@homebridge/hap-nodejs', '@matter/main'])
+    assert.deepEqual(signals.hardware, [])
     assert.deepEqual(signals.registries.map((r) => r.kind), ['npm'])
+    assert.ok(boundaryCandidates({ signals }).some((o) => o.value === 'pair-controller'))
+    assert.ok(!boundaryCandidates({ signals }).some((o) => o.value === 'hardware'))
   })
 
   test('ntfy: a datastore, message delivery, and a release pipeline', async () => {
@@ -219,7 +224,7 @@ describe('boundary options follow the signals', () => {
 describe('detect() carries the signals', () => {
   test('the full report has a signals group, empty but present for an empty tree', async () => {
     const report = await detect(root, OFFLINE)
-    assert.deepEqual(report.signals, { hardware: [], datastore: [], messaging: [], registries: [], stores: [], claims: [], manifests: [] })
+    assert.deepEqual(report.signals, { hardware: [], pairing: [], datastore: [], messaging: [], registries: [], stores: [], claims: [], manifests: [] })
   })
 
   test('end to end: pyvisa is offered hardware and a registry console, and no production database', async () => {

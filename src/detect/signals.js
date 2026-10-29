@@ -32,8 +32,7 @@ const SKIP_DIRS = new Set(['example', 'examples', 'sample', 'samples', 'test', '
 const DEPS = {
   hardware: {
     npm: ['serialport', '@serialport/', 'node-hid', 'usb', 'noble', '@abandonware/noble', '@abandonware/bleno',
-      'johnny-five', 'onoff', 'rpio', 'i2c-bus', 'spi-device', 'hap-nodejs', '@homebridge/hap-nodejs', '@matter/',
-      '@project-chip/'],
+      'johnny-five', 'onoff', 'rpio', 'i2c-bus', 'spi-device'],
     python: ['pyserial', 'pyusb', 'pyvisa', 'pyvisa-py', 'gpib-ctypes', 'bleak', 'pybluez', 'rpi-gpio', 'gpiozero',
       'smbus2', 'spidev', 'adafruit-blinka', 'hidapi', 'nidaqmx', 'pymodbus', 'pyftdi'],
     cargo: ['serialport', 'rusb', 'btleplug', 'embedded-hal', 'rppal', 'hidapi', 'probe-rs'],
@@ -61,7 +60,19 @@ const DEPS = {
       'github.com/sideshow/apns2', 'github.com/twilio/twilio-go', 'github.com/sendgrid/sendgrid-go',
       'gopkg.in/gomail', 'github.com/wneessen/go-mail'],
   },
+  // Smart-home protocols. These were counted as hardware until the DEF-274
+  // re-score: homebridge's core talks to controllers (Apple Home, a Matter
+  // controller), not to devices, and its real boundary is pairing with one.
+  pairing: {
+    npm: ['hap-nodejs', '@homebridge/hap-nodejs', '@matter/', '@project-chip/', 'homebridge'],
+    python: ['hap-python', 'python-matter-server', 'homeassistant'],
+    cargo: ['rs-matter', 'hap'],
+    go: ['github.com/brutella/hap', 'github.com/brutella/hc'],
+  },
 }
+
+/** Words a project uses about itself that mean it pairs with a smart-home controller. */
+const PAIRING_WORDS = new Set(['homekit', 'homebridge-plugin', 'homebridge', 'matter', 'home-assistant', 'homeassistant'])
 
 /**
  * Words a project uses about itself that mean hardware. Deliberately narrow:
@@ -69,13 +80,12 @@ const DEPS = {
  * are out; pyvisa is still caught by GPIB, USB and RS232.
  */
 const HARDWARE_WORDS = new Set(['hardware', 'instrument', 'instruments', 'instrumentation', 'gpib', 'rs232', 'usb',
-  'gpio', 'bluetooth', 'homekit', 'homebridge-plugin', 'iot', 'embedded', 'arduino', 'raspberry-pi', 'raspberrypi',
-  'firmware', 'microcontroller'])
+  'gpio', 'bluetooth', 'iot', 'embedded', 'arduino', 'raspberry-pi', 'raspberrypi', 'firmware', 'microcontroller'])
 const HARDWARE_CLASSIFIERS = ['Topic :: System :: Hardware', 'Topic :: Home Automation']
 const HARDWARE_CATEGORIES = new Set(['embedded', 'hardware-support'])
 
 export function emptySignals() {
-  return { hardware: [], datastore: [], messaging: [], registries: [], stores: [], claims: [], manifests: [] }
+  return { hardware: [], pairing: [], datastore: [], messaging: [], registries: [], stores: [], claims: [], manifests: [] }
 }
 
 /**
@@ -97,7 +107,11 @@ export async function detectSignals(root, walked) {
     }
   }
   const words = (list, source) => {
-    for (const w of list) if (HARDWARE_WORDS.has(String(w).toLowerCase())) add('hardware', w, source)
+    for (const w of list) {
+      const lw = String(w).toLowerCase()
+      if (HARDWARE_WORDS.has(lw)) add('hardware', w, source)
+      else if (PAIRING_WORDS.has(lw)) add('pairing', w, source)
+    }
   }
 
   for (const path of manifestsIn(walked.files)) {

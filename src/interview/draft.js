@@ -36,7 +36,9 @@ export const HOW_TO_FILL = [
   'Leave "answer" null for a question that does not apply (the interview skips it).',
   'A question marked "alreadyAnswered" was answered earlier by a human. Leave it as it is: a draft does not replace a human answer unless the human runs --from-draft with --reconfigure.',
   'For each surface you name in outside.claims, list in "declarations" under that surface the concrete claims it makes, each as { "claim", "evidence", "truth", "rederive", "checked" }: the claim as the surface states it, evidence naming the file and line that holds it, where the truth lives (a file, a command, a dashboard), and a command that re-derives it if one exists. Leave "checked" empty unless you re-derived the claim from the product just now; an unchecked claim is the point of the register, not a flaw in it.',
-  'Then show the human every answer with its evidence and wait for them to confirm or correct it. Only after that run `caselaw init --from-draft --yes`; without a terminal, --yes is the record that a human confirmed.',
+  'For each boundary you classify "untested", say in "notes" why it is assumed rather than known, as { "<boundary>": { "reason", "evidence" } }; the reason becomes the "assumed because" of the authority split.',
+  'Check each answer against the lines you cite: a file that exists is not a file that says what you claim. `caselaw init --from-draft --dry-run` prints every answer with the lines it rests on.',
+  'Then show the human that sheet and wait for them to confirm or correct each answer. Only after that run `caselaw init --from-draft --yes`; without a terminal, --yes is the record that a human confirmed.',
 ]
 
 /** The draft for this repository, carrying any answers already on file. */
@@ -76,7 +78,34 @@ export function buildDraft({ doc, detected }) {
     // Not a question: the claims themselves, which the register needs and a
     // short interview cannot ask for. Keyed by the surfaces in outside.claims.
     declarations: doc.answers?.declarations ?? {},
+    // Why each untested boundary is assumed. Nothing collected this before, and
+    // the authority split printed "not recorded" in its place (DEF-274 re-score).
+    notes: {},
   }
+}
+
+async function noteProblems(draft, { root }) {
+  const errors = []
+  const notes = draft.notes
+  if (!notes || typeof notes !== 'object' || Array.isArray(notes)) return notes == null ? errors : ['notes: expected an object of boundary -> { reason, evidence }.']
+  const named = new Set((draft.questions || []).find((q) => q.id === 'authority.cannot')?.answer || [])
+  for (const [b, n] of Object.entries(notes)) {
+    if (!named.has(b)) { errors.push(`notes.${b}: not one of the answers to authority.cannot.`); continue }
+    if (!n || typeof n.reason !== 'string' || !n.reason.trim()) { errors.push(`notes.${b}: a note needs its reason.`); continue }
+    for (const x of Array.isArray(n.evidence) ? n.evidence : []) {
+      const missing = await evidenceProblem(root, x)
+      if (missing) errors.push(`notes.${b}: evidence "${x}" ${missing}.`)
+    }
+  }
+  return errors
+}
+
+/** The drafted notes, applied on the same confirmation as everything else. */
+export function applyNotes(draft, doc, { confirmed = null } = {}) {
+  const entries = Object.entries(draft.notes || {}).filter(([, n]) => n && n.reason)
+  if (!entries.length || !confirmed) return null
+  doc.answers['authority.notes'] = { ...(doc.answers['authority.notes'] || {}), ...Object.fromEntries(entries.map(([b, n]) => [b, n.reason])) }
+  return { by: 'agent-draft', evidence: [...new Set(entries.flatMap(([, n]) => n.evidence || []))], confirmed }
 }
 
 /**
@@ -191,7 +220,7 @@ export async function validateDraft(draft, { root, detected, doc = { answers: {}
       if (missing) errors.push(`${d.id}: evidence "${e}" ${missing}.`)
     }
   }
-  return [...errors, ...(await declarationProblems(draft, { root, doc }))]
+  return [...errors, ...(await declarationProblems(draft, { root, doc })), ...(await noteProblems(draft, { root }))]
 }
 
 function shapeProblem(q, value, { detected, answers }) {
@@ -244,7 +273,7 @@ async function evidenceProblem(root, e) {
  * `provenance` records, per question, who answered and on what evidence; it is
  * written into answers.json and rendered into the authority split.
  */
-export function draftPrompt(draft, { confirmWith = null, accept = false } = {}) {
+export function draftPrompt(draft, { confirmWith = null, accept = false, root = null } = {}) {
   const byId = new Map((draft.questions || []).map((d) => [d.id, d]))
   const provenance = {}
 
@@ -278,7 +307,11 @@ export function draftPrompt(draft, { confirmWith = null, accept = false } = {}) 
     }
     if (d.value === UNKNOWN) return SKIPPED
     if (confirmWith) {
-      confirmWith.note(`${q.prompt}\n  Drafted: ${show(d.value, q)}\n  From: ${d.evidence.join(', ')}`)
+      // The lines themselves, not just their paths: evidence that exists is not
+      // evidence that supports (the study's DEF-238; three drafted claims in the
+      // DEF-274 re-score cited real files that did not say what was claimed).
+      const quoted = root ? await quoteEvidence(root, d.evidence) : d.evidence.map((e) => `    ${e}`)
+      confirmWith.note(`${q.prompt}\n  Drafted: ${show(d.value, q)}\n  Resting on:\n${quoted.join('\n')}`)
       const keep = await confirmWith.select({
         id: `${q.id}#confirm`,
         prompt: '  Keep the drafted answer?',
@@ -317,4 +350,41 @@ function show(value, q) {
   }
   if (value && typeof value === 'object') return JSON.stringify(value)
   return String(value)
+}
+
+/**
+ * Each piece of evidence as the lines it names (up to three per citation), so
+ * the person confirming reads what the answer rests on, not where.
+ */
+export async function quoteEvidence(root, evidence = []) {
+  const out = []
+  for (const e of evidence) {
+    const m = /^(.*?):(\d+)(?:-(\d+))?$/.exec(e)
+    if (/^command:/.test(e) || !m) { out.push(`    ${e}`); continue }
+    const [path, from, to] = [m[1], Number(m[2]), Number(m[3] || m[2])]
+    try {
+      const lines = (await readFile(join(root, path), 'utf8')).split(/\r?\n/)
+      for (let n = from; n <= Math.min(to, from + 2); n++) out.push(`    ${path}:${n}  ${(lines[n - 1] ?? '').trim().slice(0, 140)}`)
+      if (to > from + 2) out.push(`    … to line ${to}`)
+    } catch {
+      out.push(`    ${e}  (could not be read)`)
+    }
+  }
+  return out
+}
+
+/** The whole draft as a sheet a person can read in chat before `--yes`. */
+export async function draftSheet(root, draft) {
+  const out = []
+  for (const q of draft.questions || []) {
+    if (q.answer === null || q.answer === undefined || q.alreadyAnswered) continue
+    out.push('', `  ${q.prompt}`, `    → ${q.answer === UNKNOWN ? 'not known (a visible gap)' : show(q.answer, q)}`)
+    out.push(...(await quoteEvidence(root, q.evidence || [])))
+  }
+  for (const [surface, list] of Object.entries(draft.declarations || {})) {
+    for (const e of list || []) {
+      out.push('', `  Declaration (${surface}): "${e.claim}"`, ...(await quoteEvidence(root, e.evidence || [])))
+    }
+  }
+  return out
 }

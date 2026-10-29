@@ -30,7 +30,7 @@ import { docsOwner } from '../src/detect/docs-owner.js'
 import { runInterview } from '../src/interview/runner.js'
 import { QUESTIONS } from '../src/interview/questions.js'
 import { ttyPrompt } from '../src/interview/prompt.js'
-import { buildDraft, writeDraft, loadDraft, removeDraft, validateDraft, draftPrompt, applyDeclarations, DRAFT_PATH } from '../src/interview/draft.js'
+import { buildDraft, writeDraft, loadDraft, removeDraft, validateDraft, draftPrompt, applyDeclarations, applyNotes, draftSheet, DRAFT_PATH } from '../src/interview/draft.js'
 import * as answersStore from '../src/core/answers.js'
 import * as manifestStore from '../src/core/manifest.js'
 import { buildPlan, formatPlan, SKIP, UNCHANGED } from '../src/core/plan.js'
@@ -472,11 +472,15 @@ async function initFromDraft({ root, doc, detected, args }) {
   const human = isInteractive() && !args.yes && !args.dryRun
   if (!human && !args.yes && !args.dryRun) {
     say('\n  Nothing is generated from a draft no human has confirmed.')
-    say('  Show them each answer with its evidence, then pass --yes; or run this at a terminal.')
+    say('  Show them each answer with the lines it rests on (`caselaw init --from-draft --dry-run` prints them), then pass --yes; or run this at a terminal.')
     return 1
   }
+  if (args.dryRun) {
+    say('\n  What the agent drafted, with the lines each answer rests on:')
+    for (const line of await draftSheet(root, draft)) say(line)
+  }
   const tty = human ? ttyPrompt() : null
-  const prompt = draftPrompt(draft, { confirmWith: tty, accept: args.yes || args.dryRun })
+  const prompt = draftPrompt(draft, { confirmWith: tty, accept: args.yes || args.dryRun, root })
   try {
     await runInterview({
       doc,
@@ -488,6 +492,9 @@ async function initFromDraft({ root, doc, detected, args }) {
     doc.provenance = { ...(doc.provenance ?? {}), ...prompt.provenance }
     const declared = await applyDeclarations(draft, doc, { confirmWith: tty, accept: args.yes || args.dryRun })
     if (declared) doc.provenance.declarations = declared
+    // The reasons ride on the triage they explain, and on its confirmation.
+    const noted = applyNotes(draft, doc, { confirmed: prompt.provenance['authority.triage']?.confirmed ?? null })
+    if (noted) doc.provenance['authority.notes'] = noted
     if (!args.dryRun) await answersStore.save(root, doc)
     const code = await finishInit({ root, doc, detected, args, prompt: tty ?? prompt })
     if (code === 0 && !args.dryRun) {

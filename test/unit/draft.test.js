@@ -12,7 +12,8 @@ import { join } from 'node:path'
 import { spawn, execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
-import { buildDraft, validateDraft, draftPrompt, applyDeclarations, DRAFT_PATH, UNKNOWN } from '../../src/interview/draft.js'
+import { buildDraft, validateDraft, draftPrompt, applyDeclarations, applyNotes, quoteEvidence, draftSheet, DRAFT_PATH, UNKNOWN } from '../../src/interview/draft.js'
+import { generate as generateAuthoritySplit } from '../../src/generate/authority-split.js'
 import { emptyAnswers, SKIPPED } from '../../src/core/answers.js'
 import { scriptedPrompt } from '../../src/interview/prompt.js'
 import { runInterview } from '../../src/interview/runner.js'
@@ -216,5 +217,54 @@ describe('drafted declarations', () => {
     const applied = await applyDeclarations(draft, doc, { accept: true })
     assert.deepEqual(doc.answers.declarations, { readme: [{ claim: 'x' }] }, 'evidence goes to provenance, not into the claim')
     assert.deepEqual(applied.evidence, ['README.md'])
+  })
+})
+
+describe('the person confirming reads what an answer rests on', () => {
+  test('POSITIVE CONTROL: at a terminal, the drafted answer is shown with the text of the line it cites', async () => {
+    const notes = []
+    const human = { ...scriptedPrompt(['keep']), note: (m) => notes.push(m) }
+    const draft = fill(buildDraft({ doc: emptyAnswers(), detected: DETECTED }), GOOD)
+    await draftPrompt(draft, { confirmWith: human, root }).multiselect({ id: 'authority.cannot', prompt: 'cannot?', options: [] })
+    assert.match(notes.join('\n'), /README\.md:3  Drives the bench oscilloscope over GPIB\./)
+  })
+
+  test('a range is quoted up to three lines; a command or a bare path is shown as written', async () => {
+    const lines = await quoteEvidence(root, ['README.md:1-3', 'command: pytest -q', 'pyproject.toml'])
+    assert.deepEqual(lines, ['    README.md:1  # Bench rig', '    README.md:2  ', '    README.md:3  Drives the bench oscilloscope over GPIB.', '    command: pytest -q', '    pyproject.toml'])
+  })
+
+  test('the review sheet lists every drafted answer and declaration with its lines', async () => {
+    const draft = fill(buildDraft({ doc: emptyAnswers(), detected: DETECTED }), GOOD)
+    draft.declarations = { readme: [{ claim: 'Drives a scope', evidence: ['README.md:3'] }] }
+    const sheet = (await draftSheet(root, draft)).join('\n')
+    assert.match(sheet, /What does a human have to DO[\s\S]*Run the capture against the bench scope/)
+    assert.match(sheet, /Declaration \(readme\): "Drives a scope"\n    README\.md:3  Drives the bench oscilloscope over GPIB\./)
+    assert.match(sheet, /not known \(a visible gap\)/)
+  })
+})
+
+describe('why an untested boundary is assumed', () => {
+  const withNotes = (notes) => {
+    const draft = fill(buildDraft({ doc: emptyAnswers(), detected: DETECTED }), { ...GOOD, 'authority.triage': { answer: { hardware: 'untested' }, evidence: ['README.md:3'] } })
+    draft.notes = notes
+    return draft
+  }
+
+  test('POSITIVE CONTROL: a drafted reason becomes the authority split\'s "assumed because", instead of "not recorded"', async () => {
+    const doc = emptyAnswers()
+    Object.assign(doc.answers, { 'authority.cannot': ['hardware'], 'authority.triage': { hardware: 'untested' } })
+    applyNotes(withNotes({ hardware: { reason: 'the bench scope is in the lab, not on this machine', evidence: ['README.md:3'] } }), doc, { confirmed: 'in chat (--yes)' })
+    const { content } = await generateAuthoritySplit({ answers: doc.answers, projectName: 'P', now: new Date('2026-10-30') })
+    assert.match(content, /\| drive or observe the real hardware it talks to \| the bench scope is in the lab, not on this machine \|/)
+  })
+
+  test('a note for a boundary nobody named, or with no reason, is refused; unconfirmed notes are not applied', async () => {
+    const errors = await validateDraft(withNotes({ deploy: { reason: 'x' }, hardware: {} }), { root, detected: DETECTED })
+    assert.match(errors.join('\n'), /notes\.deploy: not one of the answers to authority\.cannot/)
+    assert.match(errors.join('\n'), /notes\.hardware: a note needs its reason/)
+    const doc = emptyAnswers()
+    assert.equal(applyNotes(withNotes({ hardware: { reason: 'x' } }), doc, { confirmed: null }), null)
+    assert.equal(doc.answers['authority.notes'], undefined)
   })
 })

@@ -106,6 +106,8 @@ export function boundaryCandidates(detected = {}) {
       when: () => langs.has('swift') || langs.has('kotlin') || langs.has('objective-c') },
     { value: 'hardware', label: 'drive or observe the real hardware it talks to (instruments, accessories, boards)',
       when: () => signal('hardware') },
+    { value: 'pair-controller', label: 'pair it with a real smart-home controller (the Home app, a Matter controller) and watch it respond',
+      when: () => signal('pairing') },
     { value: 'rendered-ui', label: 'see what the UI actually renders',
       when: () => langs.has('swift') || langs.has('typescript') || langs.has('javascript') || langs.has('kotlin') },
     { value: 'prod-data', label: 'read production database / datastore state',
