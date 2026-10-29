@@ -167,6 +167,11 @@ export function buildModel({ answers = {}, provenance = {}, detected = {}, proje
     humanProof: plain(answers['authority.human_proof'] || ''),
     outside: (answers['outside.authority'] || []).map((o) => OUTSIDE_LABELS[o] || plain(o, 200)),
     declares: (answers['outside.claims'] || []).length > 0,
+    publishing: (detected.publishing || []).map((p) => ({
+      file: plain(p.file, 200),
+      starts: p.triggers ? plain(p.triggers.join('; '), 400) : 'events this could not read (check its `on:` block)',
+      publishes: plain(p.publishes.map((s) => `${s.what} (\`${p.file}:${s.line}\`)`).join(', '), 400),
+    })),
     sources: buildSources(provenance, answers),
   }
 }

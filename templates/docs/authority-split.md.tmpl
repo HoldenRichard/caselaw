@@ -58,6 +58,17 @@ READ freely, without asking. WRITE, DELETE, and DEPLOY never without explicit ap
 a read-only tool that happens to be behaving.
 
 {{/ if }}
+{{# if publishing }}
+## What a push can publish
+
+These workflows publish outside the repository, and git starts them. Doing what starts one is an
+outward-facing action: the agent may prepare it, and a human does it, or asks for it by name, each
+time. A job may carry its own conditions, so read it before treating any of its triggers as safe.
+
+{{# each publishing }}- `{{ file }}` starts on {{ starts }}. It publishes to {{ publishes }}.
+{{/ each }}
+
+{{/ if }}
 {{# if outside }}
 ## Outside authority
 

@@ -24,8 +24,9 @@ import { detectStack, emptyStack, walk } from './stack.js'
 import { detectCommands, emptyCommands } from './commands.js'
 import { detectEnvironment, emptyEnvironment } from './environment.js'
 import { detectSignals, emptySignals } from './signals.js'
+import { detectPublishing, emptyPublishing } from './publishing.js'
 
-export { detectVcs, detectStack, detectCommands, detectEnvironment, detectSignals, walk }
+export { detectVcs, detectStack, detectCommands, detectEnvironment, detectSignals, detectPublishing, walk }
 
 /**
  * @typedef {object} DetectOptions
@@ -54,6 +55,7 @@ export function emptyReport(root = '') {
     secretSurface: env.secretSurface,
     visibility: env.visibility,
     signals: emptySignals(),
+    publishing: emptyPublishing(),
     warnings: [],
     elapsedMs: 0,
   }
@@ -110,6 +112,14 @@ export async function detect(root, opts = {}) {
   })
   report.signals = sigResult.value.signals
   warn(...sigResult.value.warnings, sigResult.warning)
+
+  // Which pushes publish, from the release workflows (the DEF-274 re-score).
+  const pubResult = await guard('publishing', () => detectPublishing(root, walked.value), {
+    publishing: emptyPublishing(),
+    warnings: [],
+  })
+  report.publishing = pubResult.value.publishing
+  warn(...pubResult.value.warnings, pubResult.warning)
 
   // These two touch disjoint state and can overlap; between them they hold
   // most of stage 0's wall clock (xcodebuild and gh both live here).

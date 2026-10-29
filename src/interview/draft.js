@@ -52,6 +52,7 @@ export function buildDraft({ doc, detected }) {
       deploySurface: (detected.deploySurface || []).map((d) => d.kind),
       signals: detected.signals ?? {},
       generatedDocs: detected.stack?.generatedDocs ?? [],
+      publishing: detected.publishing ?? [],
     },
     questions: QUESTIONS.map((q) => ({
       id: q.id,
