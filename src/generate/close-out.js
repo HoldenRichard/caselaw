@@ -36,13 +36,22 @@ export function buildModel({ answers = {}, detected = {}, projectName }) {
     .filter((b) => triage[b] === 'untested')
     .map((b) => ({ value: b, label: BOUNDARY_LABELS[b] || plain(b, 200) }))
 
+  // The DEF-274 re-score found the close-out identical across three different
+  // projects. These three carry the project into it: the gates its CI runs,
+  // how a human proves a change here, and which pushes publish.
+  const gates = (detected.ciGates?.gates || []).slice(0, 8).map((g) => `\`${plain(g.cmd, 160)}\``)
   const anyCommand =
-    detected.commands?.test?.cmd || detected.commands?.build?.cmd || 'npm test'
+    detected.ciGates?.gates?.[0]?.cmd || detected.commands?.test?.cmd || detected.commands?.build?.cmd || 'npm test'
+  const publishing = (detected.publishing || []).map((p) =>
+    plain(`${p.triggers ? p.triggers.join('; ') : 'its triggers'} — starts \`${p.file}\`, which publishes to ${p.publishes.map((s) => s.what).join(', ')}`, 400))
 
   return {
     project: { name: plain(projectName || 'this project', 120) },
     humanOnly,
     untested,
+    gates,
+    humanProof: plain(answers['authority.human_proof'] || '', 600),
+    publishing,
     tier1Example: anyCommand,
   }
 }

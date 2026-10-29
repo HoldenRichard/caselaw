@@ -16,6 +16,13 @@ Keep it short. A close-out nobody writes is worth less than a rough one they do.
 
 <!-- One line per check that actually ran. Value — who ran it — what it showed.
      "Tests pass" is not a verification line; "{{ tier1Example }} — agent — 41 passed, 0 failed" is. -->
+{{# if gates }}
+
+The gates CI runs on a change, in its order. Run them before calling the work done:
+
+{{# each gates }}- [ ] {{ . }}
+{{/ each }}
+{{/ if }}
 
 -
 
@@ -23,6 +30,10 @@ Keep it short. A close-out nobody writes is worth less than a rough one they do.
 
 <!-- The device/console/production remainder. Anything on this list is a claim
      nobody has checked yet, so say so plainly rather than implying it is done. -->
+{{# if humanProof }}
+How a human proves a change here: {{ humanProof }}
+
+{{/ if }}
 {{# if humanOnly }}
 Your project's human-only tier, from `docs/authority-split.md`:
 
@@ -36,6 +47,16 @@ Your project's human-only tier, from `docs/authority-split.md`:
 Boundaries still marked untested — settle them, or verify by hand until you have:
 
 {{# each untested }}- [ ] {{ label }} _(untested)_
+{{/ each }}
+{{/ if }}
+{{# if publishing }}
+
+## Published?
+
+Did this session do any of these? Each one publishes outside the repository, so each is a human's
+to do, or to ask for by name:
+
+{{# each publishing }}- [ ] {{ . }}
 {{/ each }}
 {{/ if }}
 
