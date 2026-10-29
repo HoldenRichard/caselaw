@@ -125,7 +125,7 @@ list is generated from the test suite, not from optimism.
 
 ## Where it came from
 
-Extracted from a five-month solo build of an iOS app that shipped to the App
+Extracted from a five-month solo build of an iOS app submitted to the App
 Store. The governance was not designed; it accreted, one rule at a time, each
 after something broke. This is the portable half.
 

@@ -196,7 +196,7 @@ stronger or merely getting longer.
 
 ## Where this came from
 
-Five months of solo work on an iOS app that shipped to the App Store, most of it
+Five months of solo work on an iOS app submitted to the App Store, most of it
 AI-authored under human direction. The governance was not designed up front. It
 accreted one rule at a time, each after something broke, and by the end it was
 the most valuable part of the repository — and the only part that was entirely
