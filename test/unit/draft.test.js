@@ -12,7 +12,7 @@ import { join } from 'node:path'
 import { spawn, execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
-import { buildDraft, validateDraft, draftPrompt, DRAFT_PATH, UNKNOWN } from '../../src/interview/draft.js'
+import { buildDraft, validateDraft, draftPrompt, applyDeclarations, DRAFT_PATH, UNKNOWN } from '../../src/interview/draft.js'
 import { emptyAnswers, SKIPPED } from '../../src/core/answers.js'
 import { scriptedPrompt } from '../../src/interview/prompt.js'
 import { runInterview } from '../../src/interview/runner.js'
@@ -176,5 +176,45 @@ describe('init --draft, then --from-draft', () => {
     const answers = JSON.parse(await readFile(join(root, '.caselaw/answers.json'), 'utf8'))
     assert.deepEqual(answers.provenance['authority.cannot'].evidence, ['README.md:3'])
     assert.equal(await exists(DRAFT_PATH), false)
+  })
+
+  test('drafted declarations reach the register, each claim with where its truth lives', async () => {
+    await cli(['init', '--draft'], { cwd: root })
+    const path = join(root, DRAFT_PATH)
+    const draft = fill(JSON.parse(await readFile(path, 'utf8')), { ...GOOD, 'outside.claims': { answer: ['readme'], evidence: ['README.md'] } })
+    draft.declarations = { readme: [{ claim: 'Drives the bench oscilloscope over GPIB', evidence: ['README.md:3'], truth: 'the instrument driver' }] }
+    await writeFile(path, JSON.stringify(draft), 'utf8')
+    const r = await cli(['init', '--from-draft', '--yes'], { cwd: root })
+    assert.equal(r.code, 0, r.out)
+    const register = await readFile(join(root, 'docs/declarations.md'), 'utf8')
+    assert.match(register, /\| the README \(`README\.md`\) \| Drives the bench oscilloscope over GPIB \| the instrument driver \| _not recorded_ \| never \|/)
+  })
+})
+
+describe('drafted declarations', () => {
+  const withClaims = (declarations, claimsAnswer = ['readme']) => {
+    const draft = fill(buildDraft({ doc: emptyAnswers(), detected: DETECTED }), { ...GOOD, 'outside.claims': { answer: claimsAnswer, evidence: ['README.md'] } })
+    draft.declarations = declarations
+    return draft
+  }
+
+  test('POSITIVE CONTROL: a claim with no line that holds it is refused', async () => {
+    const errors = await validateDraft(withClaims({ readme: [{ claim: 'Fast' }] }), { root, detected: DETECTED })
+    assert.match(errors.join('\n'), /declarations\.readme\[0\]: name the file and line that holds this claim/)
+  })
+
+  test('a declaration for a surface nobody named is refused', async () => {
+    const errors = await validateDraft(withClaims({ website: [{ claim: 'x', evidence: ['README.md'] }] }), { root, detected: DETECTED })
+    assert.match(errors.join('\n'), /declarations\.website: not one of the surfaces answered in outside\.claims/)
+  })
+
+  test('POSITIVE CONTROL: without a terminal or --yes, drafted declarations are not applied', async () => {
+    const doc = emptyAnswers()
+    const draft = withClaims({ readme: [{ claim: 'x', evidence: ['README.md'] }] })
+    assert.equal(await applyDeclarations(draft, doc), null)
+    assert.equal(doc.answers.declarations, undefined)
+    const applied = await applyDeclarations(draft, doc, { accept: true })
+    assert.deepEqual(doc.answers.declarations, { readme: [{ claim: 'x' }] }, 'evidence goes to provenance, not into the claim')
+    assert.deepEqual(applied.evidence, ['README.md'])
   })
 })

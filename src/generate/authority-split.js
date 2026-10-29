@@ -113,6 +113,7 @@ const ANSWER_NAMES = {
   'authority.retest_days': 'Re-check interval',
   'outside.authority': 'Outside authority',
   'outside.claims': 'Where it makes public claims',
+  declarations: 'The public claims themselves',
 }
 
 /**

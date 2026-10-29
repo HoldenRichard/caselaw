@@ -8,10 +8,16 @@ describes changes. Regenerate this file with `caselaw upgrade`; fill its rows in
 
 ## The register
 
+{{# if rows }}
 | Where | What it claims | Source of truth | Re-derive with | Last checked |
 |---|---|---|---|---|
 {{# each rows }}| {{ where }} | {{ claim }} | {{ truth }} | {{ rederive }} | {{ checked }} |
 {{/ each }}
 
-A row that says _not recorded_ is a promise nobody has checked yet. Say what it claims before the
-next release repeats it.
+A claim last checked "never" is carried, not known. Re-derive it before the next release repeats it.
+{{/ if }}
+{{# if unrecorded }}
+
+Not yet recorded: {{ unrecorded }}. Each makes claims nobody has written down here; list them before
+the next release repeats them.
+{{/ if }}

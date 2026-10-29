@@ -87,7 +87,14 @@ describe('what session 2 generates', () => {
 
   test('POSITIVE CONTROL: an unfilled declaration is a visible hole, never an invented claim', async () => {
     const { content } = await generateDeclarations({ answers: { 'outside.claims': ['readme'] }, detected: { signals: { claims: [{ kind: 'readme', source: 'README.md' }] } }, projectName: 'P' })
-    assert.match(content, /\| the README \(`README\.md`\) \| _not recorded_ \| _not recorded_ \| _not recorded_ \| _not recorded_ \|/)
+    assert.match(content, /Not yet recorded: the README \(`README\.md`\)\./)
+    assert.doesNotMatch(content, /\| What it claims \|/, 'no table of empty cells: the reviewer read one as an unfinished form')
+  })
+
+  test('a recorded claim never re-derived says so: last checked "never"', async () => {
+    const { content } = await generateDeclarations({ answers: { 'outside.claims': ['readme'], declarations: { readme: [{ claim: 'Tested with NI-VISA 17.5', truth: 'README.rst:83' }] } }, projectName: 'P' })
+    assert.match(content, /\| the README \| Tested with NI-VISA 17\.5 \| README\.rst:83 \| _not recorded_ \| never \|/)
+    assert.doesNotMatch(content, /Not yet recorded/)
   })
 
   test('filled declarations become rows, one per claim, with pipes escaped', () => {

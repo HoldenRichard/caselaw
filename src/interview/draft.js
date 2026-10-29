@@ -35,6 +35,7 @@ export const HOW_TO_FILL = [
   `If the repository does not establish an answer, set "answer" to "${UNKNOWN}". It becomes a visible gap. Never guess: a confident wrong answer is read and believed, and a gap is not.`,
   'Leave "answer" null for a question that does not apply (the interview skips it).',
   'A question marked "alreadyAnswered" was answered earlier by a human. Leave it as it is: a draft does not replace a human answer unless the human runs --from-draft with --reconfigure.',
+  'For each surface you name in outside.claims, list in "declarations" under that surface the concrete claims it makes, each as { "claim", "evidence", "truth", "rederive", "checked" }: the claim as the surface states it, evidence naming the file and line that holds it, where the truth lives (a file, a command, a dashboard), and a command that re-derives it if one exists. Leave "checked" empty unless you re-derived the claim from the product just now; an unchecked claim is the point of the register, not a flaw in it.',
   'Then show the human every answer with its evidence and wait for them to confirm or correct it. Only after that run `caselaw init --from-draft --yes`; without a terminal, --yes is the record that a human confirmed.',
 ]
 
@@ -72,6 +73,70 @@ export function buildDraft({ doc, detected }) {
       answer: doc.answers?.[q.id] ?? null,
       evidence: [],
     })),
+    // Not a question: the claims themselves, which the register needs and a
+    // short interview cannot ask for. Keyed by the surfaces in outside.claims.
+    declarations: doc.answers?.declarations ?? {},
+  }
+}
+
+/**
+ * Problems with the drafted declarations. Every new claim names the file that
+ * holds it; claims a human already recorded are carried without evidence.
+ */
+async function declarationProblems(draft, { root, doc }) {
+  const errors = []
+  const decl = draft.declarations
+  if (decl === undefined || decl === null) return errors
+  if (typeof decl !== 'object' || Array.isArray(decl)) return ['declarations: expected an object of surface -> list of claims.']
+  const surfaces = new Set((draft.questions || []).find((q) => q.id === 'outside.claims')?.answer || doc.answers?.['outside.claims'] || [])
+  const existing = doc.answers?.declarations || {}
+  for (const [surface, entries] of Object.entries(decl)) {
+    if (!surfaces.has(surface)) { errors.push(`declarations.${surface}: not one of the surfaces answered in outside.claims.`); continue }
+    if (!Array.isArray(entries)) { errors.push(`declarations.${surface}: expected a list of claims.`); continue }
+    for (const [i, e] of entries.entries()) {
+      const at = `declarations.${surface}[${i}]`
+      if (!e || typeof e.claim !== 'string' || !e.claim.trim()) { errors.push(`${at}: a declaration needs the claim itself.`); continue }
+      if ((existing[surface] || []).some((x) => JSON.stringify(stripEvidence(x)) === JSON.stringify(stripEvidence(e)))) continue
+      const ev = Array.isArray(e.evidence) ? e.evidence.filter((x) => typeof x === 'string' && x.trim()) : []
+      if (!ev.length) { errors.push(`${at}: name the file and line that holds this claim.`); continue }
+      for (const x of ev) {
+        const missing = await evidenceProblem(root, x)
+        if (missing) errors.push(`${at}: evidence "${x}" ${missing}.`)
+      }
+      if (e.checked && !/^\d{4}-\d{2}-\d{2}$/.test(e.checked)) errors.push(`${at}: "checked" is a date (YYYY-MM-DD) or empty.`)
+    }
+  }
+  return errors
+}
+
+const stripEvidence = ({ evidence, ...rest } = {}) => rest
+
+/**
+ * The drafted declarations, kept or dropped as a whole: at a terminal the
+ * human sees each claim with the line that holds it; with `accept`, they were
+ * confirmed in chat. Returns the provenance entry, or null when nothing applied.
+ */
+export async function applyDeclarations(draft, doc, { confirmWith = null, accept = false } = {}) {
+  const decl = draft.declarations
+  const entries = Object.values(decl || {}).flat()
+  if (!entries.length) return null
+  if (confirmWith) {
+    confirmWith.note(`Public claims the agent recorded (${entries.length}):\n${Object.entries(decl)
+      .flatMap(([s, list]) => list.map((e) => `  ${s}: "${e.claim}"  (${(e.evidence || []).join(', ') || 'recorded earlier'})`)).join('\n')}`)
+    const keep = await confirmWith.select({
+      id: 'declarations#confirm',
+      prompt: '  Keep these declarations?',
+      options: [{ value: 'keep', key: 'k', label: 'keep them' }, { value: 'drop', key: 'd', label: 'drop them; I will record claims myself' }],
+    })
+    if (keep !== 'keep') return null
+  } else if (!accept) {
+    return null
+  }
+  doc.answers.declarations = Object.fromEntries(Object.entries(decl).map(([s, list]) => [s, list.map(stripEvidence)]))
+  return {
+    by: 'agent-draft',
+    evidence: [...new Set(entries.flatMap((e) => e.evidence || []))],
+    confirmed: confirmWith ? 'at a terminal' : 'in chat (--yes)',
   }
 }
 
@@ -126,7 +191,7 @@ export async function validateDraft(draft, { root, detected, doc = { answers: {}
       if (missing) errors.push(`${d.id}: evidence "${e}" ${missing}.`)
     }
   }
-  return errors
+  return [...errors, ...(await declarationProblems(draft, { root, doc }))]
 }
 
 function shapeProblem(q, value, { detected, answers }) {

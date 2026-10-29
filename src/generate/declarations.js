@@ -47,21 +47,25 @@ export function buildModel({ answers = {}, detected = {}, projectName }) {
   const surfaces = answers['outside.claims'] || []
   const filled = answers.declarations || {}
   const pathOf = new Map((detected.signals?.claims || []).map((c) => [c.kind, c.source]))
+  const label = (s) => `${CLAIM_LABELS[s] || plain(s, 120)}${pathOf.get(s) ? ` (\`${pathOf.get(s)}\`)` : ''}`
   const rows = []
+  const unrecorded = []
+  // A surface with no recorded claim is one line saying so, not a row of empty
+  // cells: the DEF-274 reviewer read a table of holes as an unfinished form.
   for (const s of surfaces) {
-    const where = cell(`${CLAIM_LABELS[s] || plain(s, 120)}${pathOf.get(s) ? ` (\`${pathOf.get(s)}\`)` : ''}`, 200)
-    const entries = Array.isArray(filled[s]) && filled[s].length ? filled[s] : [{}]
+    const entries = Array.isArray(filled[s]) ? filled[s].filter((e) => e && e.claim) : []
+    if (!entries.length) { unrecorded.push(label(s)); continue }
     for (const e of entries) {
       rows.push({
-        where,
-        claim: e.claim ? cell(e.claim, 300) : HOLE,
+        where: cell(label(s), 200),
+        claim: cell(e.claim, 300),
         truth: e.truth ? cell(e.truth, 200) : HOLE,
         rederive: e.rederive ? `\`${cell(e.rederive, 200)}\`` : HOLE,
-        checked: e.checked ? cell(e.checked, 30) : HOLE,
+        checked: e.checked ? cell(e.checked, 30) : 'never',
       })
     }
   }
-  return { project: { name: plain(projectName || 'this project', 120) }, rows }
+  return { project: { name: plain(projectName || 'this project', 120) }, rows, unrecorded: unrecorded.join(', ') }
 }
 
 export async function generate(input) {

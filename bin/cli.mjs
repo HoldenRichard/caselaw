@@ -30,7 +30,7 @@ import { docsOwner } from '../src/detect/docs-owner.js'
 import { runInterview } from '../src/interview/runner.js'
 import { QUESTIONS } from '../src/interview/questions.js'
 import { ttyPrompt } from '../src/interview/prompt.js'
-import { buildDraft, writeDraft, loadDraft, removeDraft, validateDraft, draftPrompt, DRAFT_PATH } from '../src/interview/draft.js'
+import { buildDraft, writeDraft, loadDraft, removeDraft, validateDraft, draftPrompt, applyDeclarations, DRAFT_PATH } from '../src/interview/draft.js'
 import * as answersStore from '../src/core/answers.js'
 import * as manifestStore from '../src/core/manifest.js'
 import { buildPlan, formatPlan, SKIP, UNCHANGED } from '../src/core/plan.js'
@@ -486,6 +486,8 @@ async function initFromDraft({ root, doc, detected, args }) {
       reconfigure: args.reconfigure,
     })
     doc.provenance = { ...(doc.provenance ?? {}), ...prompt.provenance }
+    const declared = await applyDeclarations(draft, doc, { confirmWith: tty, accept: args.yes || args.dryRun })
+    if (declared) doc.provenance.declarations = declared
     if (!args.dryRun) await answersStore.save(root, doc)
     const code = await finishInit({ root, doc, detected, args, prompt: tty ?? prompt })
     if (code === 0 && !args.dryRun) {
