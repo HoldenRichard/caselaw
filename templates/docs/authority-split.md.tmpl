@@ -67,3 +67,15 @@ a read-only tool that happens to be behaving.
 Code is authoritative for what is committed. Only a human observation is authoritative for what
 is live. Never report a write as persisted, a deploy as landed, or a screen as rendered — report
 what the code does, and name exactly what a human should look at.
+{{# if sources }}
+
+## Where these answers came from
+
+An agent drafted some of the answers above from this repository, and a human confirmed them. Each
+rests on the files named here: when one of them changes, re-derive the answer rather than carry it.
+
+| Answer | Answered by | Rests on | Confirmed |
+|---|---|---|---|
+{{# each sources }}| {{ answer }} | {{ by }} | {{ evidence }} | {{ confirmed }} |
+{{/ each }}
+{{/ if }}

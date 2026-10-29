@@ -94,7 +94,32 @@ export function cell(s, max = 400) {
   return plain(s, max).replace(/\|/g, '\\|')
 }
 
-export function buildModel({ answers = {}, detected = {}, projectName, now = new Date() }) {
+/** Short names for the answers a provenance row can describe. */
+const ANSWER_NAMES = {
+  'authority.cannot': 'What the agent cannot do',
+  'authority.triage': 'Physical, chosen or untested',
+  'authority.human_proof': 'What a human has to do',
+  'authority.agent_reach': 'What the agent could check itself',
+  'authority.retest_days': 'Re-check interval',
+}
+
+/**
+ * Where each answer came from, when any were drafted by an agent. A drafted
+ * answer is a claim resting on files; naming them is what lets the next reader
+ * re-derive it instead of carrying it (DEF-216, DEF-748).
+ */
+function buildSources(provenance = {}, answers = {}) {
+  return Object.entries(provenance)
+    .filter(([id]) => Object.prototype.hasOwnProperty.call(answers, id))
+    .map(([id, p]) => ({
+      answer: cell(ANSWER_NAMES[id] || id, 120),
+      by: cell(p.by === 'human' ? 'a human' : p.by === 'agent-draft' ? 'agent draft' : p.by || 'unknown', 60),
+      evidence: cell((p.evidence || []).map((e) => `\`${e}\``).join(', ') || '—', 400),
+      confirmed: cell(p.confirmed || (p.by === 'human' ? 'answered at a terminal' : 'not recorded'), 80),
+    }))
+}
+
+export function buildModel({ answers = {}, provenance = {}, detected = {}, projectName, now = new Date() }) {
   const selected = answers['authority.cannot'] || []
   const triage = answers['authority.triage'] || {}
   const label = (b) => BOUNDARY_LABELS[b] || plain(b, 200)
@@ -128,6 +153,7 @@ export function buildModel({ answers = {}, detected = {}, projectName, now = new
     unverified,
     truthSources: answers['authority.truth_sources'] || [],
     humanProof: plain(answers['authority.human_proof'] || ''),
+    sources: buildSources(provenance, answers),
   }
 }
 

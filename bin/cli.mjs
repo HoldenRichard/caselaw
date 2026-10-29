@@ -30,6 +30,7 @@ import { docsOwner } from '../src/detect/docs-owner.js'
 import { runInterview } from '../src/interview/runner.js'
 import { QUESTIONS } from '../src/interview/questions.js'
 import { ttyPrompt } from '../src/interview/prompt.js'
+import { buildDraft, writeDraft, loadDraft, removeDraft, validateDraft, draftPrompt, DRAFT_PATH } from '../src/interview/draft.js'
 import * as answersStore from '../src/core/answers.js'
 import * as manifestStore from '../src/core/manifest.js'
 import { buildPlan, formatPlan, SKIP, UNCHANGED } from '../src/core/plan.js'
@@ -69,7 +70,7 @@ export const COMMANDS = {
   gate: { subs: GATE_SUBCOMMANDS, help: 'run a gate by hand; promote one that has earned it' },
 }
 
-export const BOOL_FLAGS = ['help', 'dry-run', 'yes', 'force', 'json', 'agent', 'strict', 'purge', 'reconfigure']
+export const BOOL_FLAGS = ['help', 'dry-run', 'yes', 'force', 'json', 'agent', 'strict', 'purge', 'reconfigure', 'draft', 'from-draft']
 export const VALUED_FLAGS = [
   'with', 'origin', 'trigger', 'rule', 'enforcement', 'by', 'reason',
   'kind', 'id', 'paths', 'patterns', 'message', 'command', 'args', 'when', 'require', 'extract', 'assert',
@@ -106,6 +107,8 @@ Options
   --strict               check: fail on files you edited too
   --with <a,b,c>         init: add optional modules: decisions, glossary, known-issues
   --reconfigure          init: ask every question again, including ones already answered
+  --draft                init: write .caselaw/draft.json for an agent to answer from the repository
+  --from-draft           init: confirm the agent's drafted answers, then generate (--yes after confirming in chat)
   --purge                eject: remove the generated docs too
   --origin <text>        rule adopt / rule propose: the incident in THIS project that proved it
   --trigger <text>       rule propose: the fields, when not answering at a terminal
@@ -360,6 +363,10 @@ async function cmdInit(args, root) {
     say(`  ! ${w.message}${w.hint ? ` — ${w.hint}` : ''}`)
   }
 
+  // Writing the draft touches only .caselaw/draft.json, so neither a dirty tree
+  // nor a borrowed docs/ is a reason to refuse it; --from-draft meets both.
+  if (args.draft) return writeInitDraft({ root, detected, args })
+
   // Refuse to work on a dirty tree unless told otherwise: the plan we show has
   // to be about our changes, not tangled with in-flight edits. Files this
   // tool wrote and has not yet seen committed are ours, not dirt — every
@@ -399,6 +406,8 @@ async function cmdInit(args, root) {
   // a module chosen at install must not silently vanish on the next run.
   if (args.with.length) doc.modules = [...new Set([...(doc.modules ?? []), ...args.with])]
 
+  if (args.fromDraft) return initFromDraft({ root, doc, detected, args })
+
   const prompt = ttyPrompt()
   try {
     await runInterview({
@@ -413,6 +422,79 @@ async function cmdInit(args, root) {
       sessions: [1],
     })
     return await finishInit({ root, doc, detected, args, prompt })
+  } finally {
+    await prompt.close()
+  }
+}
+
+/** `init --draft`: the questions, what detection knows, and room for an agent's answers. */
+async function writeInitDraft({ root, detected, args }) {
+  const doc = (await answersStore.load(root)) ?? answersStore.emptyAnswers({
+    templateVersion: TEMPLATE_VERSION,
+    project: { name: detected.stack?.projectName || basename(root) },
+  })
+  const draft = buildDraft({ doc, detected })
+  if (args.dryRun) {
+    say(JSON.stringify(draft, null, 2))
+    say('\n  --dry-run: nothing written.')
+    return 0
+  }
+  if ((await loadDraft(root).catch(() => null)) && !args.force) {
+    say(`\n  ${DRAFT_PATH} already exists. Finish it with \`caselaw init --from-draft\`, or pass --force to start it over.`)
+    return 1
+  }
+  await writeDraft(root, draft)
+  say(`\n  Wrote ${DRAFT_PATH}: ${draft.questions.length} questions, with what detection found and the instructions an agent needs.`)
+  say('  An agent fills it in from the repository, naming the file behind every answer, and shows you each one.')
+  say('  Then: `caselaw init --from-draft` at a terminal to keep or change each answer,')
+  say('  or `caselaw init --from-draft --yes` once you have confirmed them in chat.')
+  return 0
+}
+
+/**
+ * `init --from-draft`: the agent's answers, checked and confirmed, then the
+ * same generation as a typed interview. Nothing is generated from a draft no
+ * human has confirmed: at a terminal each answer is kept or replaced; without
+ * one, `--yes` is the record that the human confirmed in chat.
+ */
+async function initFromDraft({ root, doc, detected, args }) {
+  const draft = await loadDraft(root)
+  if (!draft) {
+    say(`\n  No ${DRAFT_PATH} here. Write one with \`caselaw init --draft\`.`)
+    return 1
+  }
+  const errors = await validateDraft(draft, { root, detected, doc })
+  if (errors.length) {
+    say(`\n  The draft does not hold up (${errors.length} problem${errors.length === 1 ? '' : 's'}):`)
+    for (const e of errors) say(`  - ${e}`)
+    say('  Fix them in the draft and run this again. Nothing was written.')
+    return 1
+  }
+  const human = isInteractive() && !args.yes && !args.dryRun
+  if (!human && !args.yes && !args.dryRun) {
+    say('\n  Nothing is generated from a draft no human has confirmed.')
+    say('  Show them each answer with its evidence, then pass --yes; or run this at a terminal.')
+    return 1
+  }
+  const tty = human ? ttyPrompt() : null
+  const prompt = draftPrompt(draft, { confirmWith: tty, accept: args.yes || args.dryRun })
+  try {
+    await runInterview({
+      doc,
+      detected,
+      prompt,
+      persist: args.dryRun ? null : (d) => answersStore.save(root, d),
+      reconfigure: args.reconfigure,
+      sessions: [1],
+    })
+    doc.provenance = { ...(doc.provenance ?? {}), ...prompt.provenance }
+    if (!args.dryRun) await answersStore.save(root, doc)
+    const code = await finishInit({ root, doc, detected, args, prompt: tty ?? prompt })
+    if (code === 0 && !args.dryRun) {
+      await removeDraft(root)
+      say(`  ${DRAFT_PATH} removed: its answers, and the evidence for each, are in .caselaw/answers.json.`)
+    }
+    return code
   } finally {
     await prompt.close()
   }
@@ -563,7 +645,7 @@ export function parseArgs(list) {
   const out = {
     command: null, sub: null, name: null, dir: null,
     dryRun: false, yes: false, force: false, help: false, json: false, agent: false,
-    strict: false, purge: false, reconfigure: false,
+    strict: false, purge: false, reconfigure: false, draft: false, fromDraft: false,
     with: [], opt: {}, unknown: [],
   }
   const positional = []
@@ -578,6 +660,8 @@ export function parseArgs(list) {
     else if (a === '--strict') out.strict = true
     else if (a === '--purge') out.purge = true
     else if (a === '--reconfigure') out.reconfigure = true
+    else if (a === '--draft') out.draft = true
+    else if (a === '--from-draft') out.fromDraft = true
     else if (a.startsWith('--')) {
       const eq = a.indexOf('=')
       const key = eq === -1 ? a.slice(2) : a.slice(2, eq)

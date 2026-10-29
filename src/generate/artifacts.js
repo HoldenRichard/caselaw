@@ -111,6 +111,7 @@ export async function buildArtifacts({ doc, detected, adapterIds = null, modules
 
   const authority = await generateAuthoritySplit({
     answers: doc.answers,
+    provenance: doc.provenance,
     detected,
     projectName: doc.project?.name,
     now: doc.generatedAt ? new Date(doc.generatedAt) : undefined,

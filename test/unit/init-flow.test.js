@@ -51,11 +51,26 @@ const put = async (rel, content) => { await mkdir(join(root, rel, '..'), { recur
 const commit = () => { execFileSync('git', ['add', '-A'], { cwd: root }); execFileSync('git', ['commit', '-qm', 'x'], { cwd: root }) }
 const exists = async (rel) => { try { await stat(join(root, rel)); return true } catch { return false } }
 
-// A repo with no detected language offers the same seven boundary options in
-// the same order; "4" is "run the full test suite". The interview asks:
-// what the agent cannot do, then a triage per selection, human proof, agent
-// reach — and a re-test cadence only when something was marked untested.
-const ANSWERS = '4\np\nTap through it on a phone.\nRun the suite.\n'
+// A repo with nothing detected — no language, no manifest, no deploy surface —
+// is offered three boundary options, in this order: paid APIs, the full test
+// suite, logging in as a human. "2" is "run the full test suite". The
+// interview asks: what the agent cannot do, then a triage per selection, human
+// proof, agent reach — and a re-test cadence only when something was marked
+// untested. This was "4" of seven until the options began following what the
+// manifests declare (DEF-274), and every test below still passed on the wrong
+// path; the first test now proves the path, so a renumbering fails loudly.
+const ANSWERS = '2\np\nTap through it on a phone.\nRun the suite.\n'
+
+describe('the scripted answers take the path they describe', () => {
+  test('POSITIVE CONTROL: "2" selects the full test suite, triaged physical, with the human proof recorded', async () => {
+    commit()
+    const r = await cli(['init', '--yes'], { cwd: root, input: ANSWERS })
+    assert.equal(r.code, 0, r.out + r.err)
+    const split = await readFile(join(root, 'docs/authority-split.md'), 'utf8')
+    assert.match(split, /## The agent cannot — physical[\s\S]*run the full test suite/)
+    assert.match(split, /Tap through it on a phone\./)
+  })
+})
 
 describe('init, twice', () => {
   test('POSITIVE CONTROL: a second init is not refused over the first one\'s own uncommitted files', async () => {
