@@ -22,6 +22,7 @@
 
 import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { tomlTable, tomlString } from './toml.js'
 
 export const DEFAULT_MAX_FILES = 20000
 export const DEFAULT_MAX_DEPTH = 12
@@ -212,7 +213,47 @@ export function emptyStack() {
     // From the manifest, never the directory name: a clone called `repo`
     // produced governance titled "Authority split — repo" for homebridge.
     projectName: null,
+    // Documentation a generator wrote, left out of the census: [{path, generator}].
+    generatedDocs: [],
   }
+}
+
+/**
+ * Generated documentation sites, recognised by the files every run of that
+ * generator leaves behind. homebridge commits its TypeDoc output under docs/,
+ * and 155 generated pages made the census call a TypeScript project 52% HTML
+ * (DEF-274). Read from the walk alone: no file is opened. TypeDoc no longer
+ * stamps a generator <meta>, so a layout is the only reliable mark.
+ */
+const GENERATED_DOC_LAYOUTS = [
+  { generator: 'TypeDoc', files: ['assets/search.js', 'assets/navigation.js'] },
+  { generator: 'Sphinx', files: ['searchindex.js', '_static/doctools.js'] },
+  { generator: 'MkDocs', files: ['search/search_index.json', 'sitemap.xml'] },
+  { generator: 'Javadoc', files: ['element-list', 'allclasses-index.html'] },
+  { generator: 'Doxygen', files: ['doxygen.css', 'index.html'] },
+]
+
+/**
+ * @param {string[]} files walked paths, relative to the root
+ * @returns {{path: string, generator: string}[]} outermost roots only; never the repository root
+ */
+export function generatedDocRoots(files) {
+  const present = new Set(files)
+  const found = new Map()
+  for (const f of files) {
+    for (const { generator, files: [first, ...rest] } of GENERATED_DOC_LAYOUTS) {
+      if (!f.endsWith(`/${first}`)) continue
+      const base = f.slice(0, -first.length) // keeps the trailing slash
+      // A repository that IS a generated site has no source to protect; leaving
+      // the root in would empty the census rather than correct it.
+      if (!base) continue
+      if (rest.every((r) => present.has(base + r))) found.set(base.slice(0, -1), generator)
+    }
+  }
+  const roots = [...found.keys()].sort()
+  return roots
+    .filter((r) => !roots.some((o) => o !== r && r.startsWith(`${o}/`)))
+    .map((path) => ({ path, generator: found.get(path) }))
 }
 
 /**
@@ -243,9 +284,19 @@ export async function detectStack(root, opts = {}, walked = null) {
   }
 
   // --- language census ---------------------------------------------------
+  stack.generatedDocs = generatedDocRoots(w.files)
+  const generated = stack.generatedDocs.map((g) => `${g.path}/`)
+  if (generated.length > 0) {
+    warnings.push({
+      code: 'generated-docs',
+      message: `Left out of the language census as generated documentation: ${stack.generatedDocs.map((g) => `${g.path}/ (${g.generator})`).join(', ')}.`,
+      hint: 'If any of that is written by hand, say so in the interview; the census only decides which questions are asked.',
+    })
+  }
   const counts = new Map()
   let codeFiles = 0
   for (const rel of w.files) {
+    if (generated.some((g) => rel.startsWith(g))) continue
     const lang = languageOf(rel)
     if (!lang) continue
     counts.set(lang, (counts.get(lang) || 0) + 1)
@@ -321,12 +372,12 @@ export async function readProjectName(root, rootFiles, rootDirs = []) {
     try { const n = clean(JSON.parse(await read('package.json')).name); if (n) return n.replace(/^@[^/]+\//, '') } catch { /* fall through */ }
   }
   if (rootFiles.has('pyproject.toml')) {
-    const m = (await read('pyproject.toml') || '').match(/^\[project\][\s\S]*?^name\s*=\s*["']([^"'\n]+)["']/m)
-    if (m && clean(m[1])) return clean(m[1])
+    const n = clean(tomlString(tomlTable(await read('pyproject.toml'), 'project'), 'name'))
+    if (n) return n
   }
   if (rootFiles.has('Cargo.toml')) {
-    const m = (await read('Cargo.toml') || '').match(/^\[package\][\s\S]*?^name\s*=\s*["']([^"'\n]+)["']/m)
-    if (m && clean(m[1])) return clean(m[1])
+    const n = clean(tomlString(tomlTable(await read('Cargo.toml'), 'package'), 'name'))
+    if (n) return n
   }
   if (rootFiles.has('go.mod')) {
     const m = (await read('go.mod') || '').match(/^module\s+(\S+)/m)

@@ -23,8 +23,9 @@ import { detectVcs, emptyVcs } from './vcs.js'
 import { detectStack, emptyStack, walk } from './stack.js'
 import { detectCommands, emptyCommands } from './commands.js'
 import { detectEnvironment, emptyEnvironment } from './environment.js'
+import { detectSignals, emptySignals } from './signals.js'
 
-export { detectVcs, detectStack, detectCommands, detectEnvironment, walk }
+export { detectVcs, detectStack, detectCommands, detectEnvironment, detectSignals, walk }
 
 /**
  * @typedef {object} DetectOptions
@@ -52,6 +53,7 @@ export function emptyReport(root = '') {
     deploySurface: env.deploySurface,
     secretSurface: env.secretSurface,
     visibility: env.visibility,
+    signals: emptySignals(),
     warnings: [],
     elapsedMs: 0,
   }
@@ -99,6 +101,15 @@ export async function detect(root, opts = {}) {
   })
   report.stack = stackResult.value.stack
   warn(...stackResult.value.warnings, stackResult.warning)
+
+  // Reads a handful of manifests the walk already found; the boundary options
+  // are offered on its evidence rather than to every repository alike.
+  const sigResult = await guard('signals', () => detectSignals(root, walked.value), {
+    signals: emptySignals(),
+    warnings: [],
+  })
+  report.signals = sigResult.value.signals
+  warn(...sigResult.value.warnings, sigResult.warning)
 
   // These two touch disjoint state and can overlap; between them they hold
   // most of stage 0's wall clock (xcodebuild and gh both live here).
@@ -163,7 +174,7 @@ function markDegraded(fallback, reason, name) {
   const out = { ...fallback }
   // Stamp the degradation onto the inner group object when there is one, so a
   // consumer sees it next to the (empty) facts rather than on a wrapper.
-  for (const key of ['vcs', 'stack', 'commands', 'environment']) {
+  for (const key of ['vcs', 'stack', 'commands', 'environment', 'signals']) {
     if (out[key] && typeof out[key] === 'object') {
       out[key] = { ...out[key], degraded: true, reason, hint }
       return out

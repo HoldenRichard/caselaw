@@ -24,6 +24,7 @@ export const TEMPLATE_PATH = join(HERE, '../../templates/docs/authority-split.md
 /** Human labels for the boundary ids the interview collects. */
 export const BOUNDARY_LABELS = {
   device: 'run it on real hardware',
+  hardware: 'drive or observe the real hardware it talks to',
   'rendered-ui': 'see what the UI actually renders',
   'prod-data': 'read production datastore state',
   'prod-logs': 'read production logs',

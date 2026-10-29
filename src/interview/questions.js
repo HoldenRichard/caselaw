@@ -41,25 +41,35 @@ export const SESSIONS = [
  * Candidate boundaries, tailored by what Stage 0 found. The `when` on each
  * keeps the list short: showing a stranger fourteen irrelevant checkboxes is
  * how you lose them before the first real answer.
+ *
+ * DEF-274: the datastore, customer-data and delivery options used to be shown
+ * to every repository, and hardware only to mobile ones, so a library for lab
+ * instruments was asked about production databases and never about hardware.
+ * They now follow what the manifests declare (`detected.signals`). Anything
+ * missed can still be typed in: the question allows other answers.
  */
 export function boundaryCandidates(detected = {}) {
   const deploy = new Set((detected.deploySurface || []).map((d) => d.kind))
   const langs = new Set((detected.stack?.languages || []).map((l) => l.name.toLowerCase()))
   const has = (k) => deploy.has(k)
+  const signal = (k) => (detected.signals?.[k] || []).length > 0
+  const keepsData = () => deploy.size > 0 || signal('datastore')
 
   const all = [
     { value: 'device', label: 'run it on real hardware / a physical device',
       when: () => langs.has('swift') || langs.has('kotlin') || langs.has('objective-c') },
+    { value: 'hardware', label: 'drive or observe the real hardware it talks to (instruments, accessories, boards)',
+      when: () => signal('hardware') },
     { value: 'rendered-ui', label: 'see what the UI actually renders',
       when: () => langs.has('swift') || langs.has('typescript') || langs.has('javascript') || langs.has('kotlin') },
     { value: 'prod-data', label: 'read production database / datastore state',
-      when: () => has('firebase') || has('terraform') || has('k8s') || has('serverless') || true },
+      when: keepsData },
     { value: 'prod-logs', label: 'read production logs',
       when: () => deploy.size > 0 },
     { value: 'deploy', label: 'deploy',
       when: () => deploy.size > 0 },
     { value: 'migrations', label: 'run database migrations',
-      when: () => true },
+      when: () => signal('datastore') },
     { value: 'secrets', label: 'read secrets / API keys',
       when: (d) => (d.secretSurface || []).length > 0 },
     { value: 'paid-apis', label: 'call paid or rate-limited third-party APIs',
@@ -67,11 +77,11 @@ export function boundaryCandidates(detected = {}) {
     { value: 'full-suite', label: 'run the full test suite (too slow, or needs credentials)',
       when: () => true },
     { value: 'real-user-data', label: 'reproduce anything with real customer data',
-      when: () => true },
+      when: keepsData },
     { value: 'release-console', label: 'reach the release / app-store / registry console',
-      when: () => langs.has('swift') || langs.has('kotlin') || has('vercel') || has('fly') },
+      when: () => langs.has('swift') || langs.has('kotlin') || has('vercel') || has('fly') || signal('registries') },
     { value: 'delivery', label: 'confirm an email / SMS / push actually arrived',
-      when: () => true },
+      when: () => deploy.size > 0 || signal('messaging') },
     { value: 'human-login', label: 'log into anything as a human',
       when: () => true },
   ]
