@@ -54,7 +54,7 @@ const pExecFile = promisify(execFile)
  * announced itself as 0.1.0 and stamped that into every manifest it wrote.
  */
 export const CLI_VERSION = require('../package.json').version
-export const TEMPLATE_VERSION = '1.0'
+export const TEMPLATE_VERSION = '1.1'
 
 /** The dispatch table. test/unit/cli-surface.test.js checks every advertised command against it. */
 export const COMMANDS = {
@@ -210,7 +210,7 @@ async function cmdUpgrade(args, root) {
       say(`\n  ${fresh.length} question(s) added since template ${doc.templateVersion}.`)
       const prompt = ttyPrompt()
       try {
-        await runInterview({ doc, detected, prompt, persist: (d) => answersStore.save(root, d), sessions: [1] })
+        await runInterview({ doc, detected, prompt, persist: (d) => answersStore.save(root, d) })
       } finally {
         await prompt.close()
       }
@@ -419,7 +419,6 @@ async function cmdInit(args, root) {
       // and then print "--dry-run: nothing written."
       persist: args.dryRun ? null : (d) => answersStore.save(root, d),
       reconfigure: args.reconfigure,
-      sessions: [1],
     })
     return await finishInit({ root, doc, detected, args, prompt })
   } finally {
@@ -485,7 +484,6 @@ async function initFromDraft({ root, doc, detected, args }) {
       prompt,
       persist: args.dryRun ? null : (d) => answersStore.save(root, d),
       reconfigure: args.reconfigure,
-      sessions: [1],
     })
     doc.provenance = { ...(doc.provenance ?? {}), ...prompt.provenance }
     if (!args.dryRun) await answersStore.save(root, doc)

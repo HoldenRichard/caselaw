@@ -107,7 +107,8 @@ describe('what the interview accepts', () => {
   test('POSITIVE CONTROL: free text after + may contain commas', async () => {
     commit()
     const sentence = 'pair the bridge with the Home app on a real iPhone, then confirm the accessory responds'
-    const r = await cli(['init', '--yes'], { cwd: root, input: `+${sentence}\np\nTap it.\nRun it.\n` })
+    // The two blank lines answer session 2 (outside authority, public claims) with "none".
+    const r = await cli(['init', '--yes'], { cwd: root, input: `+${sentence}\np\nTap it.\nRun it.\n\n\n` })
     assert.equal(r.code, 0, r.out + r.err)
     const answers = JSON.parse(await readFile(join(root, '.caselaw/answers.json'), 'utf8'))
     assert.deepEqual(answers.answers['authority.cannot'], [sentence], 'the whole sentence, not the part before the first comma')

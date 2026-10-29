@@ -1,0 +1,17 @@
+# Declarations — {{ project.name }}
+
+What this project says about itself in public. A declaration is a claim that leaves the
+repository: it is true as of the last time someone re-derived it from the product, and nothing in
+the build fails when it drifts. Re-derive one before repeating it, and whenever the thing it
+describes changes. Regenerate this file with `caselaw upgrade`; fill its rows in
+`.caselaw/answers.json` under `declarations`, not here.
+
+## The register
+
+| Where | What it claims | Source of truth | Re-derive with | Last checked |
+|---|---|---|---|---|
+{{# each rows }}| {{ where }} | {{ claim }} | {{ truth }} | {{ rederive }} | {{ checked }} |
+{{/ each }}
+
+A row that says _not recorded_ is a promise nobody has checked yet. Say what it claims before the
+next release repeats it.

@@ -159,6 +159,10 @@ describe('question set — what it says it generates', () => {
       'authority.human_proof': 'Tap through onboarding on a phone.',
       'authority.agent_reach': 'It can boot the simulator and screenshot both colour schemes.',
       'authority.retest_days': 30,
+      // Session 2: without these, the outside-authority section and the
+      // declarations register are never rendered, and their claims go unchecked.
+      'outside.authority': ['app-review', 'external-reviewer'],
+      'outside.claims': ['readme', 'store-listing'],
     })
     const artifacts = await buildArtifacts({ doc, detected: { agentConfig: { claudeMd: true }, commands: {}, deploySurface: [] } })
     const byPath = new Map(artifacts.map((a) => [a.path, a.body]))

@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { generate as generateAuthoritySplit } from './authority-split.js'
 import { generate as generateCloseOut } from './close-out.js'
+import { generate as generateDeclarations } from './declarations.js'
 import { selectAdapters, commandCollisions } from '../adapters/index.js'
 import { isoDate } from '../core/dates.js'
 import { render } from '../render/engine.js'
@@ -122,6 +123,13 @@ export async function buildArtifacts({ doc, detected, adapterIds = null, modules
     answers: doc.answers, detected, projectName: doc.project?.name,
   })
   out.push({ path: 'docs/close-out.md', kind: 'file', body: closeOut.content })
+
+  // Only once someone has named where the project makes public claims: an
+  // empty register would be a file of promises that nobody made.
+  if ((doc.answers?.['outside.claims'] || []).length) {
+    const declarations = await generateDeclarations({ answers: doc.answers, detected, projectName: doc.project?.name })
+    out.push({ path: 'docs/declarations.md', kind: 'file', body: declarations.content })
+  }
 
   // Case-law scaffolding ships verbatim: machinery, never content.
   for (const rel of await templateFiles('rules')) {

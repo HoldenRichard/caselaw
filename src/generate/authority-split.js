@@ -39,6 +39,16 @@ export const BOUNDARY_LABELS = {
   'human-login': 'log into anything as a human',
 }
 
+/** Human labels for the outside authorities session 2 collects. */
+export const OUTSIDE_LABELS = {
+  'app-review': 'an app store\'s review (Apple App Review, Google Play)',
+  'extension-store': 'a browser extension store\'s review',
+  'vscode-marketplace': 'the VS Code Marketplace',
+  'registry-policy': 'the package registry\'s policies',
+  'hosting-policy': 'the hosting platform\'s terms and abuse review',
+  'external-reviewer': 'a person outside the team who approves it',
+}
+
 /**
  * A one-command way to settle an untested boundary, where an obvious one
  * exists. Deliberately conservative: a wrong suggestion is worse than none,
@@ -101,6 +111,8 @@ const ANSWER_NAMES = {
   'authority.human_proof': 'What a human has to do',
   'authority.agent_reach': 'What the agent could check itself',
   'authority.retest_days': 'Re-check interval',
+  'outside.authority': 'Outside authority',
+  'outside.claims': 'Where it makes public claims',
 }
 
 /**
@@ -153,6 +165,8 @@ export function buildModel({ answers = {}, provenance = {}, detected = {}, proje
     unverified,
     truthSources: answers['authority.truth_sources'] || [],
     humanProof: plain(answers['authority.human_proof'] || ''),
+    outside: (answers['outside.authority'] || []).map((o) => OUTSIDE_LABELS[o] || plain(o, 200)),
+    declares: (answers['outside.claims'] || []).length > 0,
     sources: buildSources(provenance, answers),
   }
 }

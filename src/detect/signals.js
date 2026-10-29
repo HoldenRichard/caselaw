@@ -75,7 +75,7 @@ const HARDWARE_CLASSIFIERS = ['Topic :: System :: Hardware', 'Topic :: Home Auto
 const HARDWARE_CATEGORIES = new Set(['embedded', 'hardware-support'])
 
 export function emptySignals() {
-  return { hardware: [], datastore: [], messaging: [], registries: [], manifests: [] }
+  return { hardware: [], datastore: [], messaging: [], registries: [], stores: [], claims: [], manifests: [] }
 }
 
 /**
@@ -114,6 +114,7 @@ export async function detectSignals(root, walked) {
         deps('npm', Object.keys(pkg[field] || {}), `${path} ${field}`)
       }
       if (Array.isArray(pkg.keywords)) words(pkg.keywords, `${path} keywords`)
+      if (pkg.engines && typeof pkg.engines === 'object' && pkg.engines.vscode) addKind(signals.stores, 'vscode-marketplace', `${path} engines.vscode`)
       // Published, not merely named: an app's package.json has a name too.
       if (pkg.private !== true && pkg.name && pkg.version && (pkg.bin || pkg.main || pkg.exports || pkg.files || pkg.publishConfig)) {
         addRegistry(signals, 'npm', path)
@@ -141,13 +142,43 @@ export async function detectSignals(root, walked) {
       deps('go', goRequires(text), `${path} require`)
     } else if (base === '.goreleaser.yml' || base === '.goreleaser.yaml') {
       addRegistry(signals, 'goreleaser', path)
+    } else if (base === 'manifest.json') {
+      // A browser extension's manifest; other manifest.json files (a PWA's) have no manifest_version.
+      try { if (JSON.parse(text)?.manifest_version) addKind(signals.stores, 'extension-store', `${path} manifest_version`) } catch { /* not JSON */ }
     }
   }
+  for (const c of claimSurfaces(walked.files)) addKind(signals.claims, c.kind, c.source)
   return { signals, warnings: [] }
 }
 
+/**
+ * Where a project makes claims about itself that leave the repository. Each is
+ * a promise that drifts while the code moves, and nothing in the build fails
+ * when it does: a public README overstated a quiz count by 47% for two months
+ * (DEF-217), and caselaw's own said its source app had shipped (DEF-748).
+ */
+export function claimSurfaces(files) {
+  const out = []
+  for (const f of files) {
+    const parts = f.split('/')
+    if (parts.length > 3 || parts.slice(0, -1).some((p) => SKIP_DIRS.has(p) && p !== 'docs')) continue
+    const base = parts.at(-1).toLowerCase()
+    const doc = /\.(md|mdx|rst|txt|html?)$/.test(base) || !base.includes('.')
+    if (parts.length === 1 && /^readme(\.(md|rst|txt))?$/.test(base)) out.push({ kind: 'readme', source: f })
+    else if (doc && /privacy/.test(base)) out.push({ kind: 'privacy-policy', source: f })
+    else if (doc && /^(terms|tos)([-_. ]|$)|terms[-_]of[-_](service|use)/.test(base)) out.push({ kind: 'terms', source: f })
+    else if (parts.length === 1 && /^(mkdocs\.ya?ml|docusaurus\.config\.(js|ts|mjs))$/.test(base)) out.push({ kind: 'docs-site', source: f })
+  }
+  if (files.some((f) => f.startsWith('fastlane/metadata/'))) out.push({ kind: 'store-listing', source: 'fastlane/metadata/' })
+  return out
+}
+
+function addKind(list, kind, source) {
+  if (!list.some((e) => e.kind === kind)) list.push({ kind, source })
+}
+
 const MANIFESTS = new Set(['package.json', 'pyproject.toml', 'setup.py', 'setup.cfg', 'requirements.txt', 'Cargo.toml',
-  'go.mod', '.goreleaser.yml', '.goreleaser.yaml'])
+  'go.mod', '.goreleaser.yml', '.goreleaser.yaml', 'manifest.json'])
 
 /** Manifest paths at depth 0–2, shallowest first, outside sample and test trees. */
 export function manifestsIn(files) {

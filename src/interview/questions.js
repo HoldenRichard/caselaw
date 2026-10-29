@@ -26,16 +26,62 @@
 /** @typedef {'multiselect'|'triage'|'select'|'text'|'confirm'|'number'} QuestionType */
 
 /**
- * One session ships. Four more were designed — verification cadence,
- * boundaries and escalation, invariants worth machine-checking, modules and
- * adapters — and are not implemented. They are not declared here on purpose:
- * a declared-but-empty session printed "Session 1/5" to every user, and the
- * README promised a fifteen-minute interview that took four. The list grows
- * when a session's questions exist, not before.
+ * Sessions that exist. Others were designed — verification cadence, invariants
+ * worth machine-checking, modules and adapters — and are not declared here on
+ * purpose: a declared-but-empty session printed "Session 1/5" to every user,
+ * and the README promised a fifteen-minute interview that took four. The list
+ * grows when a session's questions exist, not before. Session 2 joined in 0.3:
+ * who outside the repository can rule on it, and where it makes public claims.
  */
 export const SESSIONS = [
   { n: 1, key: 'authority', title: 'The authority split', budget: 5, minutes: 4 },
+  { n: 2, key: 'outside', title: 'Outside authority', budget: 2, minutes: 1 },
 ]
+
+/**
+ * Who outside the repository can rule on it. An app reviewer's ruling sits
+ * outside anything the repository controls and need not state its basis; in
+ * the study behind this tool, only rulings that named their basis became
+ * standing rules, and the rest reached a local patch at most. Naming the
+ * gatekeeper is what lets the authority split say so before the first ruling.
+ */
+export function gatekeeperCandidates(detected = {}) {
+  const langs = new Set((detected.stack?.languages || []).map((l) => l.name.toLowerCase()))
+  const kinds = (k) => new Set((detected.signals?.[k] || []).map((s) => s.kind))
+  const stores = kinds('stores')
+  const registries = [...kinds('registries')].filter((k) => k !== 'goreleaser')
+  const all = [
+    { value: 'app-review', label: 'an app store\'s review (Apple App Review, Google Play)',
+      when: () => langs.has('swift') || langs.has('kotlin') || langs.has('objective-c') },
+    { value: 'extension-store', label: 'a browser extension store\'s review', when: () => stores.has('extension-store') },
+    { value: 'vscode-marketplace', label: 'the VS Code Marketplace', when: () => stores.has('vscode-marketplace') },
+    { value: 'registry-policy', label: 'the package registry\'s policies', when: () => registries.length > 0 },
+    { value: 'hosting-policy', label: 'the hosting platform\'s terms and abuse review', when: () => (detected.deploySurface || []).length > 0 },
+    { value: 'external-reviewer', label: 'a person outside the team who approves it (a client, judges, a grader, a security or compliance review)',
+      when: () => true },
+  ]
+  return all.filter((o) => o.when()).map(({ value, label }) => ({ value, label }))
+}
+
+/** Where the project makes claims about itself in public, from the files that hold them. */
+export function claimCandidates(detected = {}) {
+  const langs = new Set((detected.stack?.languages || []).map((l) => l.name.toLowerCase()))
+  const claims = new Set((detected.signals?.claims || []).map((c) => c.kind))
+  const stores = (detected.signals?.stores || []).length > 0
+  const registries = (detected.signals?.registries || []).some((r) => r.kind !== 'goreleaser')
+  const all = [
+    { value: 'readme', label: 'the README', when: () => claims.has('readme') },
+    { value: 'privacy-policy', label: 'a privacy policy', when: () => claims.has('privacy-policy') },
+    { value: 'terms', label: 'terms of service', when: () => claims.has('terms') },
+    { value: 'store-listing', label: 'a store listing (description, screenshots, privacy answers)',
+      when: () => claims.has('store-listing') || stores || langs.has('swift') || langs.has('kotlin') },
+    { value: 'package-listing', label: 'the package listing (description, keywords)', when: () => registries },
+    { value: 'website', label: 'a website or landing page', when: () => (detected.deploySurface || []).length > 0 },
+    { value: 'docs-site', label: 'a documentation site',
+      when: () => claims.has('docs-site') || (detected.stack?.generatedDocs || []).length > 0 },
+  ]
+  return all.filter((o) => o.when()).map(({ value, label }) => ({ value, label }))
+}
 
 /**
  * Candidate boundaries, tailored by what Stage 0 found. The `when` on each
@@ -163,6 +209,34 @@ export const QUESTIONS = [
     prompt: 'How many days before the boundary list should be re-checked for staleness?',
     when: (a) => Object.values(a['authority.triage'] || {}).includes('untested'),
     generates: ['docs/authority-split.md#unverified-boundaries'],
+  },
+
+  // ── Session 2 — outside authority ────────────────────────────────────────
+  {
+    id: 'outside.authority',
+    session: 2,
+    since: '1.1',
+    type: 'multiselect',
+    impact: 4,
+    prompt: 'Who outside this repository can rule on whether it ships, or on what it may do?',
+    help:
+      'Their rulings sit outside anything this repository controls and need not explain themselves. Only a ruling whose basis is known can become a rule here; naming them now is what makes that limit visible before the first one arrives.',
+    options: (ctx) => gatekeeperCandidates(ctx.detected),
+    allowOther: true,
+    generates: ['docs/authority-split.md#outside-authority'],
+  },
+  {
+    id: 'outside.claims',
+    session: 2,
+    since: '1.1',
+    type: 'multiselect',
+    impact: 4,
+    prompt: 'Where does this project make claims about itself in public?',
+    help:
+      'A README\'s numbers, a privacy policy, a store listing, a website. Each is a promise that drifts while the code moves, and nothing in the build fails when it does.',
+    options: (ctx) => claimCandidates(ctx.detected),
+    allowOther: true,
+    generates: ['docs/declarations.md#the-register'],
   },
 ]
 

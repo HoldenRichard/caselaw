@@ -7,7 +7,7 @@ rules, gates that earn their teeth, and an audit that keeps both honest.
 npx caselaw init
 ```
 
-About four minutes. It reads your repo first, asks only what it cannot detect, and
+About five minutes. It reads your repo first, asks only what it cannot detect, and
 shows you every file before it writes anything.
 
 ---

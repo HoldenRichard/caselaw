@@ -58,6 +58,21 @@ READ freely, without asking. WRITE, DELETE, and DEPLOY never without explicit ap
 a read-only tool that happens to be behaving.
 
 {{/ if }}
+{{# if outside }}
+## Outside authority
+
+These can rule on this project from outside it:
+
+{{# each outside }}- **{{ . }}**
+{{/ each }}
+
+Their rulings sit outside anything this repository controls, and need not state a basis. A ruling
+that names its basis can become a rule or a check here; one that does not gets a local patch at
+most, and that is the boundary reached, not a failure to convert. Record each ruling when it
+arrives: what it said, the date, and what changed in response.{{# if declares }} What this project
+claims in public, which is what these authorities read, is in `docs/declarations.md`.{{/ if }}
+
+{{/ if }}
 ## What a human still has to do
 
 {{# if humanProof }}{{ humanProof }}{{/ if }}{{^ if humanProof }}_Not recorded._{{/ if }}
