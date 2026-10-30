@@ -28,7 +28,7 @@ import { SKIPPED } from '../core/answers.js'
 
 const pExecFile = promisify(execFile)
 
-export const RULE_SUBCOMMANDS = ['propose', 'ratify', 'reject', 'adopt', 'promote']
+export const RULE_SUBCOMMANDS = ['propose', 'ratify', 'reject', 'adopt', 'promote', 'catch', 'demote']
 
 const PROMPTS = {
   trigger: {
@@ -72,6 +72,8 @@ export async function cmdRule(args, io) {
       case 'reject': return await reject(args, io)
       case 'adopt': return await adopt(args, io)
       case 'promote': return await promote(args, io)
+      case 'catch': return await recordCatch(args, io)
+      case 'demote': return await demote(args, io)
     }
   } catch (err) {
     if (err instanceof rules.RuleError || err instanceof gatesStore.GateError || err?.code) {
@@ -208,6 +210,38 @@ async function adopt(args, { root, say }) {
   say('')
   say(`  It is a proposal now, not case law. A human ratifies it: caselaw rule ratify ${r.name}`)
   return code
+}
+
+/** Evidence, not authority: recording a catch moves nothing and widens nothing, so an agent may. */
+async function recordCatch(args, { root, say }) {
+  const r = await rules.recordCatch(root, args.name, { what: args.opt.what, by: args.opt.by || (await gitUserName(root)) || 'unknown' })
+  say(`  Recorded in .caselaw/catches.jsonl (${r.at}).`)
+  if (r.firstLocal) say(`  Its first catch here: written into ${r.path} as this project's own Origin.`)
+  return 0
+}
+
+async function demote(args, { root, say, interactive, prompt }) {
+  if (!interactive) {
+    say('  Demoting a rule weakens enforcement, and that is a human\'s call. Run this yourself at a terminal.')
+    return 1
+  }
+  const active = (await rules.listRules(root)).active.find((r) => r.name === args.name)
+  if (!active) {
+    say(`  No active rule named "${args.name}" in ${ruleDirsFor(doctrineDirAt(root)).active}/.`)
+    return 1
+  }
+  if (!args.yes) {
+    const p = prompt()
+    try {
+      const ok = await p.confirm({ prompt: `Move "${args.name}" back to ${ruleDirsFor(doctrineDirAt(root)).candidates}/? It stops being in force.`, default: false })
+      if (ok !== true) { say('  Kept in force.'); return 1 }
+    } finally {
+      await p.close()
+    }
+  }
+  const r = await rules.demote(root, args.name, { interactive: true, reason: args.opt.reason ?? null })
+  say(`  ${r.from} -> ${r.to}  (demoted ${r.at}: ${r.reason})`)
+  return 0
 }
 
 /**

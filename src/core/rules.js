@@ -26,7 +26,7 @@
  *      round-tripped, and it gets ignored.
  */
 
-import { readFile, writeFile, mkdir, readdir, rm, lstat } from 'node:fs/promises'
+import { readFile, writeFile, appendFile, mkdir, readdir, rm, lstat } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
 import { dirname, join, basename } from 'node:path'
 import { normalize, hash } from './text.js'
@@ -55,13 +55,15 @@ export const PROBLEM_CODES = [
   'not-kebab-case',
 ]
 
-const KNOWN_ORDER = ['trigger', 'rule', 'origin', 'enforcement', 'ratified']
+const KNOWN_ORDER = ['trigger', 'rule', 'origin', 'precedent', 'enforcement', 'default', 'ratified']
 const KNOWN = new Set(KNOWN_ORDER)
 const LABELS = {
   trigger: 'Trigger',
   rule: 'Rule',
   origin: 'Origin',
+  precedent: 'Precedent',
   enforcement: 'Enforcement',
+  default: 'Default',
   ratified: 'Ratified',
 }
 
@@ -159,6 +161,8 @@ export function parseRule(text, opts = {}) {
     trigger: firstOf('trigger'),
     rule: firstOf('rule'),
     origin: firstOf('origin'),
+    precedent: firstOf('precedent'),
+    default: firstOf('default'),
     enforcement: firstOf('enforcement'),
     ratified: firstOf('ratified'),
     extras,
@@ -405,7 +409,14 @@ export function validateRule(parsed, opts = {}) {
   }
 
   // --- Origin: the citation, and the whole reason this module exists.
-  if (!origin) {
+  // A default (0.3) is in force on the study's precedent until its first catch
+  // here writes this project's own Origin; the precedent must still cite.
+  const precedent = str(parsed.precedent)
+  if (!origin && precedent && str(parsed.default)) {
+    if (findReferences(precedent).total === 0) {
+      add('origin-unverified', 'warn', 'Precedent cites nothing checkable.', 'Name the incidents it rests on: an id, a date, a commit or a URL.')
+    }
+  } else if (!origin) {
     if (foreign) {
       // A candidate legitimately has no Origin of your own — that is what
       // adopting supplies. Reporting it as a missing section would train
@@ -509,6 +520,95 @@ export function validateRule(parsed, opts = {}) {
   }
 
   return { ok: !problems.some((p) => p.severity === 'error'), problems }
+}
+
+/** Where catches are kept: one JSON object per line, appended, never rewritten. */
+export const CATCHES_PATH = '.caselaw/catches.jsonl'
+
+/**
+ * Record that an active rule caught something here. A rule counts once it
+ * has caught the failure it came from (C1), and a default's first catch is
+ * the moment it stops resting on another project's evidence: it writes this
+ * project's own Origin into the rule. Recording evidence widens nothing, so
+ * an agent may do it; the incident must still be one someone can follow.
+ *
+ * @param {string} root
+ * @param {string} name
+ * @param {{what: string, by?: string, now?: Date}} opts
+ */
+export async function recordCatch(root, name, opts = {}) {
+  const what = typeof opts.what === 'string' ? opts.what.replace(/\s+/g, ' ').trim() : ''
+  if (!what) {
+    throw new RuleError(`Say what "${name}" caught: --what "<what happened, with a commit, a date or an issue>".`, { code: 'NO_WHAT', name })
+  }
+  if (findReferences(what).total === 0) {
+    throw new RuleError(
+      `"${what}" names nothing anyone can follow. Cite the incident: a commit SHA, an ISO date, #123, or a URL.`,
+      { code: 'NO_REFERENCE', name },
+    )
+  }
+  const path = ruleFile(root, 'active', name)
+  const text = await readRuleFile(path, name, 'active', root)
+  const parsed = parseRule(text, { path: relPath('active', name, root) })
+  const at = isoDate(opts.now ?? new Date())
+  const by = cleanRatifier(opts.by || 'unknown')
+
+  let firstLocal = false
+  if (!str(parsed.origin)) {
+    firstLocal = true
+    await writeFile(path, serializeRule({ ...parsed, name: parsed.name || name, origin: `${what} (first catch here, recorded ${at})` }), 'utf8')
+  }
+  const log = join(root, CATCHES_PATH)
+  await mkdir(dirname(log), { recursive: true })
+  await appendFile(log, JSON.stringify({ rule: name, at, what, by, firstLocal }) + '\n', 'utf8')
+  return { name, at, firstLocal, path: relPath('active', name, root) }
+}
+
+/** Every recorded catch, oldest first. A malformed line is skipped, not fatal. */
+export async function readCatches(root) {
+  let text
+  try { text = await readFile(join(root, CATCHES_PATH), 'utf8') } catch { return [] }
+  const out = []
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue
+    try { const c = JSON.parse(line); if (c && typeof c.rule === 'string') out.push(c) } catch { /* skipped */ }
+  }
+  return out
+}
+
+/**
+ * Move an active rule to candidates/. Weakening enforcement is always the
+ * human's (the constitution, 0.3), so this needs an interactive caller, like
+ * ratify. The file is kept, never deleted, with the reason in its footer, and
+ * it comes back the way any candidate does: adopted with an Origin of its own.
+ *
+ * @param {string} root
+ * @param {string} name
+ * @param {{interactive?: boolean, reason?: string, now?: Date}} [opts]
+ */
+export async function demote(root, name, opts = {}) {
+  if (opts.interactive !== true) {
+    throw new RuleError(
+      'Demoting a rule weakens enforcement, and that needs a human. Call with { interactive: true } from an interactive session.',
+      { code: 'NOT_INTERACTIVE', name },
+    )
+  }
+  const reason = typeof opts.reason === 'string' && opts.reason.trim() ? opts.reason.replace(/\s+/g, ' ').trim() : 'no reason given'
+  const from = ruleFile(root, 'active', name)
+  const to = ruleFile(root, 'candidates', name)
+  if (await exists(to)) {
+    throw new RuleError(`${relPath('candidates', name, root)} already exists.`, { code: 'EXISTS', name })
+  }
+  const text = await readRuleFile(from, name, 'active', root)
+  const parsed = parseRule(text, { path: relPath('active', name, root) })
+  const at = isoDate(opts.now ?? new Date())
+  const footer = [parsed.footer, `_Demoted from active ${at}: ${reason}. To bring it back: \`caselaw rule adopt ${name} --origin "<your incident>"\`._`]
+    .filter(Boolean).join('\n')
+  const out = serializeRule({ ...parsed, name: parsed.name || name, footer: parsed.footer ? footer : `---\n${footer}` })
+  await mkdir(dirname(to), { recursive: true })
+  await writeFile(to, out, 'utf8')
+  await rm(from, { force: true })
+  return { name, from: relPath('active', name, root), to: relPath('candidates', name, root), at, reason }
 }
 
 /**

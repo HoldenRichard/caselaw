@@ -88,6 +88,9 @@ export const CHECKS = [
     run({ rules }) {
       const out = []
       for (const r of rules.active) {
+        // A default stands on its Precedent until its first catch here
+        // (borrowed-rules-earn watches it); everything else needs an Origin.
+        if ((!r.origin || !String(r.origin).trim()) && r.precedent && r.default) continue
         if (!r.origin || !String(r.origin).trim()) {
           out.push(finding('origin-resolves', SEVERITY.ERROR, `rule "${r.name}" has no Origin`, {
             path: r.file,
@@ -139,6 +142,23 @@ export const CHECKS = [
             : undefined,
           data: { total, ...by },
         })]
+    },
+  },
+  {
+    id: 'borrowed-rules-earn',
+    describe: 'a rule in force on another project\'s evidence has caught something here',
+    run({ borrowed }) {
+      // Not dead-rules' "quiet is success": these came with another project's
+      // evidence, and the question is whether this project needs them at all.
+      // Asked, never acted on: demoting is the human's.
+      const { window = 60, rules = [] } = borrowed || {}
+      return rules
+        .filter((r) => r.catches === 0 && Number.isFinite(r.days) && r.days >= window && r.commits > 0)
+        .map((r) => finding('borrowed-rules-earn', SEVERITY.WARN,
+          `rule "${r.name}" has caught nothing here in ${r.days} days and ${r.commits} commit(s) since ${r.since}`, {
+            path: r.file,
+            hint: `It rests on another project's evidence. Keep it if this project needs it; if not, \`caselaw rule demote ${r.name}\` moves it to candidates. Change the ${window}-day window with harness.demotion_days in .caselaw/answers.json.`,
+          }))
     },
   },
   {

@@ -56,6 +56,7 @@ export async function gather(root, { now = new Date() } = {}) {
   const drifted = await gatherDrift(root, manifest, notes)
   const installAgeDays = answers?.generatedAt ? daysBetween(new Date(answers.generatedAt), now) : null
   const adrs = await gatherAdrs(root, dir)
+  const borrowed = await gatherBorrowed(root, rules, answers, { now, notes })
   const gitignoreClaims = await gatherGitignoreClaims(root, docTexts)
 
   return {
@@ -63,7 +64,7 @@ export async function gather(root, { now = new Date() } = {}) {
     answers, manifest,
     gatesConfig: gatesConfig ?? gatesStore.emptyConfig(),
     rules, docTexts, docRefs, untracked, authority, staleCommands, adrs, gitignoreClaims,
-    fireCounts, earnedFires, drifted, installAgeDays,
+    fireCounts, earnedFires, drifted, installAgeDays, borrowed,
     installed: Boolean(answers || manifest),
   }
 }
@@ -98,6 +99,8 @@ async function gatherRules(root, { now, notes }) {
       trigger: parsed.trigger ?? null,
       rule: parsed.rule ?? null,
       origin: parsed.origin ?? null,
+      precedent: parsed.precedent ?? null,
+      default: parsed.default ?? null,
       ratified: parsed.ratified ?? null,
       enforcement: parseEnforcement(parsed.enforcement),
       problems,
@@ -115,6 +118,37 @@ async function gatherRules(root, { now, notes }) {
     proposed: await Promise.all((listed.proposed || []).map(enrich)),
     candidates: await Promise.all((listed.candidates || []).map(enrich)),
   }
+}
+
+/** The window a borrowed rule has to catch something here before the audit asks about it. */
+export const DEMOTION_DAYS = 60
+
+/**
+ * Active rules in force on another project's evidence (a default, or a rule a
+ * trigger proposed) with no Origin of their own yet: since when, how many
+ * catches here, and how many commits since. Only these are ever asked about
+ * on silence; a rule born from this project's own incident never is.
+ */
+async function gatherBorrowed(root, rules, answers, { now, notes }) {
+  const window = Number.isFinite(answers?.answers?.['harness.demotion_days']) ? answers.answers['harness.demotion_days'] : DEMOTION_DAYS
+  const borrowed = rules.active.filter((r) => r.precedent && !(r.origin && String(r.origin).trim()))
+  if (!borrowed.length) return { window, rules: [] }
+  let catches = []
+  try { catches = await (await import('../core/rules.js')).readCatches(root) } catch (err) { notes.push(`catches: ${err.message}`) }
+  const out = []
+  for (const r of borrowed) {
+    const since = (/\b(\d{4}-\d{2}-\d{2})\b/.exec(r.default || r.ratified || '') || [])[1] || null
+    const days = since ? daysBetween(new Date(since), now) : r.ageDays
+    let commits = null
+    if (since) {
+      try {
+        const { stdout } = await pExecFile('git', ['rev-list', '--count', `--since=${since}`, 'HEAD'], { cwd: root })
+        commits = Number(stdout.trim())
+      } catch { commits = null }
+    }
+    out.push({ name: r.name, file: r.file, since, days, commits, catches: catches.filter((c) => c.rule === r.name).length })
+  }
+  return { window, rules: out }
 }
 
 /**

@@ -73,7 +73,7 @@ export const COMMANDS = {
 
 export const BOOL_FLAGS = ['help', 'dry-run', 'yes', 'force', 'json', 'agent', 'strict', 'purge', 'reconfigure', 'draft', 'from-draft']
 export const VALUED_FLAGS = [
-  'with', 'doctrine-dir', 'origin', 'trigger', 'rule', 'enforcement', 'by', 'reason',
+  'with', 'doctrine-dir', 'origin', 'trigger', 'rule', 'enforcement', 'by', 'reason', 'what',
   'kind', 'id', 'paths', 'patterns', 'message', 'command', 'args', 'when', 'require', 'extract', 'assert',
 ]
 export const KNOWN_FLAGS = [...BOOL_FLAGS, ...VALUED_FLAGS]
@@ -94,6 +94,8 @@ export const USAGE = `caselaw ${CLI_VERSION}
   caselaw rule reject <name>    drop a proposal — also a human
   caselaw rule adopt <name>     take a shipped candidate, with --origin "<your own incident>"
   caselaw rule promote <name>   turn the checkable part of an active rule into a warn gate
+  caselaw rule catch <name>     record that an active rule caught something, with --what (an agent may)
+  caselaw rule demote <name>    move an active rule back to candidates/ — a human, at a terminal
   caselaw gate test <id>        run one gate over the whole tree and show what it would catch
   caselaw gate baseline         run every gate over the whole tree
   caselaw gate promote <id>     warn -> block, once the gate has earned it
@@ -116,7 +118,8 @@ Options
   --trigger <text>       rule propose: the fields, when not answering at a terminal
   --rule <text>
   --by <name>            rule ratify: who is ratifying (default: git user.name)
-  --reason <text>        rule reject: why
+  --reason <text>        rule reject / rule demote: why
+  --what <text>          rule catch: what it caught, with a commit, a date or an issue
   --kind <kind>          rule promote: banned-content | required-content | cross-file |
                          path-scope | paired-edit | shell
   --paths <a,b>          rule promote: the globs the gate applies to
