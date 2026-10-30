@@ -6,11 +6,14 @@ incident that proved it.
 
 Three directories:
 
-- **`active/`** — ratified. In force. Your agent loads any rule whose Trigger matches the work
-  at hand. It starts empty, on purpose: see `active/WHY-THIS-IS-EMPTY.md`.
+- **`active/`** — in force. Your agent loads any rule whose Trigger matches the work at hand.
+  At install it holds the defaults you chose: rules that recurred across the projects caselaw
+  came from, each citing those incidents as its **Precedent** until its first catch here writes
+  your own Origin. Everything else in it was ratified from this project's own incidents.
 - **`proposed/`** — drafted, awaiting a human. Agents write here; agents never move things out.
-- **`candidates/`** — five rules extracted from another project, kept as worked examples. They
-  are not in force and never will be until you adopt one and write your own Origin for it.
+- **`candidates/`** — rules extracted from another project, kept as worked examples, and any
+  rule demoted from active/. They are not in force until you adopt one and write your own
+  Origin for it.
 
 ## The flow
 
@@ -56,6 +59,15 @@ A rule enforced by memory degrades without telling you. When one keeps getting v
 it: `caselaw rule promote <name>` walks you through turning the checkable part into a gate. The
 prose stays authoritative for the parts a gate cannot reach — promotion is not a claim that the
 rule is now fully mechanised.
+
+## Catches
+
+When an active rule stops or catches something, record it:
+`caselaw rule catch <name> --what "<what it caught, with a commit, a date or an issue>"`. A rule
+counts once it has caught the failure it came from. A default's first catch here becomes this
+project's own Origin for it; a default that has caught nothing in 60 days of commits is one the
+audit asks about, because it came with another project's evidence. Demoting one is a human's
+call: `caselaw rule demote <name>` moves it to candidates/, never deletes it.
 
 ## Retiring a rule
 

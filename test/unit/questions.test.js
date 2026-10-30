@@ -163,6 +163,9 @@ describe('question set — what it says it generates', () => {
       // declarations register are never rendered, and their claims go unchecked.
       'outside.authority': ['app-review', 'external-reviewer'],
       'outside.claims': ['readme', 'store-listing'],
+      // Session 3: without these, the harness section is never rendered.
+      'harness.autonomy': 'ask-first',
+      'harness.defaults': ['D1'],
     })
     const artifacts = await buildArtifacts({ doc, detected: { agentConfig: { claudeMd: true }, commands: {}, deploySurface: [] } })
     const byPath = new Map(artifacts.map((a) => [a.path, a.body]))

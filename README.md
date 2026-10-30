@@ -7,29 +7,32 @@ rules, gates that earn their teeth, and an audit that keeps both honest.
 npx caselaw init
 ```
 
-About five minutes. It reads your repo first, asks only what it cannot detect, and
+About six minutes. It reads your repo first, asks only what it cannot detect, and
 shows you every file before it writes anything.
 
 ---
 
-## It ships zero rules
+## It ships six rules, and earns the rest
 
 That is the whole idea, so it goes first.
 
 Every other tool in this space hands you a curated pack — someone else's rules,
-someone else's incidents, arriving with no evidence attached. `caselaw` creates
-`docs/rules/active/` **empty**, with a file explaining why.
+someone else's incidents, arriving with no evidence attached. `caselaw` ships six
+defaults and no more: each recurred in at least two of the projects it came from,
+and each arrives with those incidents cited as its precedent. You choose which
+are in force at install. A default's first catch in your repo becomes your own
+Origin for it (`caselaw rule catch`); one that has caught nothing in 60 days of
+commits, the audit asks about.
 
-A rule without an incident behind it is a superstition with a filename. It costs
-every future session the attention it takes to read, and nobody enforces a rule
-they cannot trace. So rules accumulate here from things that actually went wrong
-in *your* repo, each one citing the commit that proved it.
+Everything else accumulates from things that actually went wrong in *your* repo,
+each rule citing the commit that proved it. A rule without an incident behind it
+is a superstition with a filename, and nobody enforces a rule they cannot trace.
 
-Five universal rules ship as **candidates** — readable, adoptable, and not in
+Three universal rules ship as **candidates** — readable, adoptable, and not in
 force. Adopting one requires writing your own Origin:
 
 ```
-caselaw rule adopt trace-the-premise --origin "PR #418: built against a spec line that did not exist"
+caselaw rule adopt rename-greps-the-tree --origin "PR #418: a rename missed two call sites"
 ```
 
 If you cannot name a time it bit you, you do not need the rule yet.
@@ -74,7 +77,7 @@ which already existed gets disabled on day one.
 docs/
   authority-split.md      what you and your agent can each verify, and what a human still has to do
   close-out.md            the session template that asks for rules
-  rules/                  README, template, EMPTY active/, 5 candidates
+  rules/                  README, template, the defaults you chose, 3 candidates
 .caselaw/
   answers.json            your answers — edit this, not the docs
   gates.json              empty until a rule earns one

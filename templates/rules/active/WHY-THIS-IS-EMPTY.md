@@ -1,13 +1,15 @@
 # This directory is empty on purpose
 
-`caselaw` ships **zero ratified rules**.
+`caselaw` ships six defaults, rules that recurred across the projects it came from, and none of
+them is in force here: either they were declined at install, or this install has not been asked
+yet (`caselaw upgrade` at a terminal asks).
 
-Every rule in a case-law system exists because something specific went wrong in a
-specific codebase. Handing you a starter pack of other people's rules would give
-you instructions with no evidence behind them — and "we do it this way because a
-tool said so" is exactly the failure mode this whole system exists to prevent.
+Every other rule in a case-law system exists because something specific went wrong in a specific
+codebase. Handing you a starter pack of other people's rules would give you instructions with no
+evidence behind them — and "we do it this way because a tool said so" is exactly the failure mode
+this whole system exists to prevent.
 
-So this directory fills up as you work, not at install time.
+So this directory fills up as you work.
 
 ## Getting the first one
 
@@ -25,12 +27,12 @@ empty, either nothing has gone wrong (unlikely) or proposing is too much frictio
 
 ## If you want a head start
 
-`../candidates/` holds five rules extracted from a real five-month build. They are
+`../candidates/` holds rules extracted from a real five-month build. They are
 universal enough to be worth reading, and they are **not in force**. Adopting one
 requires writing your own Origin:
 
 ```
-caselaw rule adopt trace-the-premise --origin "PR #418: built against a spec line that did not exist"
+caselaw rule adopt rename-greps-the-tree --origin "PR #418: a rename missed two call sites"
 ```
 
 That requirement is the point. If you cannot name a time it bit you, you do not

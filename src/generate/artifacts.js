@@ -17,6 +17,7 @@ import { doctrineDirOf, DEFAULT_DOCTRINE_DIR } from '../core/doctrine.js'
 import { selectAdapters, commandCollisions } from '../adapters/index.js'
 import { isoDate } from '../core/dates.js'
 import { render } from '../render/engine.js'
+import { defaultArtifacts, defaultsSince } from '../core/defaults.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 export const TEMPLATE_ROOT = join(HERE, '../../templates')
@@ -111,8 +112,10 @@ export const EMPTY_GATES = {
 export async function buildArtifacts({ doc, detected, adapterIds = null, modules = doc.modules ?? [] }) {
   const out = []
   const dir = doctrineDirOf(doc)
+  const harnessSince = defaultsSince(doc)
 
   const authority = await generateAuthoritySplit({
+    harnessSince,
     answers: doc.answers,
     provenance: doc.provenance,
     detected,
@@ -133,14 +136,21 @@ export async function buildArtifacts({ doc, detected, adapterIds = null, modules
     out.push({ path: `${dir}/declarations.md`, kind: 'file', body: declarations.content })
   }
 
-  // Case-law scaffolding ships verbatim: machinery, never content.
+  // Case-law scaffolding ships verbatim: machinery, never content. The
+  // defaults the human accepted are the one exception (0.3): content, each
+  // with its precedent, and active/ is no longer empty, so the file
+  // explaining why it is empty goes only where it still is.
+  const defaults = await defaultArtifacts({ doc, dir })
   for (const rel of await templateFiles('rules')) {
+    if (defaults.length && rel === 'active/WHY-THIS-IS-EMPTY.md') continue
     out.push({
       path: join(`${dir}/rules`, rel),
       kind: 'file',
       body: await readFile(join(TEMPLATE_ROOT, 'rules', rel), 'utf8'),
     })
   }
+
+  out.push(...defaults)
 
   // Each detected agent tool gets a pointer in its own idiom. The doctrine
   // itself is never duplicated into them — only the instruction to read it.

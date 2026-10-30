@@ -23,6 +23,8 @@
  * this category has. Protect both from scope cuts.
  */
 
+import { DEFAULTS } from '../core/defaults.js'
+
 /** @typedef {'multiselect'|'triage'|'select'|'text'|'confirm'|'number'} QuestionType */
 
 /**
@@ -32,10 +34,15 @@
  * and the README promised a fifteen-minute interview that took four. The list
  * grows when a session's questions exist, not before. Session 2 joined in 0.3:
  * who outside the repository can rule on it, and where it makes public claims.
+ * Session 3 joined with it: how much the harness may change on its own, and
+ * which defaults are in force. It comes last because its choices govern what
+ * the screens before it found (0.3's design put autonomy first; asked here, it
+ * is answered right before the choices it decides).
  */
 export const SESSIONS = [
   { n: 1, key: 'authority', title: 'The authority split', budget: 5, minutes: 4 },
   { n: 2, key: 'outside', title: 'Outside authority', budget: 2, minutes: 1 },
+  { n: 3, key: 'harness', title: 'The harness', budget: 4, minutes: 1 },
 ]
 
 /**
@@ -138,6 +145,13 @@ export function boundaryCandidates(detected = {}) {
   ]
   return all.filter((o) => o.when(detected)).map(({ value, label }) => ({ value, label }))
 }
+
+/** The autonomy presets (0.3). "Ask me first" is the default, and what an unanswered install gets. */
+export const AUTONOMY_OPTIONS = [
+  { value: 'ask-first', label: 'Ask me first: every change to the harness is proposed, and you ratify it' },
+  { value: 'tune-itself', label: 'Tune itself: rules that only add enforcement apply on their own; the rest is proposed' },
+  { value: 'custom', label: 'Custom: choose which of them may apply on their own' },
+]
 
 export const TRIAGE_OPTIONS = [
   { value: 'physical', key: 'p', label: 'physical — no process could do it from here' },
@@ -242,6 +256,35 @@ export const QUESTIONS = [
     options: (ctx) => claimCandidates(ctx.detected),
     allowOther: true,
     generates: ['docs/declarations.md#the-register'],
+  },
+  // ── Session 3 — the harness (0.3) ─────────────────────────────────────────
+  {
+    id: 'harness.autonomy',
+    session: 3,
+    since: '1.2',
+    type: 'select',
+    impact: 5,
+    preference: true,
+    prompt: 'How much may the harness change on its own?',
+    help:
+      'Whatever you pick, weakening a rule, widening what the agent may do, deleting evidence, and anything that leaves the project always wait for you.',
+    options: AUTONOMY_OPTIONS,
+    default: 'ask-first',
+    generates: ['docs/authority-split.md#how-the-harness-changes'],
+  },
+  {
+    id: 'harness.defaults',
+    session: 3,
+    since: '1.2',
+    type: 'multiselect',
+    impact: 4,
+    preference: true,
+    prompt: 'Which defaults should be in force from today?',
+    help:
+      'Each recurred in two or more of the projects caselaw came from, and each arrives with those incidents as its precedent. Its first catch here becomes your own Origin; one that catches nothing in 60 days of commits, the audit asks about.',
+    options: () => DEFAULTS.map((d) => ({ value: d.id, label: `${d.id}  ${d.label} (caught in ${d.caught})` })),
+    defaultAll: true,
+    generates: ['docs/authority-split.md#how-the-harness-changes'],
   },
 ]
 

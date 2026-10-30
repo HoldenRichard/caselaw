@@ -17,6 +17,7 @@ import * as gatesStore from '../core/gates.js'
 import { locate } from '../core/blocks.js'
 import { daysBetween } from '../core/dates.js'
 import { doctrineDirOf } from '../core/doctrine.js'
+import { DEMOTION_DAYS } from '../core/defaults.js'
 
 const pExecFile = promisify(execFile)
 
@@ -119,9 +120,6 @@ async function gatherRules(root, { now, notes }) {
     candidates: await Promise.all((listed.candidates || []).map(enrich)),
   }
 }
-
-/** The window a borrowed rule has to catch something here before the audit asks about it. */
-export const DEMOTION_DAYS = 60
 
 /**
  * Active rules in force on another project's evidence (a default, or a rule a

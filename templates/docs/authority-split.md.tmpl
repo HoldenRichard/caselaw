@@ -105,6 +105,19 @@ claims in public, which is what these authorities read, is in `docs/declarations
 
 {{# if humanProof }}{{ humanProof }}{{/ if }}{{^ if humanProof }}_Not recorded._{{/ if }}
 
+{{# if harness }}
+## How the harness changes
+
+{{ harness.autonomy }} Whatever the setting, weakening a rule, widening what the agent may do,
+deleting evidence, and anything that leaves the project wait for a human.
+{{# if harness.defaults }}
+
+Defaults in force since {{ harness.since }}, each in `docs/rules/active/`: {{ harness.defaults }}. Each
+stands on another project's evidence until its first catch here; record one with
+`caselaw rule catch <name> --what "<what it caught>"`.
+{{/ if }}
+
+{{/ if }}
 ## Consequence
 
 Code is authoritative for what is committed. Only a human observation is authoritative for what

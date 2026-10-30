@@ -53,7 +53,8 @@ describe('shipped case-law templates', () => {
   test('every candidate rule parses under the real parser', async () => {
     const dir = join(TEMPLATES, 'rules/candidates')
     const files = (await readdir(dir)).filter((f) => f.endsWith('.md'))
-    assert.equal(files.length, 5, 'the five universal candidates should ship')
+    // Five until 0.3, when trace-the-premise and one-writer-per-repo became defaults D1 and D4.
+    assert.equal(files.length, 3, 'the three universal candidates should ship')
 
     for (const f of files) {
       const parsed = parseRule(await readFile(join(dir, f), 'utf8'), { path: f })
@@ -90,9 +91,10 @@ describe('shipped case-law templates', () => {
     }
   })
 
-  test('the active/ directory ships an explainer rather than a starter pack', async () => {
+  test('an active/ with no defaults in it says why, and how the first rule arrives', async () => {
     const text = await readFile(join(TEMPLATES, 'rules/active/WHY-THIS-IS-EMPTY.md'), 'utf8')
-    assert.match(text, /zero ratified rules/)
+    assert.match(text, /ships six defaults/)
+    assert.match(text, /none of\s+them is in force here/)
     assert.match(text, /caselaw rule propose/)
   })
 

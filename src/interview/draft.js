@@ -37,6 +37,7 @@ export const HOW_TO_FILL = [
   'A question marked "alreadyAnswered" was answered earlier by a human. Leave it as it is: a draft does not replace a human answer unless the human runs --from-draft with --reconfigure.',
   'For each surface you name in outside.claims, list in "declarations" under that surface the concrete claims it makes, each as { "claim", "evidence", "truth", "rederive", "checked" }: the claim as the surface states it, evidence naming the file and line that holds it, where the truth lives (a file, a command, a dashboard), and a command that re-derives it if one exists. Leave "checked" empty unless you re-derived the claim from the product just now; an unchecked claim is the point of the register, not a flaw in it.',
   'For each boundary you classify "untested", say in "notes" why it is assumed rather than known, as { "<boundary>": { "reason", "evidence" } }; the reason becomes the "assumed because" of the authority split.',
+  'A question marked "preference" is the human\'s choice, not a fact about the repository: ask the human, set "answer" to what they choose (its "default" is what they get by not choosing), and leave "evidence" empty.',
   'Check each answer against the lines you cite: a file that exists is not a file that says what you claim. `caselaw init --from-draft --dry-run` prints every answer with the lines it rests on.',
   'Then show the human that sheet and wait for them to confirm or correct each answer. Only after that run `caselaw init --from-draft --yes`; without a terminal, --yes is the record that a human confirmed.',
 ]
@@ -71,6 +72,9 @@ export function buildDraft({ doc, detected }) {
         ? { options: (q.type === 'triage' ? TRIAGE_OPTIONS : optionsFor(q, ctx)).map(({ value, label }) => ({ value, label })) }
         : {}),
       ...(q.allowOther ? { allowOther: true } : {}),
+      ...(q.preference ? { preference: true } : {}),
+      ...(q.type === 'select' && q.default !== undefined ? { default: q.default } : {}),
+      ...(q.defaultAll ? { default: optionsFor(q, ctx).map((o) => o.value) } : {}),
       ...(q.type === 'number' ? { min: q.min, max: q.max, default: q.default } : {}),
       ...(hasAnswer(doc, q.id) ? { alreadyAnswered: true } : {}),
       answer: doc.answers?.[q.id] ?? null,
@@ -214,6 +218,9 @@ export async function validateDraft(draft, { root, detected, doc = { answers: {}
     if (hasAnswer(doc, d.id) && JSON.stringify(doc.answers[d.id]) === JSON.stringify(d.answer)) continue
     const problem = shapeProblem(q, d.answer, { detected, answers })
     if (problem) errors.push(`${d.id}: ${problem}`)
+    // A preference (0.3's autonomy preset, the defaults) rests on the human's
+    // say-so, not on a file: it is confirmed at the review sheet, not cited.
+    if (q.preference) continue
     const ev = Array.isArray(d.evidence) ? d.evidence.filter((e) => typeof e === 'string' && e.trim()) : []
     if (!ev.length) { errors.push(`${d.id}: an answer with no evidence. Name the file or command it rests on, or answer "${UNKNOWN}".`); continue }
     for (const e of ev) {

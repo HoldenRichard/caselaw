@@ -55,7 +55,7 @@ const pExecFile = promisify(execFile)
  * announced itself as 0.1.0 and stamped that into every manifest it wrote.
  */
 export const CLI_VERSION = require('../package.json').version
-export const TEMPLATE_VERSION = '1.1'
+export const TEMPLATE_VERSION = '1.2'
 
 /** The dispatch table. test/unit/cli-surface.test.js checks every advertised command against it. */
 export const COMMANDS = {

@@ -16,6 +16,7 @@ import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { render } from '../render/engine.js'
+import { DEFAULTS } from '../core/defaults.js'
 import { isoDate, addDays } from '../core/dates.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -153,7 +154,7 @@ function buildSources(provenance = {}, answers = {}) {
     }))
 }
 
-export function buildModel({ answers = {}, provenance = {}, detected = {}, projectName, now = new Date() }) {
+export function buildModel({ answers = {}, provenance = {}, detected = {}, projectName, now = new Date(), harnessSince = null }) {
   const selected = answers['authority.cannot'] || []
   const triage = answers['authority.triage'] || {}
   const label = (b) => BOUNDARY_LABELS[b] || plain(b, 200)
@@ -201,6 +202,26 @@ export function buildModel({ answers = {}, provenance = {}, detected = {}, proje
       publisher: plain(m.at, 160),
     })),
     sources: buildSources(provenance, answers),
+    harness: harnessModel(answers, harnessSince),
+  }
+}
+
+/** What the agent must know about how this harness changes: the preset, and the defaults in force. */
+const AUTONOMY_LINES = {
+  'ask-first': 'Ask me first: every change to the harness is proposed in `docs/rules/proposed/`, and a human ratifies it.',
+  'tune-itself': 'Tune itself: a rule that only adds enforcement may apply on its own; every other change is proposed in `docs/rules/proposed/` for a human to ratify.',
+  custom: 'Custom: the choices are in `.caselaw/answers.json` (harness.*); anything not chosen there is proposed in `docs/rules/proposed/` for a human to ratify.',
+}
+
+function harnessModel(answers = {}, since = null) {
+  const preset = answers['harness.autonomy']
+  const accepted = DEFAULTS.filter((d) => (answers['harness.defaults'] || []).includes(d.id))
+  if (!AUTONOMY_LINES[preset] && !accepted.length) return null
+  return {
+    // Unanswered is the safest reading, and says so.
+    autonomy: AUTONOMY_LINES[preset] || AUTONOMY_LINES['ask-first'],
+    defaults: accepted.map((d) => `${d.id} \`${d.name}\``).join(', '),
+    since: since || 'install',
   }
 }
 

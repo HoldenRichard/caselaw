@@ -138,10 +138,12 @@ export function ttyPrompt({ input = stdin, output = stdout } = {}) {
       write(bold(q.prompt))
       if (q.help) write(dim('  ' + q.help))
       q.options.forEach((o, i) => write(`  ${i + 1}) ${o.label}`))
+      // A preselected option (0.3's autonomy preset) is what blank means, and says so.
+      const pre = q.default !== undefined ? q.options.findIndex((o) => o.value === q.default) : -1
       for (;;) {
-        const v = await ask(`  > [1-${q.options.length}] `)
+        const v = await ask(`  > [1-${q.options.length}${pre !== -1 ? `, blank for ${pre + 1}` : ''}] `)
         if (v === DONT_KNOW) return SKIPPED
-        if (v === '') return SKIPPED
+        if (v === '') return pre !== -1 ? q.options[pre].value : SKIPPED
         const byKey = q.options.find((o) => o.key && o.key === v.toLowerCase())
         if (byKey) return byKey.value
         const n = Number(v)
@@ -155,10 +157,14 @@ export function ttyPrompt({ input = stdin, output = stdout } = {}) {
       write(bold(q.prompt))
       if (q.help) write(dim('  ' + q.help))
       q.options.forEach((o, i) => write(`  ${String(i + 1).padStart(2)}) ${o.label}`))
-      write(dim('  Comma-separated numbers, blank for none' + (q.allowOther ? ", or free text after a '+'" : '')))
+      // "Accept all, or pick" (0.3's defaults): blank is all of them, '-' is none.
+      write(dim(q.defaultAll
+        ? "  Blank accepts all of them; comma-separated numbers pick; '-' for none"
+        : '  Comma-separated numbers, blank for none' + (q.allowOther ? ", or free text after a '+'" : '')))
       const v = await ask('  > ')
       if (v === DONT_KNOW) return SKIPPED
-      if (v === '') return []
+      // '-' picks no numbers, so it is none without a branch of its own.
+      if (v === '') return q.defaultAll ? q.options.map((o) => o.value) : []
 
       // Numbers are comma-separated; free text runs from the first '+' to the
       // end of the line, commas included. Splitting the whole answer on ','

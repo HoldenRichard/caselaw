@@ -155,10 +155,10 @@ describe('the CLI surface is what the shipped strings say it is', () => {
   })
 
   test('parseArgs: rule and gate take a subcommand and a name; valued options land in opt', () => {
-    const a = parseArgs(['rule', 'adopt', 'trace-the-premise', '--origin', 'PR #418'])
+    const a = parseArgs(['rule', 'adopt', 'rename-greps-the-tree', '--origin', 'PR #418'])
     assert.equal(a.command, 'rule')
     assert.equal(a.sub, 'adopt')
-    assert.equal(a.name, 'trace-the-premise')
+    assert.equal(a.name, 'rename-greps-the-tree')
     assert.equal(a.opt.origin, 'PR #418')
     assert.deepEqual(a.unknown, [])
     const b = parseArgs(['init', 'some/dir', '--with=decisions,glossary', '--reconfigure'])
@@ -231,20 +231,20 @@ const ACTIVE_RULE = (name, origin) =>
 describe('caselaw rule — the loop, wired', () => {
   test('POSITIVE CONTROL: the README example adopts a candidate', async () => {
     await install()
-    const r = await cli(['rule', 'adopt', 'trace-the-premise', '--origin', 'PR #418: built against a spec line that did not exist'], { cwd: root })
+    const r = await cli(['rule', 'adopt', 'rename-greps-the-tree', '--origin', 'PR #418: built against a spec line that did not exist'], { cwd: root })
     assert.equal(r.code, 0, r.out + r.err)
-    const text = await readFile(join(root, 'docs/rules/proposed/trace-the-premise.md'), 'utf8')
+    const text = await readFile(join(root, 'docs/rules/proposed/rename-greps-the-tree.md'), 'utf8')
     assert.match(text, /\*\*Origin:\*\* PR #418/)
     assert.match(text, /\*\*Origin \(upstream\):\*\*/, "the candidate's own evidence is kept as context, demoted")
-    assert.equal(await exists('docs/rules/candidates/trace-the-premise.md'), true, 'the candidate stays; adopting copies')
+    assert.equal(await exists('docs/rules/candidates/rename-greps-the-tree.md'), true, 'the candidate stays; adopting copies')
   })
 
   test('adopt without --origin refuses, and says why', async () => {
     await install()
-    const r = await cli(['rule', 'adopt', 'trace-the-premise'], { cwd: root })
+    const r = await cli(['rule', 'adopt', 'rename-greps-the-tree'], { cwd: root })
     assert.equal(r.code, 2)
     assert.match(r.out, /--origin/)
-    assert.equal(await exists('docs/rules/proposed/trace-the-premise.md'), false)
+    assert.equal(await exists('docs/rules/proposed/rename-greps-the-tree.md'), false)
   })
 
   test('propose with the fields as flags drafts without a terminal — an agent may do this', async () => {
