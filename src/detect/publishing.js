@@ -46,14 +46,159 @@ export function emptyPublishing() {
 export async function detectPublishing(root, walked) {
   const out = []
   const workflows = walked.files.filter((f) => /^\.github\/workflows\/[^/]+\.ya?ml$/.test(f)).sort()
+  const goreleaser = await goreleaserTargets(root, walked.files)
+  const makeRelease = await makeReleaseRuns(root)
   for (const file of workflows) {
     let text
     try { text = await readFile(join(root, file), 'utf8') } catch { continue }
     const steps = publishSteps(text)
     if (!steps.length) continue
+    const events = workflowEvents(text)
+    const jobs = jobsOf(text)
+    for (const s of steps) {
+      // When this step can actually run: the workflow's events, narrowed by its
+      // job's `if:` and by every job it needs (round 2 of the DEF-274 re-score:
+      // pyvisa's workflow starts by hand and on a schedule, but publishes only
+      // on a push).
+      const { when, conditions } = whenStepRuns(events, jobs, s.line)
+      s.when = when
+      s.conditions = conditions
+      s.what = name(s, { text, jobs, goreleaser, makeRelease })
+    }
     out.push({ file, triggers: workflowTriggers(text), publishes: steps })
   }
   return { publishing: out, warnings: [] }
+}
+
+/** A destination named by where it actually goes, where the files say. */
+function name(step, { text, jobs, goreleaser, makeRelease }) {
+  if (step.what === 'a git push made by CI') {
+    const job = jobAt(jobs, step.line)
+    const lines = text.split(/\r?\n/).slice(job ? job.start : 0, job ? job.end : undefined)
+    const repo = lines.map((l) => /^\s*repository:\s*["']?([\w.-]+\/[\w.-]+)/.exec(l)).find(Boolean)
+    return repo ? `the repository ${repo[1]} (a git push made by CI)` : step.what
+  }
+  if (step.what === 'the Makefile\'s release target' && makeRelease.goreleaser) {
+    return `GoReleaser, through the Makefile's release target (Makefile:${makeRelease.line})${goreleaser.length ? `: ${goreleaser.join(', ')}` : ''}`
+  }
+  if (step.what.startsWith('GoReleaser') && goreleaser.length) return `GoReleaser: ${goreleaser.join(', ')}`
+  return step.what
+}
+
+/** What a GoReleaser config publishes, from its top-level sections. */
+async function goreleaserTargets(root, files) {
+  const file = files.find((f) => f === '.goreleaser.yml' || f === '.goreleaser.yaml')
+  if (!file) return []
+  let text
+  try { text = await readFile(join(root, file), 'utf8') } catch { return [] }
+  const keys = new Set([...text.matchAll(/^([a-z_]+):/gm)].map((m) => m[1]))
+  const out = []
+  if (keys.has('dockers') || keys.has('docker_manifests') || keys.has('dockers_v2')) out.push('Docker images')
+  if (keys.has('nfpms')) out.push('Linux packages')
+  if (keys.has('brews') || keys.has('homebrew_casks')) out.push('Homebrew')
+  if (keys.has('scoops')) out.push('Scoop')
+  if (keys.has('snapcrafts')) out.push('Snap')
+  if (!/^release:\s*\n\s+disable:\s*true/m.test(text)) out.push('a GitHub release')
+  return out
+}
+
+/** Whether the Makefile's `release:` recipe runs GoReleaser, and on which line. */
+async function makeReleaseRuns(root) {
+  let text
+  try { text = await readFile(join(root, 'Makefile'), 'utf8') } catch { return {} }
+  const lines = text.split(/\r?\n/)
+  const start = lines.findIndex((l) => /^release:/.test(l))
+  if (start === -1) return {}
+  for (let i = start + 1; i < lines.length && /^\t/.test(lines[i]); i++) {
+    if (/\bgoreleaser\b/.test(lines[i])) return { goreleaser: true, line: i + 1 }
+  }
+  return {}
+}
+
+/** The jobs of a workflow: where each starts and ends, its `if:` and its `needs:`. */
+export function jobsOf(text) {
+  const lines = text.split(/\r?\n/)
+  const top = lines.findIndex((l) => /^jobs:\s*$/.test(l))
+  if (top === -1) return []
+  const jobs = []
+  for (let i = top + 1; i < lines.length; i++) {
+    if (/^\S/.test(lines[i])) break
+    const m = /^ {2}([\w-]+):\s*$/.exec(lines[i])
+    if (m) jobs.push({ name: m[1], start: i, end: lines.length, if: null, ifLine: null, needs: [] })
+  }
+  for (const [k, job] of jobs.entries()) {
+    job.end = jobs[k + 1]?.start ?? job.end
+    for (let i = job.start + 1; i < job.end; i++) {
+      const cond = /^ {4}if:\s*(.*)$/.exec(lines[i])
+      if (cond) {
+        let expr = cond[1].trim()
+        if (/^[|>][-+]?$/.test(expr)) {
+          const parts = []
+          for (let j = i + 1; j < job.end && /^ {6,}\S/.test(lines[j]); j++) parts.push(lines[j].trim())
+          expr = parts.join(' ')
+        }
+        job.if = expr.replace(/^\$\{\{\s*|\s*\}\}$/g, '')
+        job.ifLine = i + 1
+      }
+      const needs = /^ {4}needs:\s*(.*)$/.exec(lines[i])
+      if (needs) {
+        const v = needs[1].trim()
+        if (v) job.needs = v.replace(/^\[|\]$/g, '').split(',').map((s) => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean)
+        else for (let j = i + 1; j < job.end && /^ {6}-\s/.test(lines[j]); j++) job.needs.push(lines[j].replace(/^ {6}-\s*/, '').trim())
+      }
+    }
+  }
+  return jobs
+}
+
+function jobAt(jobs, line) {
+  return jobs.find((j) => line - 1 > j.start && line - 1 < j.end) || null
+}
+
+/**
+ * The events on which a step's job can run, as phrases, and any condition that
+ * could not be read as an event. Only plain comparisons are understood
+ * (`github.event_name == 'push'`, `startsWith(github.ref, 'refs/tags/')`);
+ * anything else is quoted back, never interpreted.
+ */
+export function whenStepRuns(events, jobs, line) {
+  if (!events) return { when: null, conditions: [] }
+  let allowed = events.map((e) => ({ event: e.event, filters: { ...e.filters } }))
+  const conditions = []
+  const seen = new Set()
+  const visit = (job, own) => {
+    if (!job || seen.has(job.name)) return
+    seen.add(job.name)
+    if (job.if) {
+      const r = narrow(allowed, job.if)
+      allowed = r.events
+      // A needed job's condition on another job's outputs is already folded into
+      // the publishing job's own `if:`; only its own repository, ref or event
+      // conditions are added, or homebridge's chain lists five.
+      const relevant = own || (/github\./.test(job.if) && !/needs\./.test(job.if))
+      if (r.unread && relevant) conditions.push(`\`${job.if.length > 140 ? `${job.if.slice(0, 137)}…` : job.if}\` (line ${job.ifLine})`)
+    }
+    for (const n of job.needs) visit(jobs.find((j) => j.name === n), false)
+  }
+  visit(jobAt(jobs, line), true)
+  return { when: allowed.flatMap(({ event, filters }) => phrase(event, filters)), conditions }
+}
+
+function narrow(events, expr) {
+  let out = events
+  const eq = [...expr.matchAll(/github\.event_name\s*==\s*['"]([\w-]+)['"]/g)].map((m) => m[1])
+  const ne = [...expr.matchAll(/github\.event_name\s*!=\s*['"]([\w-]+)['"]/g)].map((m) => m[1])
+  if (eq.length) out = out.filter((e) => eq.includes(e.event))
+  if (ne.length) out = out.filter((e) => !ne.includes(e.event))
+  if (/startsWith\(\s*github\.ref\s*,\s*['"]refs\/tags\//.test(expr)) {
+    out = out.filter((e) => e.event !== 'push' || !e.filters.branches || e.filters.tags)
+      .map((e) => (e.event === 'push' ? { event: 'push', filters: { tags: e.filters.tags || ['*'] } } : e))
+  }
+  const rest = expr
+    .replace(/github\.event_name\s*[!=]=\s*['"][\w-]+['"]/g, '')
+    .replace(/startsWith\(\s*github\.ref\s*,\s*['"]refs\/(tags|heads)\/['"]?\s*\)/g, '')
+    .replace(/&&|\|\||[()\s]/g, '')
+  return { events: out, unread: rest.length > 0 }
 }
 
 /** Each distinct destination a workflow publishes to, with the first line that does it. */

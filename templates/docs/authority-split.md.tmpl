@@ -61,11 +61,11 @@ a read-only tool that happens to be behaving.
 {{# if publishing }}
 ## What a push can publish
 
-These workflows publish outside the repository, and git starts them. Doing what starts one is an
+Each of these publishes outside the repository, and git starts it. Doing what starts one is an
 outward-facing action: the agent may prepare it, and a human does it, or asks for it by name, each
-time. A job may carry its own conditions, so read it before treating any of its triggers as safe.
+time. Conditions this could not read are quoted, not interpreted.
 
-{{# each publishing }}- `{{ file }}` starts on {{ starts }}. It publishes to {{ publishes }}.
+{{# each publishing }}- **{{ what }}** (`{{ at }}`): when {{ when }}.{{# if conditions }} Only if {{ conditions }}.{{/ if }}{{# if idle }} The workflow also starts on {{ idle }}; those runs do not reach this step.{{/ if }}
 {{/ each }}
 
 {{/ if }}

@@ -23,7 +23,7 @@ describe('the close-out carries the project', () => {
     const { content } = await generateCloseOut(PYVISA)
     assert.match(content, /The gates CI runs on a change, in its order[\s\S]*- \[ \] `ruff format pyvisa --check`\n- \[ \] `mypy pyvisa`/)
     assert.match(content, /How a human proves a change here: Query a real instrument over VISA with the change applied\./)
-    assert.match(content, /## Published\?[\s\S]*- \[ \] pushing a tag matching `\*` — starts `\.github\/workflows\/release\.yml`, which publishes to PyPI/)
+    assert.match(content, /## Published\?[\s\S]*- \[ \] pushing a tag matching `\*` — publishes to PyPI \(`\.github\/workflows\/release\.yml:84`\)/)
     assert.match(content, /"ruff format pyvisa --check — agent — 41 passed/, 'the worked example is the project\'s first gate')
   })
 

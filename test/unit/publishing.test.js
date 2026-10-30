@@ -10,9 +10,11 @@ import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { detectPublishing, workflowTriggers, publishSteps } from '../../src/detect/publishing.js'
+import { detectPublishing, workflowTriggers, workflowEvents, publishSteps, jobsOf, whenStepRuns } from '../../src/detect/publishing.js'
 import { generate as generateAuthoritySplit } from '../../src/generate/authority-split.js'
 
+// As pyvisa has it: the workflow starts three ways, but only a push reaches
+// the publish job, and the release job needs that one (round 2 of the re-score).
 const PYVISA = `name: Build and publish
 on:
   workflow_dispatch:
@@ -23,11 +25,19 @@ on:
       - "*"
 
 jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: python -m build
   publish:
+    if: github.event_name == 'push'
+    needs: [build]
     steps:
       # npm publish is not used here
       - uses: pypa/gh-action-pypi-publish@release/v1
   github-release:
+    needs:
+      - publish
     steps:
       - run: |
           gh release create
@@ -79,7 +89,7 @@ describe('which events start a workflow', () => {
 
 describe('which steps publish', () => {
   test('each destination once, at its first line; commented lines do not count', () => {
-    assert.deepEqual(publishSteps(PYVISA), [{ what: 'PyPI', line: 14 }, { what: 'a GitHub release', line: 18 }])
+    assert.deepEqual(publishSteps(PYVISA), [{ what: 'PyPI', line: 20 }, { what: 'a GitHub release', line: 26 }])
     assert.deepEqual(publishSteps(NTFY), [{ what: 'the Makefile\'s release target', line: 10 }])
   })
 
@@ -93,7 +103,7 @@ describe('the authority split says what a push publishes', () => {
   beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'caselaw-publish-')) })
   afterEach(async () => { await rm(root, { recursive: true, force: true }) })
 
-  test('POSITIVE CONTROL: a tag that publishes to PyPI is named, with the line that does it', async () => {
+  test('POSITIVE CONTROL: PyPI is published only on a tag push, and the scheduled and manual runs are said not to reach it', async () => {
     await mkdir(join(root, '.github/workflows'), { recursive: true })
     await writeFile(join(root, '.github/workflows/release.yml'), PYVISA)
     await writeFile(join(root, '.github/workflows/ci.yml'), 'on: push\njobs:\n  t:\n    steps:\n      - run: pytest\n')
@@ -101,8 +111,16 @@ describe('the authority split says what a push publishes', () => {
     assert.equal(publishing.length, 1, 'only the workflow that publishes')
     const { content } = await generateAuthoritySplit({ answers: {}, detected: { publishing }, projectName: 'P', now: new Date('2026-10-30') })
     assert.match(content, /## What a push can publish/)
-    assert.match(content, /`\.github\/workflows\/release\.yml` starts on running the workflow by hand; a schedule; pushing a tag matching `\*`\. It publishes to PyPI \(`\.github\/workflows\/release\.yml:14`\), a GitHub release/)
+    assert.match(content, /- \*\*PyPI\*\* \(`\.github\/workflows\/release\.yml:20`\): when pushing a tag matching `\*`\. The workflow also starts on running the workflow by hand, a schedule; those runs do not reach this step\./)
+    assert.match(content, /- \*\*a GitHub release\*\* \(`\.github\/workflows\/release\.yml:26`\): when pushing a tag matching `\*`\./, 'the release job needs the publish job, and inherits its condition')
     assert.match(content, /the agent may prepare it, and a human does it/)
+  })
+
+  test('a condition that is not an event is quoted back, never interpreted', () => {
+    const wf = `on:\n  push:\n    branches: [beta-*]\njobs:\n  tag:\n    if: \${{ github.repository == 'org/repo' }}\n    steps: []\n  publish:\n    needs: tag\n    if: |\n      always() &&\n      needs.tag.outputs.t != 'none'\n    steps:\n      - run: npm publish\n`
+    const r = whenStepRuns(workflowEvents(wf), jobsOf(wf), 14)
+    assert.deepEqual(r.when, ['pushing to a branch matching `beta-*`'])
+    assert.deepEqual(r.conditions, ["`always() && needs.tag.outputs.t != 'none'` (line 10)", "`github.repository == 'org/repo'` (line 6)"])
   })
 
   test('nothing publishes, no section', async () => {

@@ -14,7 +14,7 @@ import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { render } from '../render/engine.js'
-import { BOUNDARY_LABELS, plain } from './authority-split.js'
+import { BOUNDARY_LABELS, plain, publishingRows } from './authority-split.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 export const TEMPLATE_PATH = join(HERE, '../../templates/docs/close-out.md.tmpl')
@@ -42,8 +42,8 @@ export function buildModel({ answers = {}, detected = {}, projectName }) {
   const gates = (detected.ciGates?.gates || []).slice(0, 8).map((g) => `\`${plain(g.cmd, 160)}\``)
   const anyCommand =
     detected.ciGates?.gates?.[0]?.cmd || detected.commands?.test?.cmd || detected.commands?.build?.cmd || 'npm test'
-  const publishing = (detected.publishing || []).map((p) =>
-    plain(`${p.triggers ? p.triggers.join('; ') : 'its triggers'} — starts \`${p.file}\`, which publishes to ${p.publishes.map((s) => s.what).join(', ')}`, 400))
+  const publishing = publishingRows(detected.publishing).map((r) =>
+    `${r.when} — publishes to ${r.what} (\`${r.at}\`)${r.conditions ? `, only if ${r.conditions}` : ''}`)
 
   return {
     project: { name: plain(projectName || 'this project', 120) },

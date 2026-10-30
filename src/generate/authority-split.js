@@ -170,11 +170,7 @@ export function buildModel({ answers = {}, provenance = {}, detected = {}, proje
     humanProof: plain(answers['authority.human_proof'] || ''),
     outside: (answers['outside.authority'] || []).map((o) => OUTSIDE_LABELS[o] || plain(o, 200)),
     declares: (answers['outside.claims'] || []).length > 0,
-    publishing: (detected.publishing || []).map((p) => ({
-      file: plain(p.file, 200),
-      starts: p.triggers ? plain(p.triggers.join('; '), 400) : 'events this could not read (check its `on:` block)',
-      publishes: plain(p.publishes.map((s) => `${s.what} (\`${p.file}:${s.line}\`)`).join(', '), 400),
-    })),
+    publishing: publishingRows(detected.publishing),
     sources: buildSources(provenance, answers),
   }
 }
@@ -193,6 +189,31 @@ function settle(boundary, detected) {
     return { settleCommand: null, settleHint: cell(cmd, 300) }
   }
   return { settleCommand: cell(cmd, 300), settleHint: null }
+}
+
+/**
+ * One row per destination: where it publishes, and exactly when the step that
+ * does it can run. Round 2 of the DEF-274 re-score: listing every event that
+ * starts a workflow told pyvisa's reader that a scheduled run publishes to
+ * PyPI; only a tag push does. Events that start the workflow but never reach
+ * the step are said, and conditions that are not events are quoted, not read.
+ */
+export function publishingRows(publishing = []) {
+  const rows = []
+  for (const p of publishing) {
+    for (const s of p.publishes) {
+      const when = s.when ?? p.triggers
+      const idle = s.when && !s.conditions?.length ? (p.triggers || []).filter((t) => !s.when.includes(t)) : []
+      rows.push({
+        what: plain(s.what, 200),
+        at: `${plain(p.file, 160)}:${s.line}`,
+        when: when?.length ? plain(when.join(', or '), 400) : 'events this could not read (check the workflow\'s `on:` block)',
+        conditions: plain((s.conditions || []).join('; and '), 400),
+        idle: plain(idle.join(', '), 300),
+      })
+    }
+  }
+  return rows
 }
 
 /**
