@@ -155,3 +155,13 @@ describe('audit — real gather() output', () => {
     assert.doesNotMatch(agent, /undefined/)
   })
 })
+
+describe('a reference to a line (the field test)', () => {
+  test('POSITIVE CONTROL: `path:line` resolves to the file, and a line past its end is still a broken reference', async () => {
+    await put('.github/workflows/release.yml', 'on: push\njobs:\n  p:\n    steps:\n      - run: npm publish\n')
+    await put('docs/authority-split.md', '- **npm** (`.github/workflows/release.yml:5`): when pushing a tag.\n- gone (`.github/workflows/release.yml:60`)\n- range (`.github/workflows/release.yml:2-4`)\n')
+    commit()
+    const r = runChecks(await gather(root), { only: ['refs-resolve'] })
+    assert.deepEqual(codes(r, 'refs-resolve'), ['docs/authority-split.md points at .github/workflows/release.yml:60, but it has 6 lines'])
+  })
+})

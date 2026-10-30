@@ -84,6 +84,19 @@ const DEPS = {
 /** Environment names, in an env example file, that belong to a paid or metered API. */
 const METERED_ENV = /^(OPENAI|ANTHROPIC|GROQ|REPLICATE|ELEVENLABS|APIFY|COHERE|MISTRAL|GEMINI|GOOGLE_GENAI|HIGGSFIELD|STABILITY|DEEPGRAM|ASSEMBLYAI|TOGETHER|FIREWORKS|PERPLEXITY|XAI|FAL)_[A-Z0-9_]*(KEY|TOKEN|SECRET)\b/
 
+/**
+ * Paid API hosts named in source (trigger T4). The field test found an app
+ * that calls Claude, Gemini and Groq over plain HTTPS from Swift, with no SDK
+ * in any manifest for the dependency table to see.
+ */
+const METERED_HOSTS = ['api.openai.com', 'api.anthropic.com', 'api.groq.com', 'api.apify.com', 'api.replicate.com', 'api.elevenlabs.io',
+  'generativelanguage.googleapis.com', 'api.mistral.ai', 'api.cohere.ai', 'api.cohere.com', 'api.together.xyz', 'api.fireworks.ai',
+  'api.perplexity.ai', 'api.x.ai', 'api.deepgram.com', 'api.assemblyai.com', 'fal.run', 'higgsfield.ai']
+const SOURCE_FILE = /\.(swift|kt|java|ts|tsx|js|mjs|cjs|py|go|rs|rb|php|cs)$/
+const NOT_SOURCE = /(^|\/)(node_modules|vendor|dist|build|\.build|Pods|DerivedData|third_party|fixtures?|__fixtures__)\//
+const MAX_SOURCE_FILES = 2000
+const MAX_SOURCE_BYTES = 512 * 1024
+
 /** Words a project uses about itself that mean it pairs with a smart-home controller. */
 const PAIRING_WORDS = new Set(['homekit', 'homebridge-plugin', 'homebridge', 'matter', 'home-assistant', 'homeassistant'])
 
@@ -182,6 +195,15 @@ export async function detectSignals(root, walked) {
     if (text === null) continue
     for (const m of text.matchAll(/^\s*(?:export\s+)?([A-Z][A-Z0-9_]*)\s*=/gm)) if (METERED_ENV.test(m[1])) add('metered', m[1], f)
   }
+  const found = new Set()
+  for (const f of walked.files.filter((f) => SOURCE_FILE.test(f) && !NOT_SOURCE.test(f)).slice(0, MAX_SOURCE_FILES)) {
+    if (found.size === METERED_HOSTS.length) break
+    const text = await read(f)
+    if (!text || text.length > MAX_SOURCE_BYTES) continue
+    for (const host of METERED_HOSTS) {
+      if (!found.has(host) && text.includes(host)) { found.add(host); add('metered', host, f) }
+    }
+  }
   for (const d of datedRecords(walked.files)) add('dated', d.signal, d.source)
   for (const i of await configIdentities(walked.files, read)) add('identities', i.signal, i.source)
   return { signals, warnings: [] }
@@ -199,8 +221,9 @@ export function datedRecords(files) {
   }
   const byDir = new Map()
   for (const f of files) {
+    // Anywhere in the name: Kabu's are `pre-submission-audit-2026-08-10.md` (the field test).
     const base = f.slice(f.lastIndexOf('/') + 1)
-    if (!/^\d{4}-\d{2}-\d{2}/.test(base)) continue
+    if (!/(^|[^\d])\d{4}-\d{2}-\d{2}([^\d]|$)/.test(base)) continue
     const dir = f.includes('/') ? f.slice(0, f.lastIndexOf('/')) : '.'
     byDir.set(dir, (byDir.get(dir) || 0) + 1)
   }

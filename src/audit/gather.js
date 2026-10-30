@@ -205,7 +205,12 @@ async function gatherRefs(root, docTexts) {
     for (const m of text.matchAll(/`([^`\s]+\/[^`\s]*)`/g)) targets.add(m[1])
     for (const t of targets) {
       if (/^[a-z]+:\/\//i.test(t) || t.startsWith('#')) continue
-      const clean = t.split('#')[0].replace(/\/$/, '')
+      // `path:line` and `path:from-to` are how the generated docs cite a
+      // workflow step: the file is the path, and the line has to be in it.
+      // The field test found caselaw's own audit calling its own citations
+      // missing files.
+      const lineRef = /:(\d+)(?:-(\d+))?$/.exec(t.split('#')[0])
+      const clean = t.split('#')[0].replace(/:\d+(?:-\d+)?$/, '').replace(/\/$/, '')
       if (!clean || !/[/.]/.test(clean)) continue
       if (clean.includes('*') || clean.includes('<')) continue // globs and placeholders
       if (clean.startsWith('~')) continue // home-relative, not a repo path
@@ -220,10 +225,18 @@ async function gatherRefs(root, docTexts) {
         ? [join(root, clean.slice(1))]
         : [join(root, dirname(from), clean), join(root, clean)]
       let found = false
+      let why = null
       for (const abs of candidates) {
-        if (await exists(abs)) { found = true; break }
+        if (!(await exists(abs))) continue
+        found = true
+        if (lineRef) {
+          const lines = ((await readIfExists(abs)) ?? '').split('\n').length
+          const last = Number(lineRef[2] || lineRef[1])
+          if (last > lines) { found = false; why = `it has ${lines} lines` }
+        }
+        break
       }
-      refs.push({ from, target: t, exists: found })
+      refs.push({ from, target: t, exists: found, ...(why ? { why } : {}) })
     }
   }
   return refs

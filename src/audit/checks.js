@@ -49,7 +49,7 @@ export const CHECKS = [
       return docRefs
         .filter((r) => !r.exists)
         .map((r) =>
-          finding('refs-resolve', SEVERITY.ERROR, `${r.from} points at ${r.target}, which does not exist`, {
+          finding('refs-resolve', SEVERITY.ERROR, `${r.from} points at ${r.target}, ${r.why ? `but ${r.why}` : 'which does not exist'}`, {
             path: r.from,
             hint: 'Fix the pointer or restore the file. An agent told to read a missing file reads nothing and says nothing.',
           }),

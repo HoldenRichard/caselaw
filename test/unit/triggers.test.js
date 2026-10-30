@@ -78,6 +78,17 @@ describe('the detection behind T4, T5 and T7', () => {
     assert.deepEqual(signals.identities.map((s) => s.signal), ['GoogleService-Info.plist', 'GoogleService-Info-Dev.plist', '2 Firebase projects (default, dev)'])
   })
 
+  test('POSITIVE CONTROL: a paid API called over HTTPS with no SDK, and dates at the end of a name, are found (the field test)', async () => {
+    await put('Sources/Client/GroqClient.swift', 'let url = URL(string: "https://api.groq.com/openai/v1/chat/completions")!\n')
+    await put('node_modules/x/index.js', 'fetch("https://api.openai.com/v1")\n')
+    const names = ['docs/pre-submission-audit-2026-08-10.md', 'docs/release-notes-2026-08-12.md', 'docs/review-2026-09-01.md']
+    for (const n of names) await put(n, 'x\n')
+    const { signals } = await detectSignals(root, { files: ['Sources/Client/GroqClient.swift', 'node_modules/x/index.js', ...names] })
+    assert.deepEqual(signals.metered.map((s) => [s.signal, s.source]), [['api.groq.com', 'Sources/Client/GroqClient.swift']], 'a dependency\'s own code is not the project calling it')
+    assert.deepEqual(signals.dated.map((s) => s.source), ['docs/'])
+    assert.deepEqual(datedRecords(['a/build-12345-67-89.log', 'a/build-12346-67-89.log', 'a/build-12347-67-89.log']), [], 'a build number is not a date')
+  })
+
   test('two dated files, one Firebase config, and a .env.local are not enough', async () => {
     assert.deepEqual(datedRecords(['a/2026-01-01.md', 'a/2026-01-02.md']), [])
     await put('.env.local', 'X=1\n')
