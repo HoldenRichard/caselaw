@@ -79,6 +79,7 @@ export const KINDS = [
   'path-scope',
   'paired-edit',
   'shell',
+  'command',
 ]
 
 /**
@@ -96,6 +97,8 @@ const KIND_MODES = {
   'path-scope': ['pre', 'post', 'staged'],
   'paired-edit': ['post', 'staged'],
   shell: ['post', 'staged', 'all'],
+  // Only the pre hook on a shell call carries a command.
+  command: ['pre'],
 }
 
 /** Exit codes, in one place, because three callers depend on them. */
@@ -748,6 +751,7 @@ export async function makeContext(opts = {}) {
     targets: opts.targets ?? null,
     changeSet: opts.changeSet ?? null,
     changeSetReason: opts.changeSetReason ?? null,
+    command: typeof opts.command === 'string' ? opts.command : null,
     overrides,
     notes,
     readDoc,
@@ -1674,6 +1678,26 @@ async function kindPathScope(gate, ctx, out) {
 }
 
 // ===========================================================================
+// Kind 8 — command (0.3): what the agent is about to run in a shell
+// ===========================================================================
+
+async function kindCommand(gate, ctx, out) {
+  const patterns = compilePatterns(gate.patterns, out)
+  if (!patterns.length) return out
+  if (ctx.command === null) return skipResult(out, 'no shell command in this call; a command gate checks the commands an agent runs')
+  for (const p of patterns) {
+    p.re.lastIndex = 0
+    if (!p.re.test(ctx.command)) continue
+    out.fires.push(makeFire(gate, {
+      label: p.label,
+      detail: `\`${oneLine(ctx.command, 200)}\` matches ${p.kind === 'regex' ? 'the pattern ' : ''}"${oneLine(p.label, 120)}"`,
+    }))
+  }
+  out.filesChecked = 0
+  return out
+}
+
+// ===========================================================================
 // Kind 6 — paired-edit
 // ===========================================================================
 
@@ -1771,6 +1795,7 @@ const KIND_FNS = {
   'path-scope': kindPathScope,
   'paired-edit': kindPairedEdit,
   shell: kindShell,
+  command: kindCommand,
 }
 
 function modeSkipReason(kind, mode) {
@@ -1780,6 +1805,7 @@ function modeSkipReason(kind, mode) {
     if (kind === 'paired-edit') return 'paired-edit needs the whole change set; pre mode sees one proposed write'
     if (kind === 'shell') return 'shell runs against files on disk; the proposed write has not landed'
   }
+  if (kind === 'command') return 'command checks a shell command the agent is about to run; only the pre hook on a shell call carries one'
   if (mode === 'all') {
     if (kind === 'path-scope') return 'path-scope guards writes; mode "all" is a whole-tree scan with no writes'
     if (kind === 'paired-edit') return 'paired-edit needs a change set; mode "all" has none'
@@ -1925,7 +1951,9 @@ export async function evaluate(opts = {}) {
 
   // An inline config goes through the SAME validation a file does, so a test
   // can never prove behaviour production does not have.
-  const gates = opts.config ? normalizeInline(opts.config, loaded) : loaded.gates
+  const all = opts.config ? normalizeInline(opts.config, loaded) : loaded.gates
+  // A shell call runs only the command gates; a write never needs them.
+  const gates = Array.isArray(opts.onlyKinds) ? all.filter((g) => opts.onlyKinds.includes(g.kind)) : all
 
   const { sets, notes: setNotes } = await deriveSets(root, mode, opts)
   // Every path a gate compares against a glob is spelled the way the
@@ -2024,6 +2052,36 @@ export function extractHookInput(payload) {
     return { ok: false, reason: `tool "${toolName ?? 'unknown'}" has no file_path; nothing to check`, path: null, texts: [], whole: false, toolName }
   }
   return { ok: true, reason: null, path, texts, whole: whole && texts.length === 1, toolName }
+}
+
+/** The command-gate half of a hook: pre only, and never a reason to stop a command when nothing applies. */
+async function runCommandHook(mode, common, args, payload, stdout, stderr) {
+  if (mode !== 'pre') return EXIT.OK
+  const root = await installAbove(str(payload.cwd) || process.cwd()) ?? (args.root ? resolve(args.root) : null)
+  if (!root) return EXIT.OK // a command outside any install has nothing here to answer to
+  const result = await evaluate({ ...common, root, mode: 'pre', command: payload.tool_input.command, onlyKinds: ['command'], writes: [], targets: [], proposed: [], changeSet: null, changeSetReason: 'a shell command, not a write' })
+  const asides = []
+  if (result.config.degraded) asides.push(`config not usable: ${oneLine(result.config.reason, 300)}`)
+  for (const f of result.warnings) asides.push(oneLine(`warn ${f.gate}: ${f.detail}${f.message ? ` — ${f.message}` : ''}`, 400))
+  for (const r of result.degraded) for (const d of r.degradations) asides.push(oneLine(`degraded ${r.gate}: ${d.reason}`, 400))
+  if (result.blocking.length === 0) {
+    emitAsides(stdout, mode, asides)
+    return EXIT.OK
+  }
+  if (asides.length) stderr(`caselaw gate (${mode}):\n  ${asides.join('\n  ')}\n`)
+  stderr(blockReason(result) + '\n')
+  return EXIT.PRE_BLOCK
+}
+
+/** The nearest directory at or above `dir` holding a .caselaw/ install, or null. */
+async function installAbove(dir) {
+  let at = realpathLenient(resolve(dir))
+  for (;;) {
+    if (await isDirectory(join(at, '.caselaw'))) return at
+    const parent = posixDirname(at)
+    if (parent === at) return null
+    at = parent
+  }
 }
 
 /** Read stdin with a hard timeout. A hook must never wait forever on a pipe. */
@@ -2373,6 +2431,12 @@ async function runHookMode(mode, common, args, stdout, stderr) {
   } catch (err) {
     stderr(`caselaw gate: hook payload is not valid JSON (${shortError(err)}); nothing was checked\n`)
     return EXIT.OK
+  }
+
+  // A shell call (0.3): only command gates apply, and the root is found from
+  // the directory the command runs in.
+  if (str(payload.tool_name) === 'Bash' && payload.tool_input && typeof payload.tool_input.command === 'string') {
+    return await runCommandHook(mode, common, args, payload, stdout, stderr)
   }
 
   const hook = extractHookInput(payload)

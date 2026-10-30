@@ -23,6 +23,7 @@ import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { EXIT, evaluate } from '../../runtime/gate.mjs'
 import { claudeHookSettings } from '../../src/generate/artifacts.js'
+import { writerGuard } from '../../src/core/triggers.js'
 
 const RUNNER = fileURLToPath(new URL('../../runtime/gate.mjs', import.meta.url))
 
@@ -235,6 +236,45 @@ describe('hook mode — the exit-code contract, spawned', () => {
     } finally {
       await rm(root, { recursive: true, force: true })
     }
+  })
+})
+
+describe('hook mode on a shell call (0.3), spawned', () => {
+  const bash = (command, cwd) => JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, cwd })
+
+  test('POSITIVE CONTROL: the writer guard blocks a sweep, warns at warn, stays silent on explicit paths, and leaves a command outside any install alone', async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'caselaw-bash-')))
+    const outside = await realpath(await mkdtemp(join(tmpdir(), 'caselaw-bash-out-')))
+    try {
+      // The hook process starts in the project; the command's own cwd is the payload's.
+      const shell = (command, { cwd = root, mode = 'pre' } = {}) =>
+        run([process.execPath, RUNNER, '--mode', mode, '--host', 'claude', '--no-telemetry'], { cwd: root, input: bash(command, cwd) })
+      await install(root, [{ ...writerGuard(), severity: 'block' }])
+      const blocked = await shell('git add -A && git commit -m x')
+      assert.equal(blocked.code, EXIT.PRE_BLOCK, blocked.out + blocked.err)
+      assert.match(blocked.err, /stage-explicit-paths/)
+
+      const clean = await shell('git add src/a.js')
+      assert.equal(clean.code, EXIT.OK)
+      assert.equal(clean.out.trim(), '', 'nothing to say about an explicit path')
+
+      assert.equal((await shell('git add -A', { mode: 'post' })).code, EXIT.OK, 'post has no command to judge')
+      assert.equal((await shell('git add -A', { cwd: outside })).code, EXIT.OK, 'no install above it: nothing here to answer to')
+
+      await install(root, [writerGuard()])
+      const warned = await shell('git add .')
+      assert.equal(warned.code, EXIT.OK, 'born warning: it reports and does not stop the command')
+      assert.match(hookJson(warned.out).hookSpecificOutput.additionalContext, /warn stage-explicit-paths: `git add \.` matches the pattern "git add of the whole tree"/)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+      await rm(outside, { recursive: true, force: true })
+    }
+  })
+
+  test('POSITIVE CONTROL: the Bash hook entry is installed only with the writer guard', () => {
+    const matchers = (o) => o.hooks.PreToolUse.map((e) => e.matcher)
+    assert.deepEqual(matchers(claudeHookSettings()), ['Edit|Write|NotebookEdit'])
+    assert.deepEqual(matchers(claudeHookSettings({ commands: true })), ['Edit|Write|NotebookEdit', 'Bash'])
   })
 })
 

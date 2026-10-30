@@ -55,7 +55,7 @@ export const PROBLEM_CODES = [
   'not-kebab-case',
 ]
 
-const KNOWN_ORDER = ['trigger', 'rule', 'origin', 'precedent', 'enforcement', 'default', 'ratified']
+const KNOWN_ORDER = ['trigger', 'rule', 'origin', 'precedent', 'enforcement', 'default', 'triggered', 'ratified']
 const KNOWN = new Set(KNOWN_ORDER)
 const LABELS = {
   trigger: 'Trigger',
@@ -64,6 +64,7 @@ const LABELS = {
   precedent: 'Precedent',
   enforcement: 'Enforcement',
   default: 'Default',
+  triggered: 'Triggered',
   ratified: 'Ratified',
 }
 
@@ -163,6 +164,7 @@ export function parseRule(text, opts = {}) {
     origin: firstOf('origin'),
     precedent: firstOf('precedent'),
     default: firstOf('default'),
+    triggered: firstOf('triggered'),
     enforcement: firstOf('enforcement'),
     ratified: firstOf('ratified'),
     extras,
@@ -409,10 +411,11 @@ export function validateRule(parsed, opts = {}) {
   }
 
   // --- Origin: the citation, and the whole reason this module exists.
-  // A default (0.3) is in force on the study's precedent until its first catch
-  // here writes this project's own Origin; the precedent must still cite.
+  // A default, or a rule a trigger proposed (0.3), is in force on the study's
+  // precedent until its first catch here writes this project's own Origin;
+  // the precedent must still cite.
   const precedent = str(parsed.precedent)
-  if (!origin && precedent && str(parsed.default)) {
+  if (!origin && precedent && (str(parsed.default) || str(parsed.triggered))) {
     if (findReferences(precedent).total === 0) {
       add('origin-unverified', 'warn', 'Precedent cites nothing checkable.', 'Name the incidents it rests on: an id, a date, a commit or a URL.')
     }

@@ -46,6 +46,7 @@ export const KINDS = [
   'path-scope',
   'paired-edit',
   'shell',
+  'command',
 ]
 
 export function emptyConfig() {
@@ -117,7 +118,8 @@ export function validateGate(gate, { index = 0 } = {}) {
     add('bad-paths', 'error', `${at} \`paths\` must be an array of non-empty glob strings`)
   }
   const hasPaths = scoped && strList(gate.paths) && gate.paths.length > 0
-  if (!hasPaths) {
+  // A command gate checks what the agent runs, not files; it has no scope to set.
+  if (!hasPaths && gate.kind !== 'command') {
     // The schema says omitted paths mean every candidate file, and the runtime
     // agrees. That is a warning, not an error — except where scope IS the gate.
     if (gate.kind === 'path-scope' || gate.kind === 'shell') {
@@ -155,6 +157,7 @@ export function validateGate(gate, { index = 0 } = {}) {
         : p && typeof p === 'object' && ((typeof p.literal === 'string' && p.literal.length > 0) || typeof p.regex === 'string'))
   switch (gate.kind) {
     case 'banned-content':
+    case 'command':
       if (!patternList(gate.patterns)) add('no-patterns', 'error', `${at} needs a non-empty \`patterns\` array of {literal} or {regex}`)
       break
     case 'required-content':

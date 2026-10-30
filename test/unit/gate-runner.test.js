@@ -21,6 +21,7 @@ import { join } from 'node:path'
 import { execFile } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { evaluate, matchGlob, extractHookInput, EXIT, KINDS } from '../../runtime/gate.mjs'
+import { writerGuard } from '../../src/core/triggers.js'
 
 let root
 beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'caselaw-gate-')) })
@@ -281,6 +282,31 @@ describe('gate kind: shell', () => {
 // ---------------------------------------------------------------------------
 // Coverage: every kind is actually exercised above
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// command (0.3): what the agent is about to run
+// ---------------------------------------------------------------------------
+describe('gate kind: command', () => {
+  const guard = () => gate({ kind: 'command', paths: undefined, patterns: writerGuard().patterns })
+  const fires = async (command) => (await run({ mode: 'pre', command, onlyKinds: ['command'], config: cfg(guard()) })).fires.length
+
+  test('POSITIVE CONTROL: command fires on the commands that sweep the tree, and on nothing else', async () => {
+    for (const c of ['git add -A', 'git add .', 'git add --all', 'git -C ../other add -A', 'git commit -am "x"', 'git commit -a -m x', 'npm test && git add -u', 'git add -A && git commit -m x']) {
+      assert.ok((await fires(c)) >= 1, `must fire on: ${c}`)
+    }
+    for (const c of ['git add src/a.js docs/b.md', 'git add ./src/x.js', 'git add .gitignore', 'git commit --amend -m x', 'git commit -m "add a thing"', 'git status', 'echo "git add -A is banned here"']) {
+      assert.equal(await fires(c), c.startsWith('echo') ? 1 : 0, `${c}`)
+    }
+  })
+
+  test('a write never runs a command gate, and a command gate never runs outside pre', async () => {
+    const write = await run({ mode: 'pre', proposed: [{ path: 'a.txt', text: 'git add -A', whole: true }], targets: ['a.txt'], writes: ['a.txt'], config: cfg(guard()) })
+    assert.equal(write.fires.length, 0)
+    assert.match(write.skipped[0].skipReason, /no shell command in this call/)
+    const all = await run({ mode: 'all', config: cfg(guard()) })
+    assert.equal(all.fires.length, 0)
+  })
+})
+
 describe('every declared kind has a positive control', () => {
   test('POSITIVE CONTROL: no gate kind ships untested', async () => {
     const suite = await readFile(new URL(import.meta.url), 'utf8')

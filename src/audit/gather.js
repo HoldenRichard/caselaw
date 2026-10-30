@@ -102,6 +102,7 @@ async function gatherRules(root, { now, notes }) {
       origin: parsed.origin ?? null,
       precedent: parsed.precedent ?? null,
       default: parsed.default ?? null,
+      triggered: parsed.triggered ?? null,
       ratified: parsed.ratified ?? null,
       enforcement: parseEnforcement(parsed.enforcement),
       problems,
@@ -135,7 +136,8 @@ async function gatherBorrowed(root, rules, answers, { now, notes }) {
   try { catches = await (await import('../core/rules.js')).readCatches(root) } catch (err) { notes.push(`catches: ${err.message}`) }
   const out = []
   for (const r of borrowed) {
-    const since = (/\b(\d{4}-\d{2}-\d{2})\b/.exec(r.default || r.ratified || '') || [])[1] || null
+    // In force since: the date its marker says it went active, else the date it was ratified.
+    const since = (/active since (\d{4}-\d{2}-\d{2})/.exec(`${r.default || ''} ${r.triggered || ''}`) || /\b(\d{4}-\d{2}-\d{2})\b/.exec(r.ratified || '') || [])[1] || null
     const days = since ? daysBetween(new Date(since), now) : r.ageDays
     let commits = null
     if (since) {

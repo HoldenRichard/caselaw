@@ -25,6 +25,9 @@ import { ruleDirsFor, doctrineDirAt } from '../core/doctrine.js'
 import * as gatesStore from '../core/gates.js'
 import { MECHANISABLE, suggestKinds, buildGate, baselineDisposition, enforcementLine } from '../core/promote.js'
 import { SKIPPED } from '../core/answers.js'
+import * as answersStore from '../core/answers.js'
+import { DEFAULTS } from '../core/defaults.js'
+import { TRIGGERS } from '../core/triggers.js'
 
 const pExecFile = promisify(execFile)
 
@@ -241,6 +244,17 @@ async function demote(args, { root, say, interactive, prompt }) {
   }
   const r = await rules.demote(root, args.name, { interactive: true, reason: args.opt.reason ?? null })
   say(`  ${r.from} -> ${r.to}  (demoted ${r.at}: ${r.reason})`)
+  // A default or a triggered rule is generated from the answers; without this
+  // the next upgrade would put it back in active/.
+  const doc = await answersStore.load(root).catch(() => null)
+  if (doc) {
+    const d = DEFAULTS.find((x) => x.name === args.name)
+    const t = TRIGGERS.find((x) => x.rule === args.name)
+    const drop = (key, id) => { if (Array.isArray(doc.answers[key])) doc.answers[key] = doc.answers[key].filter((v) => v !== id) }
+    if (d) drop('harness.defaults', d.id)
+    if (t) drop('harness.triggers', t.id)
+    if (d || t) { await answersStore.save(root, doc); say('  Taken out of .caselaw/answers.json too, so an upgrade does not reinstall it.') }
+  }
   return 0
 }
 

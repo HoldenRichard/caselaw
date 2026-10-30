@@ -24,6 +24,7 @@
  */
 
 import { DEFAULTS } from '../core/defaults.js'
+import { TRIGGERS, firedTriggers } from '../core/triggers.js'
 
 /** @typedef {'multiselect'|'triage'|'select'|'text'|'confirm'|'number'} QuestionType */
 
@@ -284,6 +285,38 @@ export const QUESTIONS = [
       'Each recurred in two or more of the projects caselaw came from, and each arrives with those incidents as its precedent. Its first catch here becomes your own Origin; one that catches nothing in 60 days of commits, the audit asks about.',
     options: () => DEFAULTS.map((d) => ({ value: d.id, label: `${d.id}  ${d.label} (caught in ${d.caught})` })),
     defaultAll: true,
+    generates: ['docs/authority-split.md#how-the-harness-changes'],
+  },
+  {
+    id: 'harness.triggers',
+    session: 3,
+    since: '1.2',
+    type: 'multiselect',
+    impact: 3,
+    preference: true,
+    prompt: 'This repository has what these rules are for. Which should be in force?',
+    help:
+      'Each trigger fired on a fact about this repository, named after it. Like a default, each rule carries the study\'s incidents as precedent until its first catch here.',
+    // Asked after session 2, so the outside authorities and public claims named there count.
+    when: (answers, detected) => firedTriggers({ detected, answers }).length > 0,
+    options: (ctx) => firedTriggers({ detected: ctx.detected, answers: ctx.answers }).map((t) => ({
+      value: t.id,
+      label: `${t.id}  ${t.rule}${t.gate ? ', with a gate that warns on git add -A and git commit -a' : ''}: ${t.factNow}`,
+    })),
+    defaultAll: true,
+    generates: ['docs/authority-split.md#how-the-harness-changes'],
+  },
+  {
+    id: 'harness.auto_triggers',
+    session: 3,
+    since: '1.2',
+    type: 'multiselect',
+    impact: 2,
+    preference: true,
+    prompt: 'When one of these fires later, which may put its rule in force without asking you?',
+    help: 'Each only adds enforcement. The ones you do not pick are proposed in docs/rules/proposed/ for you to ratify.',
+    when: (answers) => answers['harness.autonomy'] === 'custom',
+    options: () => TRIGGERS.map((t) => ({ value: t.id, label: `${t.id}  ${t.label}: ${t.rule}` })),
     generates: ['docs/authority-split.md#how-the-harness-changes'],
   },
 ]

@@ -53,8 +53,9 @@ describe('shipped case-law templates', () => {
   test('every candidate rule parses under the real parser', async () => {
     const dir = join(TEMPLATES, 'rules/candidates')
     const files = (await readdir(dir)).filter((f) => f.endsWith('.md'))
-    // Five until 0.3, when trace-the-premise and one-writer-per-repo became defaults D1 and D4.
-    assert.equal(files.length, 3, 'the three universal candidates should ship')
+    // Five until 0.3, when trace-the-premise and one-writer-per-repo became defaults D1 and D4,
+    // and config-identity-gate became trigger T7's rule.
+    assert.equal(files.length, 2, 'the two universal candidates should ship')
 
     for (const f of files) {
       const parsed = parseRule(await readFile(join(dir, f), 'utf8'), { path: f })

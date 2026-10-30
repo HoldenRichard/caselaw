@@ -18,6 +18,7 @@ import { selectAdapters, commandCollisions } from '../adapters/index.js'
 import { isoDate } from '../core/dates.js'
 import { render } from '../render/engine.js'
 import { defaultArtifacts, defaultsSince } from '../core/defaults.js'
+import { triggerArtifacts, acceptedTriggers, writerGuardOn, writerGuard } from '../core/triggers.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 export const TEMPLATE_ROOT = join(HERE, '../../templates')
@@ -51,7 +52,7 @@ export function pointerTargets(detected) {
  * that need the finished file. Both invoke the VENDORED runner, so the hooks
  * keep working with this CLI uninstalled.
  */
-export function claudeHookSettings() {
+export function claudeHookSettings({ commands = false } = {}) {
   // $CLAUDE_PROJECT_DIR is the directory the session STARTED in and stays there
   // across a cd or a worktree (hooks reference) — right for locating the
   // runner, wrong for naming the root, so no --root is passed: the runner
@@ -68,7 +69,10 @@ export function claudeHookSettings() {
     matcher: 'Edit|Write|NotebookEdit',
     hooks: [{ type: 'command', command: cmd(mode), timeout: 30 }],
   })
-  return { hooks: { PreToolUse: [entry('pre')], PostToolUse: [entry('post')] } }
+  // A command gate (0.3's writer guard) needs the shell tool too, pre only:
+  // only there does the call carry the command it is about to run.
+  const bash = { matcher: 'Bash', hooks: [{ type: 'command', command: cmd('pre'), timeout: 30 }] }
+  return { hooks: { PreToolUse: commands ? [entry('pre'), bash] : [entry('pre')], PostToolUse: [entry('post')] } }
 }
 
 /**
@@ -105,6 +109,9 @@ export const EMPTY_GATES = {
   gates: [],
 }
 
+const GUARDED_COMMENT =
+  'Gates are created by `caselaw rule promote <name>`, from a rule that earned one, except stage-explicit-paths, which trigger T3 installed when it was accepted. See docs/rules/README.md.'
+
 /**
  * @param {{doc: object, detected: object}} input
  * @returns {Promise<Array<{path:string, kind:'file'|'block', body:string, blockId?:string, version?:number}>>}
@@ -113,9 +120,12 @@ export async function buildArtifacts({ doc, detected, adapterIds = null, modules
   const out = []
   const dir = doctrineDirOf(doc)
   const harnessSince = defaultsSince(doc)
+  const triggered = await triggerArtifacts({ doc, detected, dir })
+  const guard = writerGuardOn(doc)
 
   const authority = await generateAuthoritySplit({
     harnessSince,
+    triggeredInForce: acceptedTriggers(doc).map((t) => `${t.id} \`${t.rule}\``).join(', '),
     answers: doc.answers,
     provenance: doc.provenance,
     detected,
@@ -150,7 +160,7 @@ export async function buildArtifacts({ doc, detected, adapterIds = null, modules
     })
   }
 
-  out.push(...defaults)
+  out.push(...defaults, ...triggered)
 
   // Each detected agent tool gets a pointer in its own idiom. The doctrine
   // itself is never duplicated into them — only the instruction to read it.
@@ -170,14 +180,16 @@ export async function buildArtifacts({ doc, detected, adapterIds = null, modules
   })
   out.push({
     path: '.caselaw/gates.json', kind: 'file',
-    body: JSON.stringify(EMPTY_GATES, null, 2) + '\n',
+    // T3's writer guard is the one gate that arrives without a promotion: the
+    // human accepted its trigger, and it is born warning like any other.
+    body: JSON.stringify(guard ? { ...EMPTY_GATES, $comment: GUARDED_COMMENT, gates: [writerGuard()] } : EMPTY_GATES, null, 2) + '\n',
   })
 
   if (usesClaude) {
     // Merged into whatever settings.json the project already keeps, never
     // written whole: our managed content is the two hook entries and nothing
     // else in the file (src/core/jsonmerge.js).
-    const hooks = claudeHookSettings().hooks
+    const hooks = claudeHookSettings({ commands: guard }).hooks
     out.push({
       path: '.claude/settings.json', kind: 'json-merge', blockId: 'hooks', merge: hooks,
       body: JSON.stringify({ hooks }, null, 2) + '\n',

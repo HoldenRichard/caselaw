@@ -88,9 +88,9 @@ export const CHECKS = [
     run({ rules }) {
       const out = []
       for (const r of rules.active) {
-        // A default stands on its Precedent until its first catch here
+        // A default, or a triggered rule, stands on its Precedent until its first catch here
         // (borrowed-rules-earn watches it); everything else needs an Origin.
-        if ((!r.origin || !String(r.origin).trim()) && r.precedent && r.default) continue
+        if ((!r.origin || !String(r.origin).trim()) && r.precedent && (r.default || r.triggered)) continue
         if (!r.origin || !String(r.origin).trim()) {
           out.push(finding('origin-resolves', SEVERITY.ERROR, `rule "${r.name}" has no Origin`, {
             path: r.file,

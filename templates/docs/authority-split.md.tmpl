@@ -116,6 +116,11 @@ Defaults in force since {{ harness.since }}, each in `docs/rules/active/`: {{ ha
 stands on another project's evidence until its first catch here; record one with
 `caselaw rule catch <name> --what "<what it caught>"`.
 {{/ if }}
+{{# if harness.triggered }}
+
+Rules this repository's own facts triggered, each in `docs/rules/active/` with the fact that fired
+it: {{ harness.triggered }}.
+{{/ if }}
 
 {{/ if }}
 ## Consequence

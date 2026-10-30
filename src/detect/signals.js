@@ -69,7 +69,20 @@ const DEPS = {
     cargo: ['rs-matter', 'hap'],
     go: ['github.com/brutella/hap', 'github.com/brutella/hc'],
   },
+  // Paid or metered APIs (0.3, trigger T4): every call spends.
+  metered: {
+    npm: ['openai', '@anthropic-ai/sdk', 'groq-sdk', 'replicate', '@google/generative-ai', '@google/genai', 'cohere-ai',
+      '@mistralai/mistralai', 'elevenlabs', '@elevenlabs/', 'apify-client', '@aws-sdk/client-bedrock-runtime', 'together-ai',
+      '@fal-ai/', 'assemblyai', '@deepgram/sdk'],
+    python: ['openai', 'anthropic', 'groq', 'replicate', 'google-generativeai', 'google-genai', 'cohere', 'mistralai',
+      'elevenlabs', 'apify-client', 'together', 'fireworks-ai', 'assemblyai', 'deepgram-sdk'],
+    cargo: ['async-openai', 'anthropic-sdk'],
+    go: ['github.com/sashabaranov/go-openai', 'github.com/openai/openai-go', 'github.com/anthropics/anthropic-sdk-go'],
+  },
 }
+
+/** Environment names, in an env example file, that belong to a paid or metered API. */
+const METERED_ENV = /^(OPENAI|ANTHROPIC|GROQ|REPLICATE|ELEVENLABS|APIFY|COHERE|MISTRAL|GEMINI|GOOGLE_GENAI|HIGGSFIELD|STABILITY|DEEPGRAM|ASSEMBLYAI|TOGETHER|FIREWORKS|PERPLEXITY|XAI|FAL)_[A-Z0-9_]*(KEY|TOKEN|SECRET)\b/
 
 /** Words a project uses about itself that mean it pairs with a smart-home controller. */
 const PAIRING_WORDS = new Set(['homekit', 'homebridge-plugin', 'homebridge', 'matter', 'home-assistant', 'homeassistant'])
@@ -85,7 +98,7 @@ const HARDWARE_CLASSIFIERS = ['Topic :: System :: Hardware', 'Topic :: Home Auto
 const HARDWARE_CATEGORIES = new Set(['embedded', 'hardware-support'])
 
 export function emptySignals() {
-  return { hardware: [], pairing: [], datastore: [], messaging: [], registries: [], stores: [], claims: [], manifests: [] }
+  return { hardware: [], pairing: [], datastore: [], messaging: [], metered: [], registries: [], stores: [], claims: [], manifests: [], dated: [], identities: [] }
 }
 
 /**
@@ -162,7 +175,60 @@ export async function detectSignals(root, walked) {
     }
   }
   for (const c of claimSurfaces(walked.files)) addKind(signals.claims, c.kind, c.source)
+
+  // Env example files name the keys a project spends with (trigger T4).
+  for (const f of walked.files.filter((f) => /(^|\/)\.env\.(example|sample|template|dist)$|(^|\/)\.env-example$/.test(f))) {
+    const text = await read(f)
+    if (text === null) continue
+    for (const m of text.matchAll(/^\s*(?:export\s+)?([A-Z][A-Z0-9_]*)\s*=/gm)) if (METERED_ENV.test(m[1])) add('metered', m[1], f)
+  }
+  for (const d of datedRecords(walked.files)) add('dated', d.signal, d.source)
+  for (const i of await configIdentities(walked.files, read)) add('identities', i.signal, i.source)
   return { signals, warnings: [] }
+}
+
+/**
+ * Records that carry dates (trigger T5): a changelog, or a directory of files
+ * named by date. A date in a record is written once and read as true for good;
+ * the study's agents typed estimated times as if read from a clock (DEF-659).
+ */
+export function datedRecords(files) {
+  const out = []
+  for (const f of files) {
+    if (/^(CHANGELOG|CHANGES|HISTORY|NEWS|RELEASE[-_]?NOTES)(\.[\w.]+)?$/i.test(f)) out.push({ signal: f, source: f })
+  }
+  const byDir = new Map()
+  for (const f of files) {
+    const base = f.slice(f.lastIndexOf('/') + 1)
+    if (!/^\d{4}-\d{2}-\d{2}/.test(base)) continue
+    const dir = f.includes('/') ? f.slice(0, f.lastIndexOf('/')) : '.'
+    byDir.set(dir, (byDir.get(dir) || 0) + 1)
+  }
+  for (const [dir, n] of [...byDir].sort()) if (n >= 3) out.push({ signal: `${n} files named by date`, source: `${dir}/` })
+  return out
+}
+
+/**
+ * More than one identity for the same configuration (trigger T7): two
+ * Firebase configs, two Firebase projects, two deploy environments. The study's
+ * key rotation swapped in a fresh download that still carried the old key's
+ * identity (DEF-018).
+ */
+export async function configIdentities(files, read) {
+  const out = []
+  const named = (re) => files.filter((f) => re.test(f.slice(f.lastIndexOf('/') + 1)))
+  for (const group of [named(/^GoogleService-Info.*\.plist$/), named(/^google-services.*\.json$/)]) {
+    if (group.length >= 2) for (const f of group) out.push({ signal: f.slice(f.lastIndexOf('/') + 1), source: f })
+  }
+  const envs = named(/^\.env\.(?!example$|sample$|template$|dist$|local$)[\w-]+$/)
+  if (envs.length >= 2) for (const f of envs) out.push({ signal: f.slice(f.lastIndexOf('/') + 1), source: f })
+  if (files.includes('.firebaserc')) {
+    try {
+      const projects = Object.keys(JSON.parse((await read('.firebaserc')) || '{}').projects || {})
+      if (projects.length >= 2) out.push({ signal: `${projects.length} Firebase projects (${projects.join(', ')})`, source: '.firebaserc' })
+    } catch { /* not JSON */ }
+  }
+  return out
 }
 
 /**

@@ -154,7 +154,7 @@ function buildSources(provenance = {}, answers = {}) {
     }))
 }
 
-export function buildModel({ answers = {}, provenance = {}, detected = {}, projectName, now = new Date(), harnessSince = null }) {
+export function buildModel({ answers = {}, provenance = {}, detected = {}, projectName, now = new Date(), harnessSince = null, triggeredInForce = '' }) {
   const selected = answers['authority.cannot'] || []
   const triage = answers['authority.triage'] || {}
   const label = (b) => BOUNDARY_LABELS[b] || plain(b, 200)
@@ -202,7 +202,7 @@ export function buildModel({ answers = {}, provenance = {}, detected = {}, proje
       publisher: plain(m.at, 160),
     })),
     sources: buildSources(provenance, answers),
-    harness: harnessModel(answers, harnessSince),
+    harness: harnessModel(answers, harnessSince, triggeredInForce),
   }
 }
 
@@ -213,15 +213,16 @@ const AUTONOMY_LINES = {
   custom: 'Custom: the choices are in `.caselaw/answers.json` (harness.*); anything not chosen there is proposed in `docs/rules/proposed/` for a human to ratify.',
 }
 
-function harnessModel(answers = {}, since = null) {
+function harnessModel(answers = {}, since = null, triggered = '') {
   const preset = answers['harness.autonomy']
   const accepted = DEFAULTS.filter((d) => (answers['harness.defaults'] || []).includes(d.id))
-  if (!AUTONOMY_LINES[preset] && !accepted.length) return null
+  if (!AUTONOMY_LINES[preset] && !accepted.length && !triggered) return null
   return {
     // Unanswered is the safest reading, and says so.
     autonomy: AUTONOMY_LINES[preset] || AUTONOMY_LINES['ask-first'],
     defaults: accepted.map((d) => `${d.id} \`${d.name}\``).join(', '),
     since: since || 'install',
+    triggered,
   }
 }
 

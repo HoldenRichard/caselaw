@@ -28,7 +28,7 @@ Everything else accumulates from things that actually went wrong in *your* repo,
 each rule citing the commit that proved it. A rule without an incident behind it
 is a superstition with a filename, and nobody enforces a rule they cannot trace.
 
-Three universal rules ship as **candidates** — readable, adoptable, and not in
+Two universal rules ship as **candidates** — readable, adoptable, and not in
 force. Adopting one requires writing your own Origin:
 
 ```
@@ -77,7 +77,7 @@ which already existed gets disabled on day one.
 docs/
   authority-split.md      what you and your agent can each verify, and what a human still has to do
   close-out.md            the session template that asks for rules
-  rules/                  README, template, the defaults you chose, 3 candidates
+  rules/                  README, template, the defaults and triggered rules you chose, 2 candidates
 .caselaw/
   answers.json            your answers — edit this, not the docs
   gates.json              empty until a rule earns one

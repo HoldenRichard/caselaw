@@ -38,6 +38,7 @@ import { buildPlan, formatPlan, SKIP, UNCHANGED } from '../src/core/plan.js'
 import { hash } from '../src/core/text.js'
 import { scanMachinePaths } from '../src/core/secrets.js'
 import { buildArtifacts } from '../src/generate/artifacts.js'
+import { markOffered, applyTriggers } from '../src/core/triggers.js'
 import { check, planUpgrade, planEject, applyEject, doctor, newQuestionsSince } from '../src/commands/lifecycle.js'
 import { buildReviewPrompt } from '../src/commands/review.js'
 import { selectAdapters } from '../src/adapters/index.js'
@@ -223,6 +224,16 @@ async function cmdUpgrade(args, root) {
     } else {
       say(`\n  ${fresh.length} question(s) added since template ${doc.templateVersion}; run \`caselaw init\` at a terminal to answer them. Until then they are marked as holes.`)
     }
+  }
+
+  // Triggers that fire now and were never offered: applied where the preset
+  // allows, otherwise proposed once into proposed/ (0.3).
+  const fired = await applyTriggers({ root, doc, detected, dryRun: args.dryRun })
+  for (const a of fired.applied) say(`\n  Trigger ${a.id} fired (${a.fact}): ${a.rule} is in force, because the autonomy preset lets a rule that only adds enforcement apply on its own.`)
+  for (const pr of fired.proposed) say(`\n  Trigger ${pr.id} fired (${pr.fact}): ${args.dryRun ? 'would propose' : 'proposed'} ${pr.path}. Ratify it with \`caselaw rule ratify ${pr.rule}\`, or reject it.`)
+  if (!args.dryRun && (fired.applied.length || fired.proposed.length || fired.guard)) {
+    await answersStore.save(root, doc)
+    ;({ doc, manifest, plan } = await planUpgrade({ root, detected, force: args.force }))
   }
 
   say('')
@@ -537,6 +548,8 @@ async function initFromDraft({ root, doc, detected, args }) {
 }
 
 async function finishInit({ root, doc, detected, args, prompt }) {
+  // The human just saw the triggers that fire; the next upgrade proposes only new ones.
+  markOffered(doc, detected)
   const artifacts = await buildArtifacts({ doc, detected })
 
   // Our own no-machine-paths rule, applied to our own output before it lands.

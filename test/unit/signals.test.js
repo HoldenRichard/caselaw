@@ -237,7 +237,7 @@ describe('boundary options follow the signals', () => {
 describe('detect() carries the signals', () => {
   test('the full report has a signals group, empty but present for an empty tree', async () => {
     const report = await detect(root, OFFLINE)
-    assert.deepEqual(report.signals, { hardware: [], pairing: [], datastore: [], messaging: [], registries: [], stores: [], claims: [], manifests: [] })
+    assert.deepEqual(report.signals, { hardware: [], pairing: [], datastore: [], messaging: [], metered: [], registries: [], stores: [], claims: [], manifests: [], dated: [], identities: [] })
   })
 
   test('end to end: pyvisa is offered hardware and a registry console, and no production database', async () => {
