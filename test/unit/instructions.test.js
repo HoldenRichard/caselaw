@@ -39,7 +39,7 @@ describe('the repository\'s own instructions', () => {
       ['CLAUDE.md', 3, 'beta-{major}.{minor}.{patch}'], ['.github/copilot-instructions.md', 1, 'beta-1.11.1'],
     ])
     const { content } = await generateAuthoritySplit({ answers: {}, detected: { instructions, publishing: HOMEBRIDGE_PUBLISHING }, projectName: 'P', now: NOW })
-    assert.match(content, /This repository already tells agents how to work here, in `CLAUDE\.md`, `\.github\/copilot-instructions\.md`\. Read those first/)
+    assert.match(content, /This repository already has agent instructions in `CLAUDE\.md`, `\.github\/copilot-instructions\.md`\. Read those first/)
     assert.match(content, /- `CLAUDE\.md:3` names `beta-\{major\}\.\{minor\}\.\{patch\}`: a push to that branch publishes to npm \(`\.github\/workflows\/release\.yml:121`\)\./)
   })
 
@@ -71,9 +71,10 @@ describe('the conditions CI runs its gates under', () => {
     assert.deepEqual(pyvisa.matrix, [{ key: 'os', count: 3 }, { key: 'python-version', count: 5 }])
     const gates = [{ file: '.github/workflows/test.yaml', cmd: 'make checkv', line: 47 }]
     const { content } = await generateAuthoritySplit({ answers: {}, detected: { ciGates: { gates, shared: [], contexts: [{ file: '.github/workflows/test.yaml', ...ntfy }, ] } }, projectName: 'P', now: NOW })
-    assert.match(content, /CI runs them with a postgres service and the secret `NTFY_TEST_S3_URL`; a test that needs one may skip itself here, so a pass here is not CI's pass\./)
-    const py = await generateAuthoritySplit({ answers: {}, detected: { ciGates: { gates: [{ file: 'ci.yml', cmd: 'pytest', line: 1 }], shared: [], contexts: [{ file: 'ci.yml', ...pyvisa }] } }, projectName: 'P', now: NOW })
-    assert.match(py.content, /CI runs them across 3 os × 5 python-version; a run here covers one combination\./)
+    assert.match(content, /CI runs with a postgres service and the secret `NTFY_TEST_S3_URL`; a test that needs one may skip itself here, so a pass here is not CI's pass\./)
+    // The matrix belongs to the job that has it, and is said of that job only (round 3).
+    const py = await generateAuthoritySplit({ answers: {}, detected: { ciGates: { gates: [{ file: 'ci.yml', cmd: 'ruff check pyvisa', line: 1, job: 'formatting' }, { file: 'ci.yml', cmd: 'pytest', line: 9, job: 'tests' }], shared: [], contexts: [{ file: 'ci.yml', job: 'tests', ...pyvisa }] } }, projectName: 'P', now: NOW })
+    assert.match(py.content, /In its `tests` job, CI runs across 3 os × 5 python-version; a run here covers one combination\./)
   })
 })
 
@@ -84,5 +85,15 @@ describe('the project\'s pull-request checklist', () => {
     assert.deepEqual(instructions.prChecklist.items, ['Closes #', 'Executed `ruff check . && ruff format -c . --check` with no errors', 'Added an entry to the CHANGES file'])
     const { content } = await generateCloseOut({ answers: {}, detected: { instructions }, projectName: 'P' })
     assert.match(content, /This project's own pull-request checklist \(`\.github\/PULL_REQUEST_TEMPLATE\.md`\):\n\n- \[ \] Closes #\n- \[ \] Executed `ruff check \. && ruff format -c \. --check` with no errors\n- \[ \] Added an entry to the CHANGES file/)
+  })
+})
+
+describe("an AI policy is the contributors' rule", () => {
+  test('it is named as one, and the close-out applies it', async () => {
+    const instructions = { files: [{ path: 'docs/ai-policy.md', kind: 'AI policy' }], prChecklist: null, mentions: [] }
+    const { content } = await generateAuthoritySplit({ answers: {}, detected: { instructions }, projectName: 'P', now: NOW })
+    assert.match(content, /This repository already has an AI policy for contributors in `docs\/ai-policy\.md`, which applies to an agent's work too\./)
+    const close = await generateCloseOut({ answers: {}, detected: { instructions }, projectName: 'P' })
+    assert.match(close.content, /This project's AI policy applies to this work \(`docs\/ai-policy\.md`\): check the change against it before\nit is proposed\./)
   })
 })

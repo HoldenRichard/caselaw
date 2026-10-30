@@ -174,6 +174,7 @@ export function buildModel({ answers = {}, provenance = {}, detected = {}, proje
     // Round 2 of the DEF-274 re-score: the repository's own instructions come
     // first, and where they name a branch that publishes, this file says so.
     instructions: instructionsLine(detected.instructions),
+    sharedCi: sharedCiLine(detected.ciGates),
     mentions: (detected.instructions?.mentions || []).map((m) => ({
       at: `${plain(m.path, 120)}:${m.line}`,
       said: plain(m.said, 80),
@@ -217,7 +218,7 @@ export function publishingRows(publishing = []) {
         what: plain(s.what, 200),
         at: `${plain(p.file, 160)}:${s.line}`,
         when: when?.length ? plain(when.join(', or '), 400) : 'events this could not read (check the workflow\'s `on:` block)',
-        conditions: plain((s.conditions || []).join('; and '), 400),
+        conditions: plain((s.conditions || []).join('; and '), 1400),
         idle: plain(idle.join(', '), 300),
       })
     }
@@ -241,12 +242,8 @@ function buildCanList({ answers, detected, selected = [] }) {
   for (const g of gates) byFile.set(g.file, [...(byFile.get(g.file) || []), g])
   for (const [file, list] of byFile) {
     const steps = list.map((g) => `\`${plain(g.cmd, 160)}\`${g.step ? ` (${plain(g.step, 80)})` : ''}`).join('; ')
-    const context = (detected.ciGates?.contexts || []).find((c) => c.file === file)
-    can.push(`Run what CI runs on a change, in its order (\`${file}\`): ${steps}.${context ? ` ${ciContext(context)}` : ''}`)
-  }
-  const shared = detected.ciGates?.shared || []
-  if (shared.length) {
-    can.push(`CI also runs workflows kept in another repository, whose steps are not visible here: ${shared.map((s) => `\`${plain(s.uses, 160)}\``).join(', ')}.`)
+    const contexts = (detected.ciGates?.contexts || []).filter((c) => c.file === file).map(ciContext).filter(Boolean)
+    can.push(`Run what CI runs on a change, in its order (\`${file}\`): ${steps}.${contexts.length ? ` ${contexts.join(' ')}` : ''}`)
   }
 
   // The commands inferred from the language are a fallback for a project with
@@ -274,23 +271,34 @@ function buildCanList({ answers, detected, selected = [] }) {
 }
 
 /** What CI has that a run here may not: its services, secrets and matrix, said plainly. */
-function ciContext({ services = [], secrets = [], matrix = [] }) {
+function ciContext({ job = null, services = [], secrets = [], matrix = [] }) {
+  const where = job ? `In its \`${plain(job, 60)}\` job, CI` : 'CI'
   const has = [
     ...services.map((s) => `a ${plain(s, 40)} service`),
     ...(secrets.length ? [`the secret${secrets.length > 1 ? 's' : ''} ${secrets.map((s) => `\`${plain(s, 60)}\``).join(', ')}`] : []),
   ]
   const out = []
-  if (has.length) out.push(`CI runs them with ${has.join(' and ')}; a test that needs one may skip itself here, so a pass here is not CI's pass.`)
-  if (matrix.length) out.push(`CI runs them across ${matrix.map((m) => `${m.count} ${plain(m.key, 40)}`).join(' × ')}; a run here covers one combination.`)
+  if (has.length) out.push(`${where} runs with ${has.join(' and ')}; a test that needs one may skip itself here, so a pass here is not CI's pass.`)
+  if (matrix.length) out.push(`${where} runs across ${matrix.map((m) => `${m.count} ${plain(m.key, 40)}`).join(' × ')}; a run here covers one combination.`)
   return out.join(' ')
 }
 
 /** Files in which the repository already instructs agents, named before anything this file adds. */
 function instructionsLine(instructions = {}) {
   const files = instructions.files || []
-  if (!files.length) return ''
-  const named = files.map((f) => `\`${plain(f.path, 120)}\`${f.kind === 'AI policy' ? ' (its AI policy)' : ''}`)
-  return named.join(', ')
+  const list = (kind) => files.filter((f) => f.kind === kind).map((f) => `\`${plain(f.path, 120)}\``).join(', ')
+  // An AI policy is the contributors' rule, not instructions written for an
+  // agent (round 3 of the DEF-274 re-score); it is named as what it is.
+  const parts = []
+  if (list('agent instructions')) parts.push(`agent instructions in ${list('agent instructions')}`)
+  if (list('AI policy')) parts.push(`an AI policy for contributors in ${list('AI policy')}, which applies to an agent's work too`)
+  return parts.join('; and ')
+}
+
+/** The shared-workflow note: what CI runs that cannot be seen from here. Not a capability. */
+function sharedCiLine(ciGates = {}) {
+  const shared = ciGates.shared || []
+  return shared.length ? `CI also runs workflows kept in another repository, whose steps are not visible here: ${shared.map((s) => `\`${plain(s.uses, 160)}\``).join(', ')}.` : ''
 }
 
 export async function generate(input) {

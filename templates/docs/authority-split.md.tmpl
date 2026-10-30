@@ -6,8 +6,8 @@ This file says who can verify what. It is the difference between "the agent said
 "someone checked". Regenerate it with `caselaw upgrade`; edit `.caselaw/answers.json`, not this file.
 {{# if instructions }}
 
-This repository already tells agents how to work here, in {{ instructions }}. Read those first;
-this file adds who can verify what, and what a push publishes.
+This repository already has {{ instructions }}. Read those first; this file adds who can verify
+what, and what a push publishes.
 {{/ if }}
 
 ## The agent can
@@ -15,6 +15,10 @@ this file adds who can verify what, and what a push publishes.
 {{# each can }}- {{ . }}
 {{/ each }}
 {{^ if can }}_Nothing recorded yet. Re-run the interview and answer the second question._
+{{/ if }}
+{{# if sharedCi }}
+{{ sharedCi }}
+
 {{/ if }}
 
 {{# if physical }}
@@ -110,8 +114,9 @@ what the code does, and name exactly what a human should look at.
 
 ## Where these answers came from
 
-An agent drafted some of the answers above from this repository, and a human confirmed them. Each
-rests on the files named here: when one of them changes, re-derive the answer rather than carry it.
+An agent drafted some of the answers above from this repository; the last column records how each
+was confirmed. Each rests on the files named here: when one of them changes, re-derive the answer
+rather than carry it.
 
 | Answer | Answered by | Rests on | Confirmed |
 |---|---|---|---|

@@ -56,6 +56,7 @@ export function buildModel({ answers = {}, detected = {}, projectName }) {
     // found missing (pyvisa's requires a CHANGES entry).
     prChecklist: (detected.instructions?.prChecklist?.items || []).map((i) => plain(i, 200)),
     prTemplate: plain(detected.instructions?.prChecklist?.path || '', 120),
+    aiPolicy: (detected.instructions?.files || []).filter((f) => f.kind === 'AI policy').map((f) => `\`${plain(f.path, 120)}\``).join(', '),
     tier1Example: anyCommand,
   }
 }

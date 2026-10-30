@@ -4,8 +4,8 @@
  * docs/ is committed typedoc OUTPUT (`typedoc.json: "out": "docs"`; a docs
  * build rm -rf's it, verified by running one), and ntfy's docs/ is the MkDocs
  * SOURCE tree that ships inside the binary. Writing governance into either is
- * destructive later, quietly. The install refuses without --force and says why.
- * A configurable doctrine directory is the real fix and is not built yet.
+ * destructive later, quietly. The install then writes to governance/ instead
+ * and says why (src/core/doctrine.js).
  */
 
 import { readFile, stat } from 'node:fs/promises'
@@ -40,9 +40,14 @@ export async function docsOwner(root) {
       return { tool: 'mkdocs', file: f, role: 'source', dir: 'docs', consequence: 'every markdown file caselaw writes there is published as part of the project documentation' }
     }
   }
-  // sphinx: a conf.py directly under docs/ makes docs/ the source tree.
-  if (await exists(join(root, 'docs/conf.py'))) {
-    return { tool: 'sphinx', file: 'docs/conf.py', role: 'source', dir: 'docs', consequence: 'every markdown file caselaw writes there is a candidate page of the project documentation' }
+  // sphinx: a conf.py under docs/ makes docs/ the source tree, directly or in
+  // docs/source/ (sphinx-quickstart's separate-source layout). pyvisa keeps its
+  // conf.py in docs/source/, and the DEF-274 re-score's doctrine landed in a
+  // directory whose every change starts a docs build.
+  for (const f of ['docs/conf.py', 'docs/source/conf.py']) {
+    if (await exists(join(root, f))) {
+      return { tool: 'sphinx', file: f, role: 'source', dir: 'docs', consequence: 'every file caselaw writes there sits in the documentation source, and every change to it starts a docs build' }
+    }
   }
   // docusaurus: docs/ is the default docs plugin source.
   for (const f of ['docusaurus.config.js', 'docusaurus.config.ts', 'docusaurus.config.mjs']) {

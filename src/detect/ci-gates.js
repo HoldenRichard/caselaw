@@ -16,7 +16,7 @@
 
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { workflowEvents, publishSteps } from './publishing.js'
+import { workflowEvents, publishSteps, jobsOf } from './publishing.js'
 
 const MAX_GATES = 12
 
@@ -43,11 +43,20 @@ export async function detectCiGates(root, walked) {
     let text
     try { text = await readFile(join(root, file), 'utf8') } catch { continue }
     if (!runsOnChange(text) || publishSteps(text).length) continue
-    const gates = runSteps(text)
+    // Each gate carries its job, and each job its own context: pyvisa's matrix
+    // belongs to the pytest job only, and round 3 of the DEF-274 re-score found
+    // it attached to the format, lint and type checks as well.
+    const jobs = jobsOf(text)
+    const lines = text.split(/\r?\n/)
+    const jobOf = (line) => jobs.find((j) => line - 1 > j.start && line - 1 < j.end)
+    const gates = runSteps(text).map((g) => ({ ...g, job: jobOf(g.line)?.name ?? null }))
     for (const g of gates) if (ciGates.gates.length < MAX_GATES) ciGates.gates.push({ file, ...g })
     for (const s of sharedWorkflows(text)) ciGates.shared.push({ file, ...s })
-    const context = runContext(text)
-    if (gates.length && (context.services.length || context.secrets.length || context.matrix.length)) ciGates.contexts.push({ file, ...context })
+    for (const job of jobs) {
+      if (!gates.some((g) => g.job === job.name)) continue
+      const context = runContext(lines.slice(job.start, job.end).join('\n'))
+      if (context.services.length || context.secrets.length || context.matrix.length) ciGates.contexts.push({ file, job: job.name, ...context })
+    }
   }
   return { ciGates, warnings: [] }
 }

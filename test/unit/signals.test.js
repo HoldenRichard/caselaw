@@ -9,6 +9,7 @@ import { detectStack, generatedDocRoots } from '../../src/detect/stack.js'
 import { detectSignals, manifestsIn, goRequires } from '../../src/detect/signals.js'
 import { tomlTable, tomlString, tomlStrings } from '../../src/detect/toml.js'
 import { boundaryCandidates } from '../../src/interview/questions.js'
+import { docsOwner } from '../../src/detect/docs-owner.js'
 import { BOUNDARY_LABELS } from '../../src/generate/authority-split.js'
 
 /**
@@ -208,6 +209,18 @@ describe('boundary options follow the signals', () => {
   test('a published package is asked about its registry console', () => {
     const values = boundaryCandidates({ ...lib, signals: { registries: [{ kind: 'pypi' }] } }).map((o) => o.value)
     assert.ok(values.includes('release-console'))
+  })
+
+  test('POSITIVE CONTROL: where CI publishes on a push, no release console is offered; the push is the door', () => {
+    const values = boundaryCandidates({ ...lib, signals: { registries: [{ kind: 'pypi' }] }, publishing: [{ file: 'release.yml', publishes: [] }] }).map((o) => o.value)
+    assert.ok(!values.includes('release-console'))
+  })
+
+  test('POSITIVE CONTROL: a Sphinx source tree in docs/source/ makes docs/ someone else\'s', async () => {
+    await put('docs/source/conf.py', 'project = "x"\n')
+    const owner = await docsOwner(root)
+    assert.equal(owner?.tool, 'sphinx')
+    assert.equal(owner.file, 'docs/source/conf.py')
   })
 
   test('every boundary any signal can offer has a label to render', () => {

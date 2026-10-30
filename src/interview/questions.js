@@ -127,7 +127,10 @@ export function boundaryCandidates(detected = {}) {
     { value: 'real-user-data', label: 'reproduce anything with real customer data',
       when: keepsData },
     { value: 'release-console', label: 'reach the release / app-store / registry console',
-      when: () => langs.has('swift') || langs.has('kotlin') || has('vercel') || has('fly') || signal('registries') },
+      // Where CI publishes on a push, the push is the door, and "What a push can publish" says so;
+      // offering a console there was wrong on two repositories of the DEF-274 re-score.
+      when: () => langs.has('swift') || langs.has('kotlin') || has('vercel') || has('fly') ||
+        (signal('registries') && !(detected.publishing || []).length) },
     { value: 'delivery', label: 'confirm an email / SMS / push actually arrived',
       when: () => deploy.size > 0 || signal('messaging') },
     { value: 'human-login', label: 'log into anything as a human',

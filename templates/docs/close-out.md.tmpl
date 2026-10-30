@@ -18,7 +18,8 @@ Keep it short. A close-out nobody writes is worth less than a rough one they do.
      "Tests pass" is not a verification line; "{{ tier1Example }} — agent — 41 passed, 0 failed" is. -->
 {{# if gates }}
 
-The gates CI runs on a change, in its order. Run them before calling the work done:
+The gates CI runs on a change, in its order. Run the ones your change touches before calling the work
+done; CI will run the rest:
 
 {{# each gates }}- [ ] {{ . }}
 {{/ each }}
@@ -39,6 +40,11 @@ This project's own pull-request checklist (`{{ prTemplate }}`):
      nobody has checked yet, so say so plainly rather than implying it is done. -->
 {{# if humanProof }}
 How a human proves a change here: {{ humanProof }}
+
+{{/ if }}
+{{# if aiPolicy }}
+This project's AI policy applies to this work ({{ aiPolicy }}): check the change against it before
+it is proposed.
 
 {{/ if }}
 {{# if humanOnly }}

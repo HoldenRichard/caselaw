@@ -177,7 +177,7 @@ export function whenStepRuns(events, jobs, line) {
       // the publishing job's own `if:`; only its own repository, ref or event
       // conditions are added, or homebridge's chain lists five.
       const relevant = own || (/github\./.test(job.if) && !/needs\./.test(job.if))
-      if (r.unread && relevant) conditions.push(`\`${job.if.length > 140 ? `${job.if.slice(0, 137)}…` : job.if}\` (line ${job.ifLine})`)
+      if (r.unread && relevant) conditions.push(`\`${job.if.length > 600 ? `${job.if.slice(0, 597)}…` : job.if}\` (line ${job.ifLine})`)
     }
     for (const n of job.needs) visit(jobs.find((j) => j.name === n), false)
   }
