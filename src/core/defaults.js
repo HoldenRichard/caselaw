@@ -16,6 +16,7 @@ import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { render } from '../render/engine.js'
+import { archivePrecedent } from './precedent.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 export const DEFAULTS_ROOT = join(HERE, '../../templates/defaults')
@@ -57,7 +58,23 @@ export async function defaultArtifacts({ doc, dir, now }) {
   const out = []
   for (const d of acceptedDefaults(doc)) {
     const template = await readFile(join(DEFAULTS_ROOT, `${d.name}.md`), 'utf8')
-    out.push({ path: `${dir}/rules/active/${d.name}.md`, kind: 'file', body: render(template, { id: d.id, name: d.name, since, days }) })
+    out.push(...withArchivedPrecedent(doc, dir, d.name, render(template, { id: d.id, name: d.name, since, days })))
   }
   return out
+}
+
+/**
+ * A generated rule whose precedent the optimizer archived is rendered that
+ * way, with its archive beside it, so the build and the files agree and an
+ * upgrade can still update the rule.
+ */
+export function withArchivedPrecedent(doc, dir, name, body) {
+  const at = doc.harness?.precedentArchived?.[name]
+  const rulePath = `${dir}/rules/active/${name}.md`
+  const moved = at ? archivePrecedent(body, { name, at }) : null
+  if (!moved) return [{ path: rulePath, kind: 'file', body }]
+  return [
+    { path: rulePath, kind: 'file', body: moved.rule },
+    { path: `${dir}/rules/precedent/${name}.md`, kind: 'file', body: moved.archive },
+  ]
 }

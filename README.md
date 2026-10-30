@@ -101,6 +101,8 @@ file and no `.claude/` directory.
 | `caselaw rule adopt` · `caselaw rule promote` | take a candidate with your own Origin; climb the ladder |
 | `caselaw gate test` · `caselaw gate baseline` · `caselaw gate promote` | run one gate, run them all, warn → block on evidence |
 | `caselaw review` | a review prompt for a **different** model |
+| `caselaw optimize` | measure what a session loads; propose what to compact or trim, for a human to apply |
+| `caselaw rule catch` · `caselaw rule demote` | record what a rule caught; move one back to candidates |
 | `caselaw eject` | remove the tooling, keep everything you wrote |
 
 Every command a file in this repository names is checked against the dispatcher by a test. The

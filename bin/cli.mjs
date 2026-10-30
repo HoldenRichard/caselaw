@@ -43,6 +43,8 @@ import { check, planUpgrade, planEject, applyEject, doctor, newQuestionsSince } 
 import { buildReviewPrompt } from '../src/commands/review.js'
 import { selectAdapters } from '../src/adapters/index.js'
 import { gather } from '../src/audit/gather.js'
+import { optimizerSignals, optimizerProposals, applyProposal } from '../src/core/optimizer.js'
+import { listRules } from '../src/core/rules.js'
 import { runChecks } from '../src/audit/checks.js'
 import { formatReport, toJson, agentPrompt } from '../src/audit/report.js'
 import { cmdRule, RULE_SUBCOMMANDS } from '../src/commands/rule.js'
@@ -67,6 +69,7 @@ export const COMMANDS = {
   eject: { help: 'remove the tooling, keep everything you wrote' },
   audit: { help: 'is the governance in this repo still true?' },
   review: { help: 'print a review prompt for a DIFFERENT model to run' },
+  optimize: { help: 'measure what a session loads, and propose what to compact or trim' },
   detect: { help: 'print what Stage 0 sees, and ask nothing' },
   rule: { subs: RULE_SUBCOMMANDS, help: 'the case-law loop: draft, ratify, adopt, promote' },
   gate: { subs: GATE_SUBCOMMANDS, help: 'run a gate by hand; promote one that has earned it' },
@@ -74,7 +77,7 @@ export const COMMANDS = {
 
 export const BOOL_FLAGS = ['help', 'dry-run', 'yes', 'force', 'json', 'agent', 'strict', 'purge', 'reconfigure', 'draft', 'from-draft']
 export const VALUED_FLAGS = [
-  'with', 'doctrine-dir', 'origin', 'trigger', 'rule', 'enforcement', 'by', 'reason', 'what',
+  'with', 'doctrine-dir', 'origin', 'trigger', 'rule', 'enforcement', 'by', 'reason', 'what', 'apply',
   'kind', 'id', 'paths', 'patterns', 'message', 'command', 'args', 'when', 'require', 'extract', 'assert',
 ]
 export const KNOWN_FLAGS = [...BOOL_FLAGS, ...VALUED_FLAGS]
@@ -88,6 +91,7 @@ export const USAGE = `caselaw ${CLI_VERSION}
   caselaw eject [dir]           remove the tooling, keep everything you wrote
   caselaw audit [dir]           is the governance in this repo still true?
   caselaw review [dir]          print a review prompt for a DIFFERENT model to run
+  caselaw optimize [dir]        measure what a session loads, and propose what to compact or trim
   caselaw detect [dir]          print what Stage 0 sees, and ask nothing
 
   caselaw rule propose <name>   draft a rule into docs/rules/proposed/ (an agent may do this)
@@ -121,6 +125,7 @@ Options
   --by <name>            rule ratify: who is ratifying (default: git user.name)
   --reason <text>        rule reject / rule demote: why
   --what <text>          rule catch: what it caught, with a commit, a date or an issue
+  --apply <id>           optimize: apply one proposal it printed — a human, at a terminal
   --kind <kind>          rule promote: banned-content | required-content | cross-file |
                          path-scope | paired-edit | shell
   --paths <a,b>          rule promote: the globs the gate applies to
@@ -161,6 +166,7 @@ export async function main(list = argv.slice(2)) {
     case 'doctor': return cmdDoctor(args, root)
     case 'eject': return cmdEject(args, root)
     case 'review': return cmdReview(args, root)
+    case 'optimize': return cmdOptimize(args, root)
     case 'detect': return cmdDetect(args, root)
     case 'rule': return cmdRule(args, { root, say, interactive: isInteractive(), prompt: ttyPrompt })
     case 'gate': return cmdGate(args, { root, say })
@@ -350,6 +356,71 @@ async function cmdAudit(args, root) {
   // Errors fail CI. Warnings and notes never do — an audit that fails a build
   // for a note is an audit somebody removes from the build.
   return result.ok ? 0 : 1
+}
+
+/**
+ * The optimizer (0.3). A plain run measures and proposes, and changes nothing;
+ * at a terminal it also counts as a pass. --apply applies one proposal, from a
+ * human only, and doctor re-checks the wiring after.
+ */
+async function cmdOptimize(args, root) {
+  const doc = await answersStore.load(root)
+  if (!doc) {
+    say('\n  caselaw is not installed here. Run `caselaw init` first.')
+    return 1
+  }
+  const now = new Date()
+  const signals = await optimizerSignals({ root, doc, now })
+  const listed = await listRules(root)
+  const findings = runChecks(await gather(root, { now }), { only: ['borrowed-rules-earn', 'refs-resolve'] }).findings
+  const proposals = optimizerProposals({ signals, listed, findings })
+
+  say(`\n  A session loads ${signals.load.words} words of governance (budget ${signals.budget}):`)
+  for (const f of signals.load.files) say(`    ${String(f.words).padStart(5)}  ${f.path}`)
+  say(signals.due.length ? `\n  Due, because ${signals.due.join('; ')}.` : '\n  Nothing says it is time.')
+  if (!proposals.length) say('\n  No proposals.')
+  proposals.forEach((p, i) => say(`\n  ${i + 1}. ${p.id}\n     why: ${p.why}\n     how: ${p.how}`))
+
+  const human = isInteractive()
+  if (!args.opt.apply) {
+    if (human && !args.dryRun) {
+      doc.harness = { ...(doc.harness || {}), optimizedAt: now.toISOString() }
+      await answersStore.save(root, doc)
+    }
+    return 0
+  }
+  if (!human) {
+    say('\n  Applying a proposal changes the harness, and that is a human\'s call. Run it yourself at a terminal.')
+    return 1
+  }
+  const chosen = proposals.find((p) => p.id === args.opt.apply)
+  if (!chosen) {
+    say(`\n  "${args.opt.apply}" is not one of the proposals above.`)
+    return 1
+  }
+  if (!args.yes) {
+    const p = ttyPrompt()
+    try {
+      if ((await p.confirm({ prompt: `Apply ${chosen.id}?`, default: false })) !== true) { say('  Not applied.'); return 1 }
+    } finally {
+      await p.close()
+    }
+  }
+  const r = await applyProposal({ root, doc, id: chosen.id, now })
+  say(`\n  ${r.message}`)
+  if (!r.ok) return 1
+  doc.harness = { ...(doc.harness || {}), optimizedAt: now.toISOString() }
+  await answersStore.save(root, doc)
+  if (r.rerender) {
+    const { doc: d, manifest, plan } = await planUpgrade({ root, detected: await detect(root) })
+    await writePlan({ root, plan, manifest, doc: d })
+    say(formatPlan(plan, { root }))
+  }
+  // The safeguard: whatever changed, the rules must still load and the hooks still run.
+  const checked = await doctor({ root })
+  for (const f of checked.findings.filter((x) => x.status !== 'ok')) say(`  ${f.status}  ${f.name}: ${f.detail}`)
+  say(checked.ok ? '  doctor: the wiring is still live.' : '  doctor: something is configured but not working; see above.')
+  return checked.ok ? 0 : 1
 }
 
 async function cmdReview(args, root) {

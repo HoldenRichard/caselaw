@@ -58,6 +58,10 @@ export async function gather(root, { now = new Date() } = {}) {
   const installAgeDays = answers?.generatedAt ? daysBetween(new Date(answers.generatedAt), now) : null
   const adrs = await gatherAdrs(root, dir)
   const borrowed = await gatherBorrowed(root, rules, answers, { now, notes })
+  let optimizer = null
+  if (answers) {
+    try { optimizer = await (await import('../core/optimizer.js')).optimizerSignals({ root, doc: answers, now }) } catch (err) { notes.push(`optimizer: ${err.message}`) }
+  }
   const gitignoreClaims = await gatherGitignoreClaims(root, docTexts)
 
   return {
@@ -65,7 +69,7 @@ export async function gather(root, { now = new Date() } = {}) {
     answers, manifest,
     gatesConfig: gatesConfig ?? gatesStore.emptyConfig(),
     rules, docTexts, docRefs, untracked, authority, staleCommands, adrs, gitignoreClaims,
-    fireCounts, earnedFires, drifted, installAgeDays, borrowed,
+    fireCounts, earnedFires, drifted, installAgeDays, borrowed, optimizer,
     installed: Boolean(answers || manifest),
   }
 }

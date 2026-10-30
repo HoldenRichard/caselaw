@@ -20,7 +20,7 @@ import { hash } from './text.js'
 
 /** The substring that marks a hook entry as ours. */
 export const HOOK_MARK = '.caselaw/bin/gate.mjs'
-export const HOOK_EVENTS = ['PreToolUse', 'PostToolUse']
+export const HOOK_EVENTS = ['PreToolUse', 'PostToolUse', 'PreCompact']
 
 const isOurs = (entry) =>
   Array.isArray(entry?.hooks) &&
@@ -47,10 +47,26 @@ export function extractOurs(settings) {
     const list = Array.isArray(settings?.hooks?.[event]) ? settings.hooks[event] : []
     out[event] = list.filter(isOurs)
   }
-  return out
+  return shape(out)
 }
 
 /** What the manifest records for a json-merge entry: a hash of OUR entries only. */
+/**
+ * Ours in one canonical shape. An event added later (0.3's PreCompact) with
+ * none of ours is left out rather than listed empty, so an install that
+ * predates it hashes as it did; otherwise every such install reads as
+ * hand-edited and is skipped instead of upgraded.
+ */
+const ORIGINAL_EVENTS = new Set(['PreToolUse', 'PostToolUse'])
+function shape(ours) {
+  const out = {}
+  for (const event of HOOK_EVENTS) {
+    const list = Array.isArray(ours?.[event]) ? ours[event] : []
+    if (list.length || ORIGINAL_EVENTS.has(event)) out[event] = list
+  }
+  return out
+}
+
 export function hashOurs(ours) {
   return hash(JSON.stringify(ours))
 }
@@ -66,8 +82,7 @@ export function hashOurs(ours) {
 export function merge(existingText, ourHooks) {
   const p = parseSettings(existingText)
   if (!p.ok) return { ok: false, reason: p.reason }
-  const wanted = {}
-  for (const event of HOOK_EVENTS) wanted[event] = Array.isArray(ourHooks?.[event]) ? ourHooks[event] : []
+  const wanted = shape(ourHooks)
   const present = extractOurs(p.settings)
   if (existingText != null && JSON.stringify(present) === JSON.stringify(wanted)) {
     return { ok: true, action: 'unchanged', text: existingText, ours: present }
@@ -76,7 +91,7 @@ export function merge(existingText, ourHooks) {
   const hooks = settings.hooks && typeof settings.hooks === 'object' && !Array.isArray(settings.hooks) ? { ...settings.hooks } : {}
   for (const event of HOOK_EVENTS) {
     const theirs = (Array.isArray(hooks[event]) ? hooks[event] : []).filter((e) => !isOurs(e))
-    const combined = [...theirs, ...wanted[event]]
+    const combined = [...theirs, ...(wanted[event] || [])]
     if (combined.length) hooks[event] = combined
     else delete hooks[event]
   }

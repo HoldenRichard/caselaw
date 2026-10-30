@@ -2073,6 +2073,23 @@ async function runCommandHook(mode, common, args, payload, stdout, stderr) {
   return EXIT.PRE_BLOCK
 }
 
+/**
+ * One line per automatic compaction, in the install above the session's
+ * directory. The study's agents lost what they carried at each compaction
+ * (DEF-225); frequent ones tell the optimizer a session loads too much.
+ * Never fails the hook.
+ */
+async function recordCompaction(args) {
+  const raw = await readStdin()
+  let payload = {}
+  try { payload = raw.ok && raw.text.trim() ? JSON.parse(raw.text) : {} } catch { /* counted anyway */ }
+  const root = (await installAbove(str(payload.cwd) || process.env.CLAUDE_PROJECT_DIR || process.cwd())) ?? (args.root ? resolve(args.root) : null)
+  if (!root) return EXIT.OK
+  const line = JSON.stringify({ at: new Date().toISOString(), trigger: str(payload.trigger) || null }) + '\n'
+  try { await appendFile(join(root, '.caselaw/compactions.jsonl'), line, 'utf8') } catch { /* never block a compaction */ }
+  return EXIT.OK
+}
+
 /** The nearest directory at or above `dir` holding a .caselaw/ install, or null. */
 async function installAbove(dir) {
   let at = realpathLenient(resolve(dir))
@@ -2290,6 +2307,8 @@ export async function main(argv = process.argv.slice(2), io = {}) {
   try {
     const root = resolve(args.root ?? process.cwd())
     const mode = args.mode
+    // Not a gate mode: Claude Code's PreCompact hook, counted for the optimizer (0.3).
+    if (mode === 'compact') return await recordCompaction(args)
     if (!MODES.includes(mode)) {
       // Bad invocation is OUR failure, and our failures never block.
       stderr(`caselaw gate: --mode must be one of ${MODES.join(', ')} (got ${JSON.stringify(mode ?? null)})\n`)

@@ -41,6 +41,8 @@ export const RULE_DIRS = {
   active: 'docs/rules/active',
   proposed: 'docs/rules/proposed',
   candidates: 'docs/rules/candidates',
+  archive: 'docs/rules/archive',
+  precedent: 'docs/rules/precedent',
 }
 
 /** Every problem code `validateRule` can emit, so callers can switch exhaustively. */
@@ -807,6 +809,25 @@ export async function ratify(root, name, opts = {}) {
     )
   }
 
+  // A merge (0.3's optimizer) keeps both rules' text and evidence word for
+  // word; a merged rule that lost either is a paraphrase, and refused.
+  const flat = (t) => String(t).replace(/\s+/g, ' ').trim()
+  const merges = (parsed.sections.find((x) => x.key === 'merges')?.value || '').split(',').map((x) => x.trim()).filter(Boolean)
+  const sources = []
+  for (const m of merges) {
+    const path = ruleFile(root, 'active', m)
+    const text = await readRuleFile(path, m, 'active', root)
+    const sp = parseRule(text)
+    const lost = ['rule', 'origin', 'precedent'].filter((k) => str(sp[k]) && !flat(parsed.raw).includes(flat(sp[k])))
+    if (lost.length) {
+      throw new RuleError(
+        `Cannot ratify "${name}": it merges "${m}" but no longer carries its ${lost.join(', ')} word for word. A merge keeps both rules' text and evidence; it is never a paraphrase.`,
+        { code: 'LOSSY_MERGE', name },
+      )
+    }
+    sources.push({ name: m, path, parsed: sp })
+  }
+
   // The stamp is built from the CALLER's identity and clock. Any `**Ratified:**`
   // already in the file — forged, copied, or left over — is overwritten here.
   const stamped = serializeRule({
@@ -821,9 +842,18 @@ export async function ratify(root, name, opts = {}) {
   await mkdir(dirname(to), { recursive: true })
   await writeFile(to, stamped, 'utf8')
   await rm(from, { force: true })
+  // The merged rules go to archive/, kept, with where they went.
+  for (const src of sources) {
+    const out = serializeRule({ ...src.parsed, name: src.parsed.name || src.name, footer: `---\n_Merged into \`${name}\` on ${ratifiedAt}._` })
+    const dest = ruleFile(root, 'archive', src.name)
+    await mkdir(dirname(dest), { recursive: true })
+    await writeFile(dest, out, 'utf8')
+    await rm(src.path, { force: true })
+  }
 
   return {
     name,
+    merged: sources.map((x) => x.name),
     from: relPath('proposed', name, root),
     to: relPath('active', name, root),
     ratifiedBy,

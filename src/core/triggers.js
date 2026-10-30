@@ -16,7 +16,7 @@ import { readFile, writeFile, mkdir, access } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { render } from '../render/engine.js'
-import { DEMOTION_DAYS } from './defaults.js'
+import { DEMOTION_DAYS, withArchivedPrecedent } from './defaults.js'
 import { doctrineDirOf, ruleDirsFor } from './doctrine.js'
 import * as gatesStore from './gates.js'
 import { OUTSIDE_LABELS } from '../generate/authority-split.js'
@@ -183,11 +183,8 @@ export async function triggerArtifacts({ doc, detected, dir, now = new Date() })
   const harness = stamp(doc, detected, now)
   const out = []
   for (const t of accepted) {
-    out.push({
-      path: `${dir}/rules/active/${t.rule}.md`,
-      kind: 'file',
-      body: await renderRule(t, { fact: harness.facts[t.id], status: `active since ${harness.triggerSince[t.id]}`, days: demotionDays(doc) }),
-    })
+    const body = await renderRule(t, { fact: harness.facts[t.id], status: `active since ${harness.triggerSince[t.id]}`, days: demotionDays(doc) })
+    out.push(...withArchivedPrecedent(doc, dir, t.rule, body))
   }
   return out
 }

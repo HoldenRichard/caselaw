@@ -162,6 +162,17 @@ export const CHECKS = [
     },
   },
   {
+    id: 'optimizer-due',
+    describe: 'the optimizer has a reason to run',
+    run({ optimizer }) {
+      if (!optimizer?.due?.length) return []
+      return [finding('optimizer-due', SEVERITY.WARN, `the optimizer is due: ${optimizer.due.join('; ')}`, {
+        hint: 'Run `caselaw optimize` to see what it proposes. Nothing changes until a human applies one.',
+        data: { words: optimizer.load.words, budget: optimizer.budget },
+      })]
+    },
+  },
+  {
     id: 'dead-rules',
     describe: 'rules whose subject no longer exists',
     run({ rules }) {

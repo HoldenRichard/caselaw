@@ -42,5 +42,6 @@ export function doctrineDirAt(root) {
 }
 
 export function ruleDirsFor(dir = DEFAULT_DOCTRINE_DIR) {
-  return { active: `${dir}/rules/active`, proposed: `${dir}/rules/proposed`, candidates: `${dir}/rules/candidates` }
+  // archive/ and precedent/ (0.3's optimizer) hold what was retired or moved out of a loaded rule, never deleted.
+  return { active: `${dir}/rules/active`, proposed: `${dir}/rules/proposed`, candidates: `${dir}/rules/candidates`, archive: `${dir}/rules/archive`, precedent: `${dir}/rules/precedent` }
 }

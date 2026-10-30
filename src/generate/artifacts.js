@@ -72,7 +72,12 @@ export function claudeHookSettings({ commands = false } = {}) {
   // A command gate (0.3's writer guard) needs the shell tool too, pre only:
   // only there does the call carry the command it is about to run.
   const bash = { matcher: 'Bash', hooks: [{ type: 'command', command: cmd('pre'), timeout: 30 }] }
-  return { hooks: { PreToolUse: commands ? [entry('pre'), bash] : [entry('pre')], PostToolUse: [entry('post')] } }
+  // Automatic compactions, recorded for the optimizer (0.3): the study's agents
+  // lost what they carried at each one (DEF-225), and frequent ones say the
+  // governance a session loads is too much. Manual /compact is the human's
+  // choice and is not counted.
+  const compact = { matcher: 'auto', hooks: [{ type: 'command', command: cmd('compact'), timeout: 10 }] }
+  return { hooks: { PreToolUse: commands ? [entry('pre'), bash] : [entry('pre')], PostToolUse: [entry('post')], PreCompact: [compact] } }
 }
 
 /**
@@ -225,7 +230,7 @@ export async function buildArtifacts({ doc, detected, adapterIds = null, modules
 
   out.push({
     path: '.gitignore', kind: 'block', blockId: 'caselaw', version: 1,
-    body: ['# Local gate telemetry — per-machine, never committed.', '.caselaw/gate-fires.jsonl'].join('\n'),
+    body: ['# Local gate telemetry and compaction counts — per-machine, never committed.', '.caselaw/gate-fires.jsonl', '.caselaw/compactions.jsonl'].join('\n'),
   })
 
   // Doctrine paths named inside the files follow the doctrine to its directory.

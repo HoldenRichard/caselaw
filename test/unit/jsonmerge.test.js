@@ -96,6 +96,14 @@ describe('jsonmerge — the pure functions', () => {
   })
 })
 
+describe('a hook event added later', () => {
+  test('POSITIVE CONTROL: an install from before PreCompact hashes as it did, so its hooks are merged, not skipped as hand-edited', () => {
+    const entry = (mode) => ({ matcher: 'Edit|Write|NotebookEdit', hooks: [{ type: 'command', command: `node "$CLAUDE_PROJECT_DIR/.caselaw/bin/gate.mjs" --mode ${mode}` }] })
+    const before = { hooks: { PreToolUse: [entry('pre')], PostToolUse: [entry('post')] } }
+    assert.equal(hashOurs(extractOurs(before)), hashOurs({ PreToolUse: [entry('pre')], PostToolUse: [entry('post')] }))
+  })
+})
+
 describe('jsonmerge — through the plan, the manifest and eject', () => {
   let root
   beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'caselaw-jm-')) })
@@ -207,6 +215,7 @@ describe('jsonmerge — through the plan, the manifest and eject', () => {
     assert.ok(r.modified.includes('.claude/settings.json'))
     s.hooks.PreToolUse = s.hooks.PreToolUse.filter((e) => !JSON.stringify(e).includes(HOOK_MARK))
     delete s.hooks.PostToolUse
+    delete s.hooks.PreCompact // ours since 0.3: the compaction counter
     await writeFile(p, JSON.stringify(s, null, 2) + '\n', 'utf8')
     r = await manifestStore.reconcile(root, manifest, { locate })
     assert.ok(r.missing.includes('.claude/settings.json'))

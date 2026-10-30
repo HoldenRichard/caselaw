@@ -168,6 +168,10 @@ async function ratify(args, { root, say, interactive, prompt }) {
 
   const r = await rules.ratify(root, args.name, { interactive: true, ratifiedBy: by })
   say(`  ${r.from} -> ${r.to}  (ratified ${r.ratifiedAt} by ${r.ratifiedBy})`)
+  if (r.merged.length) {
+    say(`  Merged: ${r.merged.join(', ')} moved to ${ruleDirsFor(doctrineDirAt(root)).archive}/.`)
+    await forgetGenerated(root, r.merged, say)
+  }
   for (const w of r.warnings) say(`  warn: ${w.message}`)
   say('')
   say(`  It is in force. When it keeps getting violated: caselaw rule promote ${r.name}`)
@@ -215,6 +219,32 @@ async function adopt(args, { root, say }) {
   return code
 }
 
+/**
+ * A default or a triggered rule is generated from the answers; once it is
+ * demoted or merged away, it comes out of them, or the next upgrade would put
+ * it back in active/.
+ */
+async function forgetGenerated(root, names, say) {
+  const doc = await answersStore.load(root).catch(() => null)
+  if (!doc) return
+  let changed = false
+  const drop = (key, id) => {
+    if (!Array.isArray(doc.answers[key]) || !doc.answers[key].includes(id)) return
+    doc.answers[key] = doc.answers[key].filter((v) => v !== id)
+    changed = true
+  }
+  for (const n of names) {
+    const d = DEFAULTS.find((x) => x.name === n)
+    const t = TRIGGERS.find((x) => x.rule === n)
+    if (d) drop('harness.defaults', d.id)
+    if (t) drop('harness.triggers', t.id)
+  }
+  if (changed) {
+    await answersStore.save(root, doc)
+    say('  Taken out of .caselaw/answers.json too, so an upgrade does not reinstall it.')
+  }
+}
+
 /** Evidence, not authority: recording a catch moves nothing and widens nothing, so an agent may. */
 async function recordCatch(args, { root, say }) {
   const r = await rules.recordCatch(root, args.name, { what: args.opt.what, by: args.opt.by || (await gitUserName(root)) || 'unknown' })
@@ -244,17 +274,7 @@ async function demote(args, { root, say, interactive, prompt }) {
   }
   const r = await rules.demote(root, args.name, { interactive: true, reason: args.opt.reason ?? null })
   say(`  ${r.from} -> ${r.to}  (demoted ${r.at}: ${r.reason})`)
-  // A default or a triggered rule is generated from the answers; without this
-  // the next upgrade would put it back in active/.
-  const doc = await answersStore.load(root).catch(() => null)
-  if (doc) {
-    const d = DEFAULTS.find((x) => x.name === args.name)
-    const t = TRIGGERS.find((x) => x.rule === args.name)
-    const drop = (key, id) => { if (Array.isArray(doc.answers[key])) doc.answers[key] = doc.answers[key].filter((v) => v !== id) }
-    if (d) drop('harness.defaults', d.id)
-    if (t) drop('harness.triggers', t.id)
-    if (d || t) { await answersStore.save(root, doc); say('  Taken out of .caselaw/answers.json too, so an upgrade does not reinstall it.') }
-  }
+  await forgetGenerated(root, [args.name], say)
   return 0
 }
 
