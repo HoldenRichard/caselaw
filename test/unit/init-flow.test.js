@@ -118,15 +118,26 @@ describe('what the interview accepts', () => {
 })
 
 describe('where the doctrine may land', () => {
-  test('POSITIVE CONTROL: doctrine is not written into a docs/ that typedoc deletes on every build', async () => {
+  // These refused until 0.3, when governance/ became the doctrine's home in a
+  // repository whose docs/ belongs to a generator (the DEF-274 re-score).
+  test('POSITIVE CONTROL: doctrine is not written into a docs/ that typedoc deletes on every build; it goes to governance/', async () => {
     await put('typedoc.json', JSON.stringify({ out: 'docs', entryPoints: ['src/index.ts'] }))
     commit()
     const r = await cli(['init', '--yes'], { cwd: root, input: ANSWERS })
-    assert.equal(r.code, 1, 'writing into a build output directory must be refused without --force')
+    assert.equal(r.code, 0, r.out + r.err)
     assert.match(r.out, /typedoc/)
-    assert.match(r.out, /--force/)
+    assert.match(r.out, /The doctrine goes to governance\/ instead/)
     assert.equal(await exists('docs/authority-split.md'), false)
-    const forced = await cli(['init', '--yes', '--force'], { cwd: root, input: ANSWERS })
+    assert.equal(await exists('governance/authority-split.md'), true)
+    assert.match(await readFile(join(root, 'CLAUDE.md'), 'utf8'), /`governance\/authority-split\.md` — what you can and cannot verify here/, 'the pointer names where it went')
+    assert.match(await readFile(join(root, 'governance/close-out.md'), 'utf8'), /from `governance\/authority-split\.md`/, 'and so does every file that names it')
+    const answers = JSON.parse(await readFile(join(root, '.caselaw/answers.json'), 'utf8'))
+    assert.equal(answers.doctrineDir, 'governance')
+    commit()
+    const ejecting = await cli(['eject', '--dry-run'], { cwd: root })
+    assert.match(ejecting.out, /KEEP\s+\d+ file\(s\) under governance\//, 'eject keeps the doctrine where it is, and says where')
+    assert.doesNotMatch(ejecting.out, /DELETE\s+governance\//)
+    const forced = await cli(['init', '--yes', '--force', '--reconfigure'], { cwd: root, input: ANSWERS })
     assert.equal(forced.code, 0, forced.out + forced.err)
   })
 
@@ -134,8 +145,23 @@ describe('where the doctrine may land', () => {
     await put('mkdocs.yml', 'site_name: x\nsite_dir: server/docs\n')
     commit()
     const r = await cli(['init', '--yes'], { cwd: root, input: ANSWERS })
-    assert.equal(r.code, 1)
+    assert.equal(r.code, 0, r.out + r.err)
     assert.match(r.out, /mkdocs/)
+    assert.equal(await exists('governance/authority-split.md'), true)
+  })
+
+  test('--doctrine-dir picks the directory, and every later command reads it from answers.json', async () => {
+    commit()
+    const r = await cli(['init', '--yes', '--doctrine-dir', 'engineering/doctrine'], { cwd: root, input: ANSWERS })
+    assert.equal(r.code, 0, r.out + r.err)
+    assert.equal(await exists('engineering/doctrine/authority-split.md'), true)
+    commit()
+    const proposed = await cli(['rule', 'propose', 'stage-explicit-paths', '--origin', 'abc123', '--trigger', 'committing', '--rule', 'Name the paths.'], { cwd: root })
+    assert.equal(proposed.code, 0, proposed.out + proposed.err)
+    assert.equal(await exists('engineering/doctrine/rules/proposed/stage-explicit-paths.md'), true)
+    const bad = await cli(['init', '--yes', '--doctrine-dir', '../outside'], { cwd: root, input: ANSWERS })
+    assert.equal(bad.code, 1)
+    assert.match(bad.out, /not a directory inside this repository/)
   })
 
   test('a generated file that .gitignore would keep out of the repo is called out', async () => {

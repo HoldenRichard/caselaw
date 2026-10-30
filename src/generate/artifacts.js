@@ -13,6 +13,7 @@ import { dirname, join } from 'node:path'
 import { generate as generateAuthoritySplit } from './authority-split.js'
 import { generate as generateCloseOut } from './close-out.js'
 import { generate as generateDeclarations } from './declarations.js'
+import { doctrineDirOf, DEFAULT_DOCTRINE_DIR } from '../core/doctrine.js'
 import { selectAdapters, commandCollisions } from '../adapters/index.js'
 import { isoDate } from '../core/dates.js'
 import { render } from '../render/engine.js'
@@ -109,6 +110,7 @@ export const EMPTY_GATES = {
  */
 export async function buildArtifacts({ doc, detected, adapterIds = null, modules = doc.modules ?? [] }) {
   const out = []
+  const dir = doctrineDirOf(doc)
 
   const authority = await generateAuthoritySplit({
     answers: doc.answers,
@@ -117,24 +119,24 @@ export async function buildArtifacts({ doc, detected, adapterIds = null, modules
     projectName: doc.project?.name,
     now: doc.generatedAt ? new Date(doc.generatedAt) : undefined,
   })
-  out.push({ path: 'docs/authority-split.md', kind: 'file', body: authority.content })
+  out.push({ path: `${dir}/authority-split.md`, kind: 'file', body: authority.content })
 
   const closeOut = await generateCloseOut({
     answers: doc.answers, detected, projectName: doc.project?.name,
   })
-  out.push({ path: 'docs/close-out.md', kind: 'file', body: closeOut.content })
+  out.push({ path: `${dir}/close-out.md`, kind: 'file', body: closeOut.content })
 
   // Only once someone has named where the project makes public claims: an
   // empty register would be a file of promises that nobody made.
   if ((doc.answers?.['outside.claims'] || []).length) {
     const declarations = await generateDeclarations({ answers: doc.answers, detected, projectName: doc.project?.name })
-    out.push({ path: 'docs/declarations.md', kind: 'file', body: declarations.content })
+    out.push({ path: `${dir}/declarations.md`, kind: 'file', body: declarations.content })
   }
 
   // Case-law scaffolding ships verbatim: machinery, never content.
   for (const rel of await templateFiles('rules')) {
     out.push({
-      path: join('docs/rules', rel),
+      path: join(`${dir}/rules`, rel),
       kind: 'file',
       body: await readFile(join(TEMPLATE_ROOT, 'rules', rel), 'utf8'),
     })
@@ -144,7 +146,7 @@ export async function buildArtifacts({ doc, detected, adapterIds = null, modules
   // itself is never duplicated into them — only the instruction to read it.
   const adapters = selectAdapters(detected, { only: adapterIds })
   for (const adapter of adapters) {
-    out.push(...adapter.artifacts({ detected }))
+    out.push(...adapter.artifacts({ detected, dir }))
   }
   const usesClaude = adapters.some((a) => a.id === 'claude-code')
 
@@ -195,7 +197,7 @@ export async function buildArtifacts({ doc, detected, adapterIds = null, modules
       if (f.templated) {
         body = render(body, { today: isoDate(doc.generatedAt ? new Date(doc.generatedAt) : new Date()) })
       }
-      out.push({ path: f.to, kind: 'file', body })
+      out.push({ path: f.to.replace(/^docs\//, `${dir}/`), kind: 'file', body })
     }
   }
 
@@ -204,5 +206,14 @@ export async function buildArtifacts({ doc, detected, adapterIds = null, modules
     body: ['# Local gate telemetry — per-machine, never committed.', '.caselaw/gate-fires.jsonl'].join('\n'),
   })
 
-  return out
+  // Doctrine paths named inside the files follow the doctrine to its directory.
+  // With the default directory nothing changes, byte for byte.
+  return dir === DEFAULT_DOCTRINE_DIR ? out : out.map((a) => (typeof a.body === 'string' ? { ...a, body: relocate(a.body, dir) } : a))
+}
+
+/** `docs/authority-split.md` and its siblings, rewritten into another doctrine directory. */
+export function relocate(text, dir) {
+  return text
+    .replace(/\bdocs\/(?=(authority-split|close-out|declarations|rules|decisions|glossary|known-issues)\b)/g, `${dir}/`)
+    .replace(/`docs\/` grows/g, `\`${dir}/\` grows`)
 }

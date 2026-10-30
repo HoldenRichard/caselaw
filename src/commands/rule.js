@@ -21,6 +21,7 @@ import { pathToFileURL } from 'node:url'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import * as rules from '../core/rules.js'
+import { ruleDirsFor, doctrineDirAt } from '../core/doctrine.js'
 import * as gatesStore from '../core/gates.js'
 import { MECHANISABLE, suggestKinds, buildGate, baselineDisposition, enforcementLine } from '../core/promote.js'
 import { SKIPPED } from '../core/answers.js'
@@ -131,7 +132,7 @@ async function ratify(args, { root, say, interactive, prompt }) {
 
   const proposal = (await rules.listRules(root)).proposed.find((r) => r.name === args.name)
   if (!proposal) {
-    say(`  No proposal named "${args.name}" in ${rules.RULE_DIRS.proposed}/.`)
+    say(`  No proposal named "${args.name}" in ${ruleDirsFor(doctrineDirAt(root)).proposed}/.`)
     return 1
   }
   say('')
@@ -148,7 +149,7 @@ async function ratify(args, { root, say, interactive, prompt }) {
     const p = prompt()
     try {
       const ok = await p.confirm({
-        prompt: `Ratify "${args.name}" into ${rules.RULE_DIRS.active}/ as ${by}?`,
+        prompt: `Ratify "${args.name}" into ${ruleDirsFor(doctrineDirAt(root)).active}/ as ${by}?`,
         default: false,
       })
       if (ok !== true) {
@@ -175,7 +176,7 @@ async function reject(args, { root, say, interactive, prompt }) {
   }
   const proposal = (await rules.listRules(root)).proposed.find((r) => r.name === args.name)
   if (!proposal) {
-    say(`  No proposal named "${args.name}" in ${rules.RULE_DIRS.proposed}/.`)
+    say(`  No proposal named "${args.name}" in ${ruleDirsFor(doctrineDirAt(root)).proposed}/.`)
     return 1
   }
   if (!args.yes) {
@@ -224,7 +225,7 @@ async function promote(args, io) {
     const proposed = listed.proposed.some((r) => r.name === args.name)
     say(proposed
       ? `  "${args.name}" is still a proposal. Ratify it first; only rules in force climb the ladder.`
-      : `  No active rule named "${args.name}" in ${rules.RULE_DIRS.active}/.`)
+      : `  No active rule named "${args.name}" in ${ruleDirsFor(doctrineDirAt(root)).active}/.`)
     return 1
   }
   const parsed = active.parsed

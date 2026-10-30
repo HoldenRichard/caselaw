@@ -30,8 +30,13 @@ import { readFile, writeFile, mkdir, readdir, rm, lstat } from 'node:fs/promises
 import { spawnSync } from 'node:child_process'
 import { dirname, join, basename } from 'node:path'
 import { normalize, hash } from './text.js'
+import { ruleDirsFor, doctrineDirAt } from './doctrine.js'
 
-/** Where case law lives. Relative to the project root, POSIX, on every OS. */
+/**
+ * Where case law lives, in the default layout. Relative to the project root,
+ * POSIX, on every OS. An install that records another doctrine directory is
+ * read through `dirsAt(root)`.
+ */
 export const RULE_DIRS = {
   active: 'docs/rules/active',
   proposed: 'docs/rules/proposed',
@@ -564,17 +569,17 @@ export async function listRules(root, opts = {}) {
   const out = { active: [], proposed: [], candidates: [], skipped: [] }
 
   for (const status of /** @type {const} */ (['active', 'proposed', 'candidates'])) {
-    const dir = join(root, RULE_DIRS[status])
+    const dir = join(root, dirsAt(root)[status])
     let names
     try {
       names = await readdir(dir)
     } catch (err) {
       if (err.code === 'ENOENT') continue // a project with no case law yet
-      throw new RuleError(`Cannot read ${RULE_DIRS[status]}: ${err.message}`, { code: 'UNREADABLE' })
+      throw new RuleError(`Cannot read ${dirsAt(root)[status]}: ${err.message}`, { code: 'UNREADABLE' })
     }
 
     for (const file of names.sort()) {
-      const rel = `${RULE_DIRS[status]}/${file}`
+      const rel = `${dirsAt(root)[status]}/${file}`
       if (!isRuleFile(file)) {
         // README.md, WHY-THIS-IS-EMPTY.md and _template.md are prose for
         // humans and are meant to be here. Anything else that failed the
@@ -630,24 +635,24 @@ export async function propose(root, fields, opts = {}) {
   if (await exists(ruleFile(root, 'active', name))) {
     throw new RuleError(
       `"${name}" is already active case law. Refusing to draft over it.`,
-      { code: 'ALREADY_ACTIVE', name, path: relPath('active', name) },
+      { code: 'ALREADY_ACTIVE', name, path: relPath('active', name, root) },
     )
   }
   if (!opts.overwrite && (await exists(path))) {
-    throw new RuleError(`${relPath('proposed', name)} already exists.`, {
+    throw new RuleError(`${relPath('proposed', name, root)} already exists.`, {
       code: 'EXISTS',
       name,
-      path: relPath('proposed', name),
+      path: relPath('proposed', name, root),
     })
   }
 
   const text = serializeRule({ ...fields, name, ratified: null })
-  const parsed = parseRule(text, { path: relPath('proposed', name) })
+  const parsed = parseRule(text, { path: relPath('proposed', name, root) })
   const validation = validateRule(parsed, { filename: `${name}.md`, root, resolveRef: opts.resolveRef })
 
   await mkdir(dirname(path), { recursive: true })
   await writeFile(path, text, 'utf8')
-  return { name, path: relPath('proposed', name), parsed, validation, wrote: true }
+  return { name, path: relPath('proposed', name, root), parsed, validation, wrote: true }
 }
 
 /**
@@ -678,13 +683,13 @@ export async function ratify(root, name, opts = {}) {
 
   if (await exists(to)) {
     throw new RuleError(
-      `"${name}" already exists in ${RULE_DIRS.active}. Refusing to overwrite active case law — retire it first, or ratify under a different name.`,
-      { code: 'ALREADY_ACTIVE', name, path: relPath('active', name) },
+      `"${name}" already exists in ${dirsAt(root).active}. Refusing to overwrite active case law — retire it first, or ratify under a different name.`,
+      { code: 'ALREADY_ACTIVE', name, path: relPath('active', name, root) },
     )
   }
 
-  const text = await readRuleFile(from, name, 'proposed')
-  const parsed = parseRule(text, { path: relPath('proposed', name) })
+  const text = await readRuleFile(from, name, 'proposed', root)
+  const parsed = parseRule(text, { path: relPath('proposed', name, root) })
   const validation = validateRule(parsed, {
     filename: `${name}.md`,
     root,
@@ -716,8 +721,8 @@ export async function ratify(root, name, opts = {}) {
 
   return {
     name,
-    from: relPath('proposed', name),
-    to: relPath('active', name),
+    from: relPath('proposed', name, root),
+    to: relPath('active', name, root),
     ratifiedBy,
     ratifiedAt,
     validation,
@@ -742,11 +747,11 @@ export async function reject(root, name, opts = {}) {
     )
   }
   const path = ruleFile(root, 'proposed', name)
-  const text = await readRuleFile(path, name, 'proposed')
+  const text = await readRuleFile(path, name, 'proposed', root)
   await rm(path, { force: true })
   return {
     name,
-    path: relPath('proposed', name),
+    path: relPath('proposed', name, root),
     reason: opts.reason ?? null,
     removed: text,
   }
@@ -781,19 +786,19 @@ export async function adopt(root, name, opts = {}) {
     throw new RuleError(`"${name}" is already active case law.`, {
       code: 'ALREADY_ACTIVE',
       name,
-      path: relPath('active', name),
+      path: relPath('active', name, root),
     })
   }
   if (!opts.overwrite && (await exists(to))) {
-    throw new RuleError(`${relPath('proposed', name)} already exists.`, {
+    throw new RuleError(`${relPath('proposed', name, root)} already exists.`, {
       code: 'EXISTS',
       name,
-      path: relPath('proposed', name),
+      path: relPath('proposed', name, root),
     })
   }
 
-  const text = await readRuleFile(from, name, 'candidates')
-  const parsed = parseRule(text, { path: relPath('candidates', name) })
+  const text = await readRuleFile(from, name, 'candidates', root)
+  const parsed = parseRule(text, { path: relPath('candidates', name, root) })
 
   // Upstream evidence, in whichever form the candidate carried it, becomes
   // context: `**Origin (upstream):**` already there, or a plain `**Origin:**`
@@ -826,7 +831,7 @@ export async function adopt(root, name, opts = {}) {
     sections,
     footer: ADOPTED_FOOTER, // the candidate footer said "not in force"; it is now proposed
   })
-  const reparsed = parseRule(out, { path: relPath('proposed', name) })
+  const reparsed = parseRule(out, { path: relPath('proposed', name, root) })
   const validation = validateRule(reparsed, {
     filename: `${name}.md`,
     root,
@@ -837,8 +842,8 @@ export async function adopt(root, name, opts = {}) {
   await writeFile(to, out, 'utf8')
   return {
     name,
-    from: relPath('candidates', name),
-    path: relPath('proposed', name),
+    from: relPath('candidates', name, root),
+    path: relPath('proposed', name, root),
     origin,
     upstreamOrigin: upstream,
     parsed: reparsed,
@@ -896,7 +901,7 @@ function isProseFile(file) {
  * a drive letter or a leading dash.
  */
 function ruleFile(root, dir, name) {
-  return join(root, RULE_DIRS[dir], `${requireName(name)}.md`)
+  return join(root, dirsAt(root)[dir], `${requireName(name)}.md`)
 }
 
 function requireName(name) {
@@ -921,8 +926,13 @@ function slugify(s) {
     .slice(0, MAX_NAME_LEN)
 }
 
-function relPath(dir, name) {
-  return `${RULE_DIRS[dir]}/${name}.md`
+function relPath(dir, name, root) {
+  return `${dirsAt(root)[dir]}/${name}.md`
+}
+
+/** The rule directories of the install at `root`; the default layout when there is none. */
+function dirsAt(root) {
+  return root ? ruleDirsFor(doctrineDirAt(root)) : RULE_DIRS
 }
 
 async function exists(p) {
@@ -941,30 +951,30 @@ async function exists(p) {
  * symlink there would let `ratify` copy something else entirely into active/
  * under a rule's name.
  */
-async function readRuleFile(path, name, dir) {
+async function readRuleFile(path, name, dir, root) {
   let st
   try {
     st = await lstat(path)
   } catch (err) {
     if (err.code === 'ENOENT') {
-      throw new RuleError(`No rule named "${name}" in ${RULE_DIRS[dir]}.`, {
+      throw new RuleError(`No rule named "${name}" in ${dirsAt(root)[dir]}.`, {
         code: 'NOT_FOUND',
         name,
-        path: relPath(dir, name),
+        path: relPath(dir, name, root),
       })
     }
-    throw new RuleError(`Cannot read ${relPath(dir, name)}: ${err.message}`, { code: 'UNREADABLE' })
+    throw new RuleError(`Cannot read ${relPath(dir, name, root)}: ${err.message}`, { code: 'UNREADABLE' })
   }
   if (st.isSymbolicLink()) {
     throw new RuleError(
-      `${relPath(dir, name)} is a symlink. Rule files must be real files in the repo.`,
-      { code: 'SYMLINK', name, path: relPath(dir, name) },
+      `${relPath(dir, name, root)} is a symlink. Rule files must be real files in the repo.`,
+      { code: 'SYMLINK', name, path: relPath(dir, name, root) },
     )
   }
   try {
     return await readFile(path, 'utf8')
   } catch (err) {
-    throw new RuleError(`Cannot read ${relPath(dir, name)}: ${err.message}`, { code: 'UNREADABLE' })
+    throw new RuleError(`Cannot read ${relPath(dir, name, root)}: ${err.message}`, { code: 'UNREADABLE' })
   }
 }
 

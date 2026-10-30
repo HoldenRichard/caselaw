@@ -16,14 +16,15 @@ import * as manifestStore from '../core/manifest.js'
 import * as gatesStore from '../core/gates.js'
 import { locate } from '../core/blocks.js'
 import { daysBetween } from '../core/dates.js'
+import { doctrineDirOf } from '../core/doctrine.js'
 
 const pExecFile = promisify(execFile)
 
-/** Files whose pointers we follow and whose text we scan for hygiene. */
-const DOC_FILES = [
-  'docs/authority-split.md',
-  'docs/close-out.md',
-  'docs/rules/README.md',
+/** Files whose pointers we follow and whose text we scan for hygiene, in the install's doctrine directory. */
+const docFiles = (dir) => [
+  `${dir}/authority-split.md`,
+  `${dir}/close-out.md`,
+  `${dir}/rules/README.md`,
   'CLAUDE.md',
   'AGENTS.md',
 ]
@@ -37,8 +38,9 @@ export async function gather(root, { now = new Date() } = {}) {
     gatesStore.load(root).catch((e) => (notes.push(`gates: ${e.message}`), null)),
   ])
 
+  const dir = doctrineDirOf(answers)
   const docTexts = {}
-  for (const rel of DOC_FILES) {
+  for (const rel of docFiles(dir)) {
     const text = await readIfExists(join(root, rel))
     if (text !== null) docTexts[rel] = text
   }
@@ -46,14 +48,14 @@ export async function gather(root, { now = new Date() } = {}) {
   const rules = await gatherRules(root, { now, notes })
   const docRefs = await gatherRefs(root, docTexts)
   const untracked = await gatherUntracked(root, [...Object.keys(docTexts), ...allRuleFiles(rules)], notes)
-  const authority = parseAuthority(docTexts['docs/authority-split.md'], 'docs/authority-split.md')
+  const authority = parseAuthority(docTexts[`${dir}/authority-split.md`], `${dir}/authority-split.md`)
   const staleCommands = await gatherStaleCommands(root, answers, docTexts)
   const fires = countFires(await gatesStore.readFires(root))
   const fireCounts = fires.all
   const earnedFires = fires.earned
   const drifted = await gatherDrift(root, manifest, notes)
   const installAgeDays = answers?.generatedAt ? daysBetween(new Date(answers.generatedAt), now) : null
-  const adrs = await gatherAdrs(root)
+  const adrs = await gatherAdrs(root, dir)
   const gitignoreClaims = await gatherGitignoreClaims(root, docTexts)
 
   return {
@@ -299,8 +301,8 @@ function parseSettleCommand(cell) {
  * (so "see ADR 0010" is ambiguous forever), and a record present on disk but
  * absent from the index (so it is effectively invisible to anyone browsing).
  */
-async function gatherAdrs(root) {
-  const dirs = ['docs/adrs', 'docs/decisions', 'docs/adr']
+async function gatherAdrs(root, doctrine = 'docs') {
+  const dirs = [...new Set([`${doctrine}/adrs`, `${doctrine}/decisions`, `${doctrine}/adr`, 'docs/adrs', 'docs/decisions', 'docs/adr'])]
   for (const dir of dirs) {
     let names
     try {

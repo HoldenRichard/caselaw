@@ -13,6 +13,7 @@
 
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { doctrineDirAt } from '../core/doctrine.js'
 
 /**
  * @param {{root: string, detected: object, answers: object|null,
@@ -109,7 +110,7 @@ function summariseBoundaries(answers) {
 }
 
 /** Read the doctrine files a reviewer would want inlined, if they exist. */
-export async function readDoctrine(root, paths = ['docs/authority-split.md', 'docs/rules/README.md']) {
+export async function readDoctrine(root, paths = [`${doctrineDirAt(root)}/authority-split.md`, `${doctrineDirAt(root)}/rules/README.md`]) {
   const out = {}
   for (const p of paths) {
     try { out[p] = await readFile(join(root, p), 'utf8') } catch { /* absent is fine */ }

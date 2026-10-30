@@ -32,6 +32,7 @@ import { QUESTIONS } from '../src/interview/questions.js'
 import { ttyPrompt } from '../src/interview/prompt.js'
 import { buildDraft, writeDraft, loadDraft, removeDraft, validateDraft, draftPrompt, applyDeclarations, applyNotes, draftSheet, DRAFT_PATH } from '../src/interview/draft.js'
 import * as answersStore from '../src/core/answers.js'
+import { cleanDoctrineDir, doctrineDirOf, doctrineDirAt, DEFAULT_DOCTRINE_DIR, FALLBACK_DOCTRINE_DIR } from '../src/core/doctrine.js'
 import * as manifestStore from '../src/core/manifest.js'
 import { buildPlan, formatPlan, SKIP, UNCHANGED } from '../src/core/plan.js'
 import { hash } from '../src/core/text.js'
@@ -72,7 +73,7 @@ export const COMMANDS = {
 
 export const BOOL_FLAGS = ['help', 'dry-run', 'yes', 'force', 'json', 'agent', 'strict', 'purge', 'reconfigure', 'draft', 'from-draft']
 export const VALUED_FLAGS = [
-  'with', 'origin', 'trigger', 'rule', 'enforcement', 'by', 'reason',
+  'with', 'doctrine-dir', 'origin', 'trigger', 'rule', 'enforcement', 'by', 'reason',
   'kind', 'id', 'paths', 'patterns', 'message', 'command', 'args', 'when', 'require', 'extract', 'assert',
 ]
 export const KNOWN_FLAGS = [...BOOL_FLAGS, ...VALUED_FLAGS]
@@ -109,6 +110,7 @@ Options
   --reconfigure          init: ask every question again, including ones already answered
   --draft                init: write .caselaw/draft.json for an agent to answer from the repository
   --from-draft           init: confirm the agent's drafted answers, then generate (--yes after confirming in chat)
+  --doctrine-dir <dir>   init: where the doctrine goes (default docs/; governance/ when a tool owns docs/)
   --purge                eject: remove the generated docs too
   --origin <text>        rule adopt / rule propose: the incident in THIS project that proved it
   --trigger <text>       rule propose: the fields, when not answering at a terminal
@@ -282,14 +284,15 @@ async function cmdEject(args, root) {
     else say(`  STRIP   ${b.path}  (${b.kind === 'json-merge' ? 'the caselaw hook entries' : `block "${b.blockId}"`}, the rest of the file stays)`)
   }
   for (const l of plan.leaveAlone) say(`  KEEP    ${l.path}  ← ${l.reason}`)
+  const doctrine = `${doctrineDirAt(root)}/`
   if (plan.keptDoctrine.length) {
-    say(`  KEEP    ${plan.keptDoctrine.length} file(s) under docs/  ← your doctrine; readable without this tool`)
+    say(`  KEEP    ${plan.keptDoctrine.length} file(s) under ${doctrine}  ← your doctrine; readable without this tool`)
   }
   say('')
   if (plan.purge) {
     say('  --purge: the generated docs go too. This removes governance you wrote.')
   } else {
-    say('  Everything under docs/ stays — it is your answers as prose, and it does not')
+    say(`  Everything under ${doctrine} stays — it is your answers as prose, and it does not`)
     say('  need this tool to be useful. What goes is the machinery, so gates stop')
     say('  running and the hooks stop firing. Use --purge to remove the docs as well.')
   }
@@ -367,6 +370,14 @@ async function cmdInit(args, root) {
   // nor a borrowed docs/ is a reason to refuse it; --from-draft meets both.
   if (args.draft) return writeInitDraft({ root, detected, args })
 
+  // A flag that cannot be honoured is reported before anything else is checked.
+  const asked = args.opt['doctrine-dir']
+  let dir = asked === undefined ? null : cleanDoctrineDir(asked)
+  if (asked !== undefined && !dir) {
+    say(`\n  --doctrine-dir "${asked}" is not a directory inside this repository. Use a relative path like governance or docs/engineering.`)
+    return 1
+  }
+
   // Refuse to work on a dirty tree unless told otherwise: the plan we show has
   // to be about our changes, not tangled with in-flight edits. Files this
   // tool wrote and has not yet seen committed are ours, not dirt — every
@@ -380,23 +391,33 @@ async function cmdInit(args, root) {
     }
   }
 
-  // docs/ is where the doctrine goes, and on two of three dogfood repositories
-  // it was already a build tool's — typedoc output that the next build deletes,
-  // MkDocs source that ships. A configurable doctrine directory is not built
-  // yet, so this refuses and says why rather than writing quietly.
-  const owner = await docsOwner(root)
-  if (owner && !args.force) {
-    say(`\n  docs/ is ${owner.tool}'s ${owner.role} directory (${owner.file}); ${owner.consequence}.`)
-    say('  caselaw writes its doctrine to docs/ and cannot yet be pointed elsewhere. Pass --force to write there anyway.')
-    return 1
+  const existing = await answersStore.load(root)
+
+  // docs/ is where the doctrine goes, unless it is already someone else's: on
+  // two of three dogfood repositories it was a build tool's — TypeDoc output
+  // that the next build deletes, MkDocs source that ships. This used to refuse;
+  // it now writes to governance/ and says why. --doctrine-dir picks another;
+  // --force writes into docs/ regardless. An install keeps the directory it
+  // chose, recorded in answers.json.
+  if (!dir && existing?.doctrineDir) dir = doctrineDirOf(existing)
+  if (!dir && !args.force) {
+    const owner = await docsOwner(root)
+    if (owner) {
+      dir = FALLBACK_DOCTRINE_DIR
+      say(`\n  docs/ is ${owner.tool}'s ${owner.role} directory (${owner.file}); ${owner.consequence}.`)
+      say(`  The doctrine goes to ${dir}/ instead. Pass --doctrine-dir to choose another, or --force to write into docs/ anyway.`)
+    }
   }
 
-  const existing = await answersStore.load(root)
   const doc = existing ?? answersStore.emptyAnswers({
     templateVersion: TEMPLATE_VERSION,
     // The name the project gives itself, not the directory it was cloned into.
     project: { name: detected.stack?.projectName || basename(root) },
   })
+  // Recorded only when it is not the default, so an install in docs/ keeps a
+  // byte-identical answers.json.
+  if (dir && dir !== DEFAULT_DOCTRINE_DIR) doc.doctrineDir = dir
+  else if (dir === DEFAULT_DOCTRINE_DIR) delete doc.doctrineDir
   doc.detected = summarizeDetection(detected)
   // Stamped once, then reused. If this came from the clock, the generated
   // docs would differ every day and `check` could never tell calendar drift

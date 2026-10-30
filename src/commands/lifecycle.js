@@ -23,6 +23,7 @@ import * as answersStore from '../core/answers.js'
 import * as manifestStore from '../core/manifest.js'
 import * as gatesStore from '../core/gates.js'
 import { buildArtifacts } from '../generate/artifacts.js'
+import { doctrineDirAt } from '../core/doctrine.js'
 import { buildPlan, SKIP, UNCHANGED } from '../core/plan.js'
 import { locate, remove as removeBlock } from '../core/blocks.js'
 import { strip as stripJson } from '../core/jsonmerge.js'
@@ -127,7 +128,8 @@ export async function planEject({ root, purge = false }) {
   const reconciliation = await manifestStore.reconcile(root, manifest, { locate })
   const raw = manifestStore.ejectPlan(manifest, reconciliation)
 
-  // Doctrine is KEPT by default. Everything under docs/ is the user's own
+  // Doctrine is KEPT by default. Everything in the doctrine directory (docs/, or
+  // the one answers.json records) is the user's own
   // answers rendered as prose a human can read and follow with no tool
   // installed — deleting it on uninstall would destroy real work, and it is
   // the half of the design that is supposed to outlive this CLI. Machinery
@@ -135,7 +137,8 @@ export async function planEject({ root, purge = false }) {
   //
   // `purge` removes the doctrine too, for someone who genuinely wants the
   // repo back exactly as it was.
-  const isDoctrine = (p) => p.startsWith('docs/')
+  const doctrine = `${doctrineDirAt(root)}/`
+  const isDoctrine = (p) => p.startsWith(doctrine)
   const keptDoctrine = purge ? [] : raw.deleteFiles.filter(isDoctrine)
   const deleteFiles = purge ? raw.deleteFiles : raw.deleteFiles.filter((p) => !isDoctrine(p))
 

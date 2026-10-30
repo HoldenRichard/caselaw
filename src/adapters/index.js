@@ -34,11 +34,11 @@ export const RESERVED_COMMANDS = {
 }
 
 /** The pointer body every adapter renders in its own idiom. */
-export function pointerLines() {
+export function pointerLines(dir = 'docs') {
   return [
-    { text: '`docs/authority-split.md` — what you can and cannot verify here. Read it first.' },
-    { text: '`docs/rules/active/` — case law. At session start, scan it and load every rule whose Trigger matches this turn. Rules are trigger-scoped, never ambient.' },
-    { text: '`docs/close-out.md` — end a working session with this, including its rule-proposals line.' },
+    { text: `\`${dir}/authority-split.md\` — what you can and cannot verify here. Read it first.` },
+    { text: `\`${dir}/rules/active/\` — case law. At session start, scan it and load every rule whose Trigger matches this turn. Rules are trigger-scoped, never ambient.` },
+    { text: `\`${dir}/close-out.md\` — end a working session with this, including its rule-proposals line.` },
   ]
 }
 
@@ -60,8 +60,8 @@ export const ADAPTERS = [
     label: 'Claude Code',
     tested: true,
     detect: (d) => Boolean(d?.agentConfig?.claudeMd || d?.agentConfig?.claudeDir),
-    artifacts() {
-      return [{ path: 'CLAUDE.md', kind: 'block', blockId: 'pointer', version: 1, body: markdownPointer() }]
+    artifacts(ctx = {}) {
+      return [{ path: 'CLAUDE.md', kind: 'block', blockId: 'pointer', version: 1, body: markdownPointer(ctx.dir) }]
     },
   },
   {
@@ -69,8 +69,8 @@ export const ADAPTERS = [
     label: 'AGENTS.md (Codex and others)',
     tested: true,
     detect: (d) => Boolean(d?.agentConfig?.agentsMd),
-    artifacts() {
-      return [{ path: 'AGENTS.md', kind: 'block', blockId: 'pointer', version: 1, body: markdownPointer() }]
+    artifacts(ctx = {}) {
+      return [{ path: 'AGENTS.md', kind: 'block', blockId: 'pointer', version: 1, body: markdownPointer(ctx.dir) }]
     },
   },
   {
@@ -78,7 +78,7 @@ export const ADAPTERS = [
     label: 'Cursor',
     tested: true,
     detect: (d) => Boolean(d?.agentConfig?.cursorRules),
-    artifacts() {
+    artifacts(ctx = {}) {
       // Cursor reads .mdc rule files with YAML frontmatter. alwaysApply keeps
       // the pointer in context; the doctrine itself still lives in docs/.
       const body = [
@@ -87,7 +87,7 @@ export const ADAPTERS = [
         'alwaysApply: true',
         '---',
         '',
-        markdownPointer(),
+        markdownPointer(ctx.dir),
       ].join('\n')
       return [{ path: '.cursor/rules/caselaw.mdc', kind: 'file', body: body + '\n' }]
     },
@@ -97,22 +97,22 @@ export const ADAPTERS = [
     label: 'GitHub Copilot',
     tested: true,
     detect: (d) => Boolean(d?.agentConfig?.copilot),
-    artifacts() {
+    artifacts(ctx = {}) {
       return [{
         path: '.github/copilot-instructions.md',
-        kind: 'block', blockId: 'pointer', version: 1, body: markdownPointer(),
+        kind: 'block', blockId: 'pointer', version: 1, body: markdownPointer(ctx.dir),
       }]
     },
   },
 ]
 
-function markdownPointer() {
+function markdownPointer(dir = 'docs') {
   return [
     '## How work is done here',
     '',
     'Read these before planning or editing. They are the authority; this block is a pointer.',
     '',
-    ...pointerLines().map((l) => `- ${l.text}`),
+    ...pointerLines(dir).map((l) => `- ${l.text}`),
     '',
     PROPOSE_NOTE,
     '',
