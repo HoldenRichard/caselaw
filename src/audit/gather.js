@@ -59,8 +59,14 @@ export async function gather(root, { now = new Date() } = {}) {
   const adrs = await gatherAdrs(root, dir)
   const borrowed = await gatherBorrowed(root, rules, answers, { now, notes })
   let optimizer = null
+  let harnessChanges = []
   if (answers) {
     try { optimizer = await (await import('../core/optimizer.js')).optimizerSignals({ root, doc: answers, now }) } catch (err) { notes.push(`optimizer: ${err.message}`) }
+    try {
+      const h = await import('../core/harness.js')
+      const log = await h.readLog(root)
+      if (log.length) harnessChanges = h.evaluateChanges(log, await h.measureSignals({ root, doc: answers, now, borrowed }), now)
+    } catch (err) { notes.push(`harness: ${err.message}`) }
   }
   const gitignoreClaims = await gatherGitignoreClaims(root, docTexts)
 
@@ -69,7 +75,7 @@ export async function gather(root, { now = new Date() } = {}) {
     answers, manifest,
     gatesConfig: gatesConfig ?? gatesStore.emptyConfig(),
     rules, docTexts, docRefs, untracked, authority, staleCommands, adrs, gitignoreClaims,
-    fireCounts, earnedFires, drifted, installAgeDays, borrowed, optimizer,
+    fireCounts, earnedFires, drifted, installAgeDays, borrowed, optimizer, harnessChanges,
     installed: Boolean(answers || manifest),
   }
 }

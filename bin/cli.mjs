@@ -49,6 +49,7 @@ import { runChecks } from '../src/audit/checks.js'
 import { formatReport, toJson, agentPrompt } from '../src/audit/report.js'
 import { cmdRule, RULE_SUBCOMMANDS } from '../src/commands/rule.js'
 import { cmdGate, GATE_SUBCOMMANDS } from '../src/commands/gate.js'
+import { cmdHarness, HARNESS_SUBCOMMANDS } from '../src/commands/harness.js'
 
 const require = createRequire(import.meta.url)
 const pExecFile = promisify(execFile)
@@ -73,11 +74,13 @@ export const COMMANDS = {
   detect: { help: 'print what Stage 0 sees, and ask nothing' },
   rule: { subs: RULE_SUBCOMMANDS, help: 'the case-law loop: draft, ratify, adopt, promote' },
   gate: { subs: GATE_SUBCOMMANDS, help: 'run a gate by hand; promote one that has earned it' },
+  harness: { subs: HARNESS_SUBCOMMANDS, help: 'the harness\'s own changes: propose, apply, reject, revert, log' },
 }
 
 export const BOOL_FLAGS = ['help', 'dry-run', 'yes', 'force', 'json', 'agent', 'strict', 'purge', 'reconfigure', 'draft', 'from-draft']
 export const VALUED_FLAGS = [
   'with', 'doctrine-dir', 'origin', 'trigger', 'rule', 'enforcement', 'by', 'reason', 'what', 'apply',
+  'set', 'enable', 'disable', 'autonomy', 'note', 'why', 'signal', 'window',
   'kind', 'id', 'paths', 'patterns', 'message', 'command', 'args', 'when', 'require', 'extract', 'assert',
 ]
 export const KNOWN_FLAGS = [...BOOL_FLAGS, ...VALUED_FLAGS]
@@ -104,6 +107,11 @@ export const USAGE = `caselaw ${CLI_VERSION}
   caselaw gate test <id>        run one gate over the whole tree and show what it would catch
   caselaw gate baseline         run every gate over the whole tree
   caselaw gate promote <id>     warn -> block, once the gate has earned it
+  caselaw harness propose       a change to the harness, with --why (evidence) and --signal (an agent may)
+  caselaw harness apply <id>    apply a proposed change — a human, at a terminal
+  caselaw harness reject <id>   reject one — a human, at a terminal
+  caselaw harness revert <id>   propose undoing an applied change
+  caselaw harness log           every change, and whether it helped
   caselaw --help
 
 Options
@@ -126,6 +134,14 @@ Options
   --reason <text>        rule reject / rule demote: why
   --what <text>          rule catch: what it caught, with a commit, a date or an issue
   --apply <id>           optimize: apply one proposal it printed — a human, at a terminal
+  --set <key>=<n>        harness propose: a setting (harness.load_budget, harness.demotion_days, authority.retest_days)
+  --enable <id>          harness propose: put a default (D1-D6) or a trigger (T1-T7) in force
+  --disable <id>         harness propose: take one out of force (always a human's)
+  --autonomy <preset>    harness propose: ask-first | custom | tune-itself
+  --note <text>          harness propose: a change made by hand, recorded
+  --why <text>           harness propose: the local evidence, with a commit, a date or an issue
+  --signal <name>        harness propose: load-words | compactions | idle-borrowed
+  --window <days>        harness propose: when to ask whether it helped (default 30)
   --kind <kind>          rule promote: banned-content | required-content | cross-file |
                          path-scope | paired-edit | shell
   --paths <a,b>          rule promote: the globs the gate applies to
@@ -170,6 +186,7 @@ export async function main(list = argv.slice(2)) {
     case 'detect': return cmdDetect(args, root)
     case 'rule': return cmdRule(args, { root, say, interactive: isInteractive(), prompt: ttyPrompt })
     case 'gate': return cmdGate(args, { root, say })
+    case 'harness': return cmdHarness(args, { root, say, interactive: isInteractive(), prompt: ttyPrompt, rerender: () => rerender(root) })
     default:
       say(`Unknown command "${args.command}".\n`)
       say(USAGE)
@@ -421,6 +438,13 @@ async function cmdOptimize(args, root) {
   for (const f of checked.findings.filter((x) => x.status !== 'ok')) say(`  ${f.status}  ${f.name}: ${f.detail}`)
   say(checked.ok ? '  doctor: the wiring is still live.' : '  doctor: something is configured but not working; see above.')
   return checked.ok ? 0 : 1
+}
+
+/** Re-render the managed files after the harness changed its own answers. */
+async function rerender(root) {
+  const { doc, manifest, plan } = await planUpgrade({ root, detected: await detect(root) })
+  await writePlan({ root, plan, manifest, doc })
+  say(formatPlan(plan, { root }))
 }
 
 async function cmdReview(args, root) {

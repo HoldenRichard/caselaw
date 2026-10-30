@@ -103,6 +103,7 @@ file and no `.claude/` directory.
 | `caselaw review` | a review prompt for a **different** model |
 | `caselaw optimize` | measure what a session loads; propose what to compact or trim, for a human to apply |
 | `caselaw rule catch` · `caselaw rule demote` | record what a rule caught; move one back to candidates |
+| `caselaw harness propose` · `caselaw harness apply` · `caselaw harness log` | the harness changing itself: an agent proposes with evidence; the bounds or a human apply; the log says whether it helped |
 | `caselaw eject` | remove the tooling, keep everything you wrote |
 
 Every command a file in this repository names is checked against the dispatcher by a test. The

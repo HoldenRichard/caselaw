@@ -173,6 +173,19 @@ export const CHECKS = [
     },
   },
   {
+    id: 'harness-changes-helped',
+    describe: 'each change the harness made to itself improved the signal it named',
+    run({ harnessChanges = [] }) {
+      // C1, applied to the harness: a change counts once it has done what it was for.
+      return harnessChanges
+        .filter((e) => !e.helped && !e.revertedBy)
+        .map((e) => finding('harness-changes-helped', SEVERITY.WARN,
+          `harness change ${e.id} was to improve ${e.signal}; it was ${e.before} and after its window it is ${e.after}`, {
+            hint: `\`caselaw harness revert ${e.id}\` proposes undoing it. Keep it if something else explains the number.`,
+          }))
+    },
+  },
+  {
     id: 'dead-rules',
     describe: 'rules whose subject no longer exists',
     run({ rules }) {
