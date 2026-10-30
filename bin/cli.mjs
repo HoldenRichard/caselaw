@@ -50,6 +50,8 @@ import { formatReport, toJson, agentPrompt } from '../src/audit/report.js'
 import { cmdRule, RULE_SUBCOMMANDS } from '../src/commands/rule.js'
 import { cmdGate, GATE_SUBCOMMANDS } from '../src/commands/gate.js'
 import { cmdHarness, HARNESS_SUBCOMMANDS } from '../src/commands/harness.js'
+import { cmdPersonal, PERSONAL_SUBCOMMANDS } from '../src/commands/personal.js'
+import { loadPersonal, personalDefaults, personalOff } from '../src/core/personal.js'
 
 const require = createRequire(import.meta.url)
 const pExecFile = promisify(execFile)
@@ -75,6 +77,7 @@ export const COMMANDS = {
   rule: { subs: RULE_SUBCOMMANDS, help: 'the case-law loop: draft, ratify, adopt, promote' },
   gate: { subs: GATE_SUBCOMMANDS, help: 'run a gate by hand; promote one that has earned it' },
   harness: { subs: HARNESS_SUBCOMMANDS, help: 'the harness\'s own changes: propose, apply, reject, revert, log' },
+  personal: { subs: PERSONAL_SUBCOMMANDS, help: 'your own layer across your repositories, on this machine only' },
 }
 
 export const BOOL_FLAGS = ['help', 'dry-run', 'yes', 'force', 'json', 'agent', 'strict', 'purge', 'reconfigure', 'draft', 'from-draft']
@@ -112,6 +115,8 @@ export const USAGE = `caselaw ${CLI_VERSION}
   caselaw harness reject <id>   reject one — a human, at a terminal
   caselaw harness revert <id>   propose undoing an applied change
   caselaw harness log           every change, and whether it helped
+  caselaw personal list         your rules that caught something, across your repositories (this machine only)
+  caselaw personal export <f>   the same, for sharing by hand: no paths, no repository names
   caselaw --help
 
 Options
@@ -186,6 +191,7 @@ export async function main(list = argv.slice(2)) {
     case 'detect': return cmdDetect(args, root)
     case 'rule': return cmdRule(args, { root, say, interactive: isInteractive(), prompt: ttyPrompt })
     case 'gate': return cmdGate(args, { root, say })
+    case 'personal': return cmdPersonal(args, { say })
     case 'harness': return cmdHarness(args, { root, say, interactive: isInteractive(), prompt: ttyPrompt, rerender: () => rerender(root) })
     default:
       say(`Unknown command "${args.command}".\n`)
@@ -220,6 +226,7 @@ async function cmdCheck(args, root) {
 
 async function cmdUpgrade(args, root) {
   const detected = await detect(root)
+  if (!personalOff()) detected.personal = personalDefaults(await loadPersonal())
 
   let planned
   try {
@@ -243,6 +250,8 @@ async function cmdUpgrade(args, root) {
       } finally {
         await prompt.close()
       }
+      snapshotPersonal(doc, detected)
+      await answersStore.save(root, doc)
       ;({ doc, manifest, plan } = await planUpgrade({ root, detected, force: args.force }))
     } else {
       say(`\n  ${fresh.length} question(s) added since template ${doc.templateVersion}; run \`caselaw init\` at a terminal to answer them. Until then they are marked as holes.`)
@@ -440,6 +449,19 @@ async function cmdOptimize(args, root) {
   return checked.ok ? 0 : 1
 }
 
+/**
+ * The personal defaults this install accepted, copied into the answers: the
+ * build reads them from there, so CI and every other machine render the same
+ * files without the owner's home folder.
+ */
+function snapshotPersonal(doc, detected) {
+  for (const id of (doc.answers['harness.defaults'] || []).filter((v) => typeof v === 'string' && v.startsWith('P:'))) {
+    const p = (detected.personal || []).find((x) => x.id === id)
+    if (!p || doc.harness?.personal?.[p.name]) continue
+    doc.harness = { ...(doc.harness || {}), personal: { ...(doc.harness?.personal || {}), [p.name]: { name: p.name, trigger: p.trigger, rule: p.rule, repos: p.repos, last: p.last } } }
+  }
+}
+
 /** Re-render the managed files after the harness changed its own answers. */
 async function rerender(root) {
   const { doc, manifest, plan } = await planUpgrade({ root, detected: await detect(root) })
@@ -469,6 +491,7 @@ async function cmdInit(args, root) {
   say(`\ncaselaw ${CLI_VERSION} — ${root}`)
   say('Reading the repository before asking you anything…')
   const detected = await detect(root)
+  if (!personalOff()) detected.personal = personalDefaults(await loadPersonal())
   say(renderDetection(detected))
 
   for (const w of detected.warnings || []) {
@@ -645,6 +668,7 @@ async function initFromDraft({ root, doc, detected, args }) {
 async function finishInit({ root, doc, detected, args, prompt }) {
   // The human just saw the triggers that fire; the next upgrade proposes only new ones.
   markOffered(doc, detected)
+  snapshotPersonal(doc, detected)
   const artifacts = await buildArtifacts({ doc, detected })
 
   // Our own no-machine-paths rule, applied to our own output before it lands.

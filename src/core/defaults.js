@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { render } from '../render/engine.js'
 import { archivePrecedent } from './precedent.js'
+import { personalRuleBody } from './personal.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 export const DEFAULTS_ROOT = join(HERE, '../../templates/defaults')
@@ -40,15 +41,34 @@ export function acceptedDefaults(doc = {}) {
   return DEFAULTS.filter((d) => chosen.includes(d.id))
 }
 
+const acceptsAny = (doc) => acceptedDefaults(doc).length > 0 || (doc.answers?.['harness.defaults'] || []).some((v) => typeof v === 'string' && v.startsWith('P:'))
+
 /**
  * The date the defaults came into force here, stamped once. The demotion
  * window counts from it, so it must not move on every upgrade, and an install
  * that accepts them in a later upgrade must not inherit its first install date.
  */
 export function defaultsSince(doc, now = new Date()) {
-  if (!acceptedDefaults(doc).length) return null
+  if (!acceptsAny(doc)) return null
   if (!doc.harness?.since) doc.harness = { ...(doc.harness || {}), since: now.toISOString().slice(0, 10) }
   return doc.harness.since
+}
+
+/**
+ * The owner's personal defaults this install accepted, snapshotted into the
+ * answers at install (doc.harness.personal), so the build never needs the
+ * owner's home folder and CI renders the same files.
+ */
+export function personalArtifacts({ doc, dir }) {
+  const chosen = (doc.answers?.['harness.defaults'] || []).filter((v) => typeof v === 'string' && v.startsWith('P:'))
+  const since = doc.harness?.since || 'install'
+  const days = Number.isFinite(doc.answers?.['harness.demotion_days']) ? doc.answers['harness.demotion_days'] : DEMOTION_DAYS
+  const out = []
+  for (const id of chosen) {
+    const p = doc.harness?.personal?.[id.slice(2)]
+    if (p) out.push(...withArchivedPrecedent(doc, dir, p.name, personalRuleBody(p, { since, days })))
+  }
+  return out
 }
 
 /** The accepted defaults as files in active/. */

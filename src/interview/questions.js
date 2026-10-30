@@ -283,7 +283,12 @@ export const QUESTIONS = [
     prompt: 'Which defaults should be in force from today?',
     help:
       'Each recurred in two or more of the projects caselaw came from, and each arrives with those incidents as its precedent. Its first catch here becomes your own Origin; one that catches nothing in 60 days of commits, the audit asks about.',
-    options: () => DEFAULTS.map((d) => ({ value: d.id, label: `${d.id}  ${d.label} (caught in ${d.caught})` })),
+    // The owner's own rules that caught failures in two or more of their
+    // repositories come next (the personal layer); detection supplies them.
+    options: (ctx) => [
+      ...DEFAULTS.map((d) => ({ value: d.id, label: `${d.id}  ${d.label} (caught in ${d.caught})` })),
+      ...(ctx?.detected?.personal || []).map((p) => ({ value: p.id, label: `${p.id}  ${p.name}: yours, caught in ${p.repos} of your repositories` })),
+    ],
     defaultAll: true,
     generates: ['docs/authority-split.md#how-the-harness-changes'],
   },

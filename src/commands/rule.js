@@ -28,6 +28,7 @@ import { SKIPPED } from '../core/answers.js'
 import * as answersStore from '../core/answers.js'
 import { DEFAULTS } from '../core/defaults.js'
 import { TRIGGERS } from '../core/triggers.js'
+import { recordPersonalCatch, personalOff, PERSONAL_REPOS } from '../core/personal.js'
 
 const pExecFile = promisify(execFile)
 
@@ -250,6 +251,13 @@ async function recordCatch(args, { root, say }) {
   const r = await rules.recordCatch(root, args.name, { what: args.opt.what, by: args.opt.by || (await gitUserName(root)) || 'unknown' })
   say(`  Recorded in .caselaw/catches.jsonl (${r.at}).`)
   if (r.firstLocal) say(`  Its first catch here: written into ${r.path} as this project's own Origin.`)
+  // The owner's own record across their repositories (0.3), on this machine only.
+  const active = (await rules.listRules(root)).active.find((x) => x.name === args.name)
+  if (active && !personalOff()) {
+    const p = await recordPersonalCatch({ root, at: r.at, rule: { name: args.name, trigger: active.parsed.trigger, rule: active.parsed.rule } })
+    const repos = new Set((p?.catches || []).map((c) => c.repo)).size
+    if (repos >= PERSONAL_REPOS) say(`  It has now caught failures in ${repos} of your repositories: your next \`caselaw init\` offers it as a personal default.`)
+  }
   return 0
 }
 

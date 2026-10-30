@@ -17,7 +17,7 @@ import { doctrineDirOf, DEFAULT_DOCTRINE_DIR } from '../core/doctrine.js'
 import { selectAdapters, commandCollisions } from '../adapters/index.js'
 import { isoDate } from '../core/dates.js'
 import { render } from '../render/engine.js'
-import { defaultArtifacts, defaultsSince } from '../core/defaults.js'
+import { defaultArtifacts, defaultsSince, personalArtifacts } from '../core/defaults.js'
 import { triggerArtifacts, acceptedTriggers, writerGuardOn, writerGuard } from '../core/triggers.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -155,7 +155,7 @@ export async function buildArtifacts({ doc, detected, adapterIds = null, modules
   // defaults the human accepted are the one exception (0.3): content, each
   // with its precedent, and active/ is no longer empty, so the file
   // explaining why it is empty goes only where it still is.
-  const defaults = await defaultArtifacts({ doc, dir })
+  const defaults = [...(await defaultArtifacts({ doc, dir })), ...personalArtifacts({ doc, dir })]
   for (const rel of await templateFiles('rules')) {
     if (defaults.length && rel === 'active/WHY-THIS-IS-EMPTY.md') continue
     out.push({
