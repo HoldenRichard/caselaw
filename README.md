@@ -100,7 +100,7 @@ file and no `.claude/` directory.
 | `caselaw rule propose` · `caselaw rule ratify` · `caselaw rule reject` | an agent drafts; a human ratifies or rejects |
 | `caselaw rule adopt` · `caselaw rule promote` | take a candidate with your own Origin; climb the ladder |
 | `caselaw gate test` · `caselaw gate baseline` · `caselaw gate promote` | run one gate, run them all, warn → block on evidence |
-| `caselaw review` | a review prompt for a **different** model |
+| `caselaw review` | a review prompt for a **different** model; `--role refuter`, `verifier` or `judge` reviews one change against its claim, never the builder's reasoning |
 | `caselaw optimize` | measure what a session loads; propose what to compact or trim, for a human to apply |
 | `caselaw rule catch` · `caselaw rule demote` | record what a rule caught; move one back to candidates |
 | `caselaw harness propose` · `caselaw harness apply` · `caselaw harness log` | the harness changing itself: an agent proposes with evidence; the bounds or a human apply; the log says whether it helped |

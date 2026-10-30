@@ -117,3 +117,114 @@ export async function readDoctrine(root, paths = [`${doctrineDirAt(root)}/author
   }
   return out
 }
+
+// ---------------------------------------------------------------------------
+// Review roles (0.3): refuter, verifier, judge
+// ---------------------------------------------------------------------------
+
+export const ROLES = ['refuter', 'verifier', 'judge']
+/** A claim is what the change should do, in a sentence or two. Longer is an argument, and arguments are the builder's reasoning. */
+export const MAX_CLAIM = 300
+export const MAX_DIFF = 60_000
+
+const ROLE_BRIEF = {
+  refuter: {
+    who: 'a model from a different family than the one that built the change, if you have one',
+    job: `Try to show the claim is false. Find the input, state or sequence for which this change does not do
+what it claims, or does something it should not. Read the code it touches, not just the diff. You are
+done when you have a concrete failing case, or when you have honestly tried the obvious ways to break
+it and say which.`,
+    contract: `VERDICT: PASS   (you could not refute it; list what you tried)
+VERDICT: FAIL   (you refuted it; give the failing case: inputs or state -> what happens instead)`,
+  },
+  verifier: {
+    who: 'any model that can read this repository and run its commands; not the one that built the change',
+    job: `Check the claim against the change. Run what would show it holds (the tests it touches, the
+command it changes, the file it writes) and report each as a verification line: what ran, who ran it,
+what it showed. Then say what you did not cover: the cases you could not run here, the files you did
+not open, anything the project marks as something an agent cannot verify.`,
+    contract: `VERDICT: PASS   (every verification line supports the claim)
+VERDICT: FAIL   (one does not; quote it)`,
+  },
+  judge: {
+    who: 'a third model, or the human',
+    job: `You have the change, its claim, and two reviews of it. Decide whether the claim holds. Weigh each
+finding on its evidence: a refutation with a concrete failing case outweighs a pass, and a verification
+line that did not run is not a pass. You may decide that neither review is good enough to decide on.`,
+    contract: `VERDICT: PASS       (the claim holds on the evidence)
+VERDICT: FAIL       (it does not; name the finding that decides it)
+VERDICT: ESCALATE   (a human has to look; say at what)`,
+  },
+}
+
+/**
+ * The verdict a reviewer returned, from its first non-empty line. A review
+ * without an explicit verdict is not a review: a judge is not built on one.
+ *
+ * @returns {{verdict: 'PASS'|'FAIL'|'ESCALATE'|null, body: string}}
+ */
+export function parseVerdict(text = '') {
+  const lines = String(text).split(/\r?\n/)
+  const at = lines.findIndex((l) => l.trim())
+  const m = at === -1 ? null : /^\s*VERDICT:\s*(PASS|FAIL|ESCALATE)\b/i.exec(lines[at])
+  return { verdict: m ? m[1].toUpperCase() : null, body: lines.slice(at + 1).join('\n').trim() }
+}
+
+/**
+ * A role's prompt: the change and what it claims, the project's boundaries,
+ * and the output contract. Never the builder's reasoning: no commit message
+ * body, no plan, no transcript, only the claim.
+ */
+export function buildRolePrompt({ role, claim, diff, truncated = false, answers = null, rules = { active: [] }, builder = null, reviews = {} }) {
+  if (!ROLES.includes(role)) throw new Error(`--role is one of ${ROLES.join(', ')}`)
+  const c = String(claim || '').replace(/\s+/g, ' ').trim()
+  if (!c) throw new Error('--claim "<what the change should do>" is required: a reviewer checks a claim, not a mood.')
+  if (c.length > MAX_CLAIM) throw new Error(`The claim is ${c.length} characters; keep it to ${MAX_CLAIM}. A claim says what the change does; why the builder believes it is exactly what a reviewer must not be given.`)
+  if (!String(diff || '').trim()) throw new Error('There is no change to review: the diff is empty.')
+  const brief = ROLE_BRIEF[role]
+  let given = ''
+  if (role === 'judge') {
+    for (const r of ['refuter', 'verifier']) {
+      const v = parseVerdict(reviews[r])
+      if (!v.verdict) throw new Error(`The ${r}'s review has no VERDICT line first. Ask for one; a review without an explicit pass or fail is not something to judge.`)
+      given += `\n## The ${r}'s review (VERDICT: ${v.verdict})\n\n${v.body || '(no findings given)'}\n`
+    }
+  }
+  const rulesInPlay = rules.active.length
+    ? rules.active.map((r) => `- ${r.name}: when ${r.trigger || '(no trigger)'}`).join('\n')
+    : '(none)'
+  return `You are the ${role.toUpperCase()} for one change to a software project. Run this as ${brief.who}${builder ? `; the change was built by ${builder}` : ''}.
+You are given the change and what it claims. You are not given why its author believed it works, on purpose:
+judge the change, not the argument for it.
+
+## The claim
+
+${c}
+
+## What this project says an agent cannot verify here
+
+${summariseBoundaries(answers)}
+
+## The project's rules (each applies only when its trigger matches)
+
+${rulesInPlay}
+
+## Your job
+
+${brief.job}
+${given}
+## The change${truncated ? ` (cut at ${MAX_DIFF} characters: say that you did not see the rest)` : ''}
+
+\`\`\`diff
+${String(diff).slice(0, MAX_DIFF)}
+\`\`\`
+
+## Output contract
+
+The first line of your answer is the verdict, exactly one of:
+
+${brief.contract}
+
+Then the findings, each with a file and a line. Do not soften the verdict, and do not invent a finding:
+each one becomes work for a human who trusts you did not.`
+}

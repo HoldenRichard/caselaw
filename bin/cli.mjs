@@ -16,7 +16,7 @@
  * file dispatches. The first public release advertised seven that were not.
  */
 
-import { writeFile, mkdir } from 'node:fs/promises'
+import { writeFile, mkdir, readFile } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { realpathSync } from 'node:fs'
@@ -40,7 +40,7 @@ import { scanMachinePaths } from '../src/core/secrets.js'
 import { buildArtifacts } from '../src/generate/artifacts.js'
 import { markOffered, applyTriggers } from '../src/core/triggers.js'
 import { check, planUpgrade, planEject, applyEject, doctor, newQuestionsSince } from '../src/commands/lifecycle.js'
-import { buildReviewPrompt } from '../src/commands/review.js'
+import { buildReviewPrompt, buildRolePrompt, MAX_DIFF } from '../src/commands/review.js'
 import { selectAdapters } from '../src/adapters/index.js'
 import { gather } from '../src/audit/gather.js'
 import { optimizerSignals, optimizerProposals, applyProposal } from '../src/core/optimizer.js'
@@ -84,6 +84,7 @@ export const BOOL_FLAGS = ['help', 'dry-run', 'yes', 'force', 'json', 'agent', '
 export const VALUED_FLAGS = [
   'with', 'doctrine-dir', 'origin', 'trigger', 'rule', 'enforcement', 'by', 'reason', 'what', 'apply',
   'set', 'enable', 'disable', 'autonomy', 'note', 'why', 'signal', 'window',
+  'role', 'claim', 'base', 'builder', 'refuter', 'verifier',
   'kind', 'id', 'paths', 'patterns', 'message', 'command', 'args', 'when', 'require', 'extract', 'assert',
 ]
 export const KNOWN_FLAGS = [...BOOL_FLAGS, ...VALUED_FLAGS]
@@ -147,6 +148,12 @@ Options
   --why <text>           harness propose: the local evidence, with a commit, a date or an issue
   --signal <name>        harness propose: load-words | compactions | idle-borrowed
   --window <days>        harness propose: when to ask whether it helped (default 30)
+  --role <role>          review: refuter | verifier | judge, for one change
+  --claim <text>         review --role: what the change should do (the reviewer gets this, never the reasoning)
+  --base <ref>           review --role: review base...HEAD (default: the working tree against HEAD)
+  --builder <model>      review --role: who built it, so the reviewer can be someone else
+  --refuter <file>       review --role judge: the refuter's answer
+  --verifier <file>      review --role judge: the verifier's answer
   --kind <kind>          rule promote: banned-content | required-content | cross-file |
                          path-scope | paired-edit | shell
   --paths <a,b>          rule promote: the globs the gate applies to
@@ -471,14 +478,37 @@ async function rerender(root) {
 
 async function cmdReview(args, root) {
   const ctx = await gather(root)
-  say(buildReviewPrompt({
-    root,
-    detected: await detect(root),
-    answers: ctx.answers,
-    rules: ctx.rules,
-    gatesConfig: ctx.gatesConfig,
-  }))
-  return 0
+  if (!args.opt.role) {
+    say(buildReviewPrompt({
+      root,
+      detected: await detect(root),
+      answers: ctx.answers,
+      rules: ctx.rules,
+      gatesConfig: ctx.gatesConfig,
+    }))
+    return 0
+  }
+  // A review role (0.3): the change, from git, and the claim; nothing else of the builder's.
+  const range = args.opt.base ? [`${args.opt.base}...HEAD`] : ['HEAD']
+  let diff = ''
+  try {
+    diff = (await pExecFile('git', ['diff', '--no-color', ...range], { cwd: root, maxBuffer: 32 * 1024 * 1024 })).stdout
+  } catch (err) {
+    say(`  git could not describe the change: ${err.message.split('\n')[0]}`)
+    return 1
+  }
+  const read = async (f) => (f ? readFile(resolve(f), 'utf8') : '')
+  try {
+    say(buildRolePrompt({
+      role: args.opt.role, claim: args.opt.claim, diff, truncated: diff.length > MAX_DIFF,
+      answers: ctx.answers, rules: ctx.rules, builder: args.opt.builder || null,
+      reviews: { refuter: await read(args.opt.refuter), verifier: await read(args.opt.verifier) },
+    }))
+    return 0
+  } catch (err) {
+    say(`  ${err.message}`)
+    return 2
+  }
 }
 
 async function cmdDetect(args, root) {
