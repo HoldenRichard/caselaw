@@ -52,6 +52,10 @@ export function buildModel({ answers = {}, detected = {}, projectName }) {
     gates,
     humanProof: plain(answers['authority.human_proof'] || '', 600),
     publishing,
+    // The project's own pull-request checklist, which the DEF-274 reviewer
+    // found missing (pyvisa's requires a CHANGES entry).
+    prChecklist: (detected.instructions?.prChecklist?.items || []).map((i) => plain(i, 200)),
+    prTemplate: plain(detected.instructions?.prChecklist?.path || '', 120),
     tier1Example: anyCommand,
   }
 }

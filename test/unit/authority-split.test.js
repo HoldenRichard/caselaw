@@ -47,12 +47,24 @@ describe('authority split — model', () => {
   })
 
   test('POSITIVE CONTROL: an unverified command is labelled unverified, never as proof', () => {
+    // Without the project's own answer: under one, an unverified command is
+    // left out rather than repeated (round 2 of the DEF-274 re-score).
     const m = buildModel({
       ...MOBILE_APP,
+      answers: { ...MOBILE_APP.answers, 'authority.agent_reach': '' },
       detected: { commands: { test: { cmd: 'npm test', exitCode: null, verifiedAt: null } } },
     })
     assert.match(m.can[0], /unverified/)
     assert.doesNotMatch(m.can[0], /verified 20/)
+  })
+
+  test('under the project\'s own answer, an unverified command is left out; a verified one stays', () => {
+    const m = buildModel({
+      ...MOBILE_APP,
+      detected: { commands: { test: { cmd: 'npm test', exitCode: null }, build: { cmd: 'make', exitCode: 0, verifiedAt: '2026-10-31' } } },
+    })
+    assert.doesNotMatch(m.can.join('\n'), /npm test/)
+    assert.match(m.can.join('\n'), /build \(`make`, verified 2026-10-31\)/)
   })
 
   test('with no answers at all it still produces a valid model rather than throwing', () => {

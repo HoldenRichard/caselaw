@@ -28,13 +28,13 @@ const SETUP_STEP = /^(install|set ?up|setup|cache|checkout|print|configure|prepa
 const GATE_NAME = /(build|test|lint|check|typecheck|ci)[^/]*\.ya?ml/i
 
 export function emptyCiGates() {
-  return { gates: [], shared: [] }
+  return { gates: [], shared: [], contexts: [] }
 }
 
 /**
  * @param {string} root
  * @param {{files: string[]}} walked
- * @returns {Promise<{ciGates: {gates: object[], shared: object[]}, warnings: object[]}>}
+ * @returns {Promise<{ciGates: {gates: object[], shared: object[], contexts: object[]}, warnings: object[]}>}
  */
 export async function detectCiGates(root, walked) {
   const ciGates = emptyCiGates()
@@ -43,10 +43,51 @@ export async function detectCiGates(root, walked) {
     let text
     try { text = await readFile(join(root, file), 'utf8') } catch { continue }
     if (!runsOnChange(text) || publishSteps(text).length) continue
-    for (const g of runSteps(text)) if (ciGates.gates.length < MAX_GATES) ciGates.gates.push({ file, ...g })
+    const gates = runSteps(text)
+    for (const g of gates) if (ciGates.gates.length < MAX_GATES) ciGates.gates.push({ file, ...g })
     for (const s of sharedWorkflows(text)) ciGates.shared.push({ file, ...s })
+    const context = runContext(text)
+    if (gates.length && (context.services.length || context.secrets.length || context.matrix.length)) ciGates.contexts.push({ file, ...context })
   }
   return { ciGates, warnings: [] }
+}
+
+/**
+ * What CI has that a local run may not: services it starts, secrets it is
+ * given, and the matrix it fans out over. Round 2 of the DEF-274 re-score:
+ * ntfy's tests run against a Postgres service and an S3 secret and skip
+ * themselves locally without them, so a local pass was read as CI's pass.
+ */
+/** Secrets that upload coverage or publish; a test run does not need them. */
+const NOT_FOR_TESTS = /^(GITHUB_TOKEN$|CODECOV|COVERALLS|SONAR|NPM|NODE_AUTH|PYPI|TWINE|DOCKER|GH_PAT)/
+
+export function runContext(text) {
+  const lines = text.split(/\r?\n/)
+  const indent = (l) => l.match(/^\s*/)[0].length
+  const services = []
+  const matrix = []
+  for (let i = 0; i < lines.length; i++) {
+    const s = /^(\s*)services:\s*$/.exec(lines[i])
+    if (s) {
+      const base = s[1].length
+      const child = lines.slice(i + 1).find((l) => l.trim())
+      const at = child ? indent(child) : base + 2
+      for (let j = i + 1; j < lines.length && (!lines[j].trim() || indent(lines[j]) > base); j++) {
+        const m = /^\s*([\w-]+):\s*$/.exec(lines[j])
+        if (m && indent(lines[j]) === at) services.push(m[1])
+      }
+    }
+    const mx = /^(\s*)matrix:\s*$/.exec(lines[i])
+    if (mx) {
+      const base = mx[1].length
+      for (let j = i + 1; j < lines.length && (!lines[j].trim() || indent(lines[j]) > base); j++) {
+        const m = /^\s*([\w-]+):\s*\[(.*)\]\s*$/.exec(lines[j])
+        if (m && m[1] !== 'include' && m[1] !== 'exclude') matrix.push({ key: m[1], count: m[2].split(',').filter((x) => x.trim()).length })
+      }
+    }
+  }
+  const secrets = [...new Set([...text.matchAll(/\$\{\{\s*secrets\.([A-Za-z0-9_]+)\s*\}\}/g)].map((m) => m[1]))].filter((s) => !NOT_FOR_TESTS.test(s))
+  return { services: [...new Set(services)], secrets, matrix }
 }
 
 /** Does this workflow run on a pull request, or on a push that is not only a tag? */

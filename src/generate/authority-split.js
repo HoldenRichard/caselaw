@@ -171,6 +171,15 @@ export function buildModel({ answers = {}, provenance = {}, detected = {}, proje
     outside: (answers['outside.authority'] || []).map((o) => OUTSIDE_LABELS[o] || plain(o, 200)),
     declares: (answers['outside.claims'] || []).length > 0,
     publishing: publishingRows(detected.publishing),
+    // Round 2 of the DEF-274 re-score: the repository's own instructions come
+    // first, and where they name a branch that publishes, this file says so.
+    instructions: instructionsLine(detected.instructions),
+    mentions: (detected.instructions?.mentions || []).map((m) => ({
+      at: `${plain(m.path, 120)}:${m.line}`,
+      said: plain(m.said, 80),
+      what: plain(m.what, 160),
+      publisher: plain(m.at, 160),
+    })),
     sources: buildSources(provenance, answers),
   }
 }
@@ -232,17 +241,24 @@ function buildCanList({ answers, detected, selected = [] }) {
   for (const g of gates) byFile.set(g.file, [...(byFile.get(g.file) || []), g])
   for (const [file, list] of byFile) {
     const steps = list.map((g) => `\`${plain(g.cmd, 160)}\`${g.step ? ` (${plain(g.step, 80)})` : ''}`).join('; ')
-    can.push(`Run what CI runs on a change, in its order (\`${file}\`): ${steps}.`)
+    const context = (detected.ciGates?.contexts || []).find((c) => c.file === file)
+    can.push(`Run what CI runs on a change, in its order (\`${file}\`): ${steps}.${context ? ` ${ciContext(context)}` : ''}`)
   }
   const shared = detected.ciGates?.shared || []
   if (shared.length) {
     can.push(`CI also runs workflows kept in another repository, whose steps are not visible here: ${shared.map((s) => `\`${plain(s.uses, 160)}\``).join(', ')}.`)
   }
 
+  // The commands inferred from the language are a fallback for a project with
+  // no CI to read. Under the project's own answer, the unverified ones only
+  // repeated it with "unverified" attached (round 2 of the DEF-274 re-score);
+  // a command measured to pass is proof, and stays.
+  const answered = Boolean(answers['authority.agent_reach'])
   const cmds = gates.length ? {} : detected.commands || {}
   const verified = []
   for (const [name, entry] of Object.entries(cmds)) {
     if (!entry || !entry.cmd) continue
+    if (answered && entry.exitCode !== 0) continue
     if (name === 'test' && selected.includes('full-suite')) continue
     const timing = entry.durationMs ? `, ${(entry.durationMs / 1000).toFixed(0)}s` : ''
     const proof = entry.exitCode === 0 ? `verified ${entry.verifiedAt}${timing}` : 'unverified'
@@ -255,6 +271,26 @@ function buildCanList({ answers, detected, selected = [] }) {
 
   if (!can.length) can.push('Read and edit source in this repository.')
   return can
+}
+
+/** What CI has that a run here may not: its services, secrets and matrix, said plainly. */
+function ciContext({ services = [], secrets = [], matrix = [] }) {
+  const has = [
+    ...services.map((s) => `a ${plain(s, 40)} service`),
+    ...(secrets.length ? [`the secret${secrets.length > 1 ? 's' : ''} ${secrets.map((s) => `\`${plain(s, 60)}\``).join(', ')}`] : []),
+  ]
+  const out = []
+  if (has.length) out.push(`CI runs them with ${has.join(' and ')}; a test that needs one may skip itself here, so a pass here is not CI's pass.`)
+  if (matrix.length) out.push(`CI runs them across ${matrix.map((m) => `${m.count} ${plain(m.key, 40)}`).join(' × ')}; a run here covers one combination.`)
+  return out.join(' ')
+}
+
+/** Files in which the repository already instructs agents, named before anything this file adds. */
+function instructionsLine(instructions = {}) {
+  const files = instructions.files || []
+  if (!files.length) return ''
+  const named = files.map((f) => `\`${plain(f.path, 120)}\`${f.kind === 'AI policy' ? ' (its AI policy)' : ''}`)
+  return named.join(', ')
 }
 
 export async function generate(input) {

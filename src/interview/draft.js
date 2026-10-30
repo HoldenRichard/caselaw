@@ -56,7 +56,8 @@ export function buildDraft({ doc, detected }) {
       signals: detected.signals ?? {},
       generatedDocs: detected.stack?.generatedDocs ?? [],
       publishing: detected.publishing ?? [],
-      ciGates: detected.ciGates ?? { gates: [], shared: [] },
+      ciGates: detected.ciGates ?? { gates: [], shared: [], contexts: [] },
+      instructions: detected.instructions ?? { files: [], prChecklist: null, mentions: [] },
     },
     questions: QUESTIONS.map((q) => ({
       id: q.id,

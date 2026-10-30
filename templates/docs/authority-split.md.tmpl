@@ -4,6 +4,11 @@ Generated {{ generatedAt }} from the install interview.{{# if retestDue }} Bound
 
 This file says who can verify what. It is the difference between "the agent said it works" and
 "someone checked". Regenerate it with `caselaw upgrade`; edit `.caselaw/answers.json`, not this file.
+{{# if instructions }}
+
+This repository already tells agents how to work here, in {{ instructions }}. Read those first;
+this file adds who can verify what, and what a push publishes.
+{{/ if }}
 
 ## The agent can
 
@@ -67,6 +72,14 @@ time. Conditions this could not read are quoted, not interpreted.
 
 {{# each publishing }}- **{{ what }}** (`{{ at }}`): when {{ when }}.{{# if conditions }} Only if {{ conditions }}.{{/ if }}{{# if idle }} The workflow also starts on {{ idle }}; those runs do not reach this step.{{/ if }}
 {{/ each }}
+{{# if mentions }}
+
+This repository's own instructions name branches that publish. Pushing to one, or merging into it,
+publishes; opening a pull request into it does not:
+
+{{# each mentions }}- `{{ at }}` names `{{ said }}`: a push to that branch publishes to {{ what }} (`{{ publisher }}`).
+{{/ each }}
+{{/ if }}
 
 {{/ if }}
 {{# if outside }}

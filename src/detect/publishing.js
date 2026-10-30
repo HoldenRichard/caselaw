@@ -60,9 +60,10 @@ export async function detectPublishing(root, walked) {
       // job's `if:` and by every job it needs (round 2 of the DEF-274 re-score:
       // pyvisa's workflow starts by hand and on a schedule, but publishes only
       // on a push).
-      const { when, conditions } = whenStepRuns(events, jobs, s.line)
+      const { when, conditions, branches } = whenStepRuns(events, jobs, s.line)
       s.when = when
       s.conditions = conditions
+      s.branches = branches
       s.what = name(s, { text, jobs, goreleaser, makeRelease })
     }
     out.push({ file, triggers: workflowTriggers(text), publishes: steps })
@@ -162,7 +163,7 @@ function jobAt(jobs, line) {
  * anything else is quoted back, never interpreted.
  */
 export function whenStepRuns(events, jobs, line) {
-  if (!events) return { when: null, conditions: [] }
+  if (!events) return { when: null, conditions: [], branches: [] }
   let allowed = events.map((e) => ({ event: e.event, filters: { ...e.filters } }))
   const conditions = []
   const seen = new Set()
@@ -181,7 +182,8 @@ export function whenStepRuns(events, jobs, line) {
     for (const n of job.needs) visit(jobs.find((j) => j.name === n), false)
   }
   visit(jobAt(jobs, line), true)
-  return { when: allowed.flatMap(({ event, filters }) => phrase(event, filters)), conditions }
+  const branches = allowed.filter((e) => e.event === 'push').flatMap((e) => e.filters.branches || [])
+  return { when: allowed.flatMap(({ event, filters }) => phrase(event, filters)), conditions, branches }
 }
 
 function narrow(events, expr) {

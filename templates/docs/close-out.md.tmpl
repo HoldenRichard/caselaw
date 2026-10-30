@@ -23,6 +23,13 @@ The gates CI runs on a change, in its order. Run them before calling the work do
 {{# each gates }}- [ ] {{ . }}
 {{/ each }}
 {{/ if }}
+{{# if prChecklist }}
+
+This project's own pull-request checklist (`{{ prTemplate }}`):
+
+{{# each prChecklist }}- [ ] {{ . }}
+{{/ each }}
+{{/ if }}
 
 -
 
