@@ -19,6 +19,9 @@ import { BOUNDARY_LABELS, plain, publishingRows } from './authority-split.js'
 const HERE = dirname(fileURLToPath(import.meta.url))
 export const TEMPLATE_PATH = join(HERE, '../../templates/docs/close-out.md.tmpl')
 
+/** The longest job condition a close-out checklist item quotes inline. */
+const CONDITION_INLINE = 160
+
 export function buildModel({ answers = {}, detected = {}, projectName }) {
   const selected = answers['authority.cannot'] || []
   const triage = answers['authority.triage'] || {}
@@ -40,16 +43,25 @@ export function buildModel({ answers = {}, detected = {}, projectName }) {
   // projects. These three carry the project into it: the gates its CI runs,
   // how a human proves a change here, and which pushes publish.
   const gates = (detected.ciGates?.gates || []).slice(0, 8).map((g) => `\`${plain(g.cmd, 160)}\``)
+  // CI's own setup, which its gates need on a clean machine (round 4 of the DEF-274 re-score).
+  const setup = [...new Set((detected.ciGates?.setup || []).map((s) => `\`${plain(s.cmd, 160)}\``))].join(', ')
+  const jobs = new Set((detected.ciGates?.gates || []).slice(0, 8).map((g) => `${g.file}#${g.job ?? ''}`))
   const anyCommand =
     detected.ciGates?.gates?.[0]?.cmd || detected.commands?.test?.cmd || detected.commands?.build?.cmd || 'npm test'
+  // A checklist item is read at a glance; a condition too long for one is
+  // quoted in full in the authority split and pointed to here (round 4:
+  // homebridge's Published? item pasted a 600-character expression).
   const publishing = publishingRows(detected.publishing).map((r) =>
-    `${r.when} — publishes to ${r.what} (\`${r.at}\`)${r.conditions ? `, only if ${r.conditions}` : ''}`)
+    `${r.when} — publishes to ${r.what} (\`${r.at}\`)${!r.conditions ? '' : r.conditions.length > CONDITION_INLINE ? ', only under the conditions quoted in full in the authority split' : `, only if ${r.conditions}`}`)
 
   return {
     project: { name: plain(projectName || 'this project', 120) },
     humanOnly,
     untested,
     gates,
+    setup,
+    // "In its order" holds within one job; across jobs they run separately.
+    gateOrder: jobs.size > 1 ? 'job by job, each job in its own order' : 'in its order',
     humanProof: plain(answers['authority.human_proof'] || '', 600),
     publishing,
     // The project's own pull-request checklist, which the DEF-274 reviewer

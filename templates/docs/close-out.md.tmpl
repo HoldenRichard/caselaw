@@ -18,8 +18,9 @@ Keep it short. A close-out nobody writes is worth less than a rough one they do.
      "Tests pass" is not a verification line; "{{ tier1Example }} — agent — 41 passed, 0 failed" is. -->
 {{# if gates }}
 
-The gates CI runs on a change, in its order. Run the ones your change touches before calling the work
-done; CI will run the rest:
+The gates CI runs on a change, {{ gateOrder }}. Run the ones your change touches before calling the
+work done; CI will run the rest.{{# if setup }} CI sets up first with {{ setup }}; a clean machine needs
+that too.{{/ if }}
 
 {{# each gates }}- [ ] {{ . }}
 {{/ each }}

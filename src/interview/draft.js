@@ -56,7 +56,7 @@ export function buildDraft({ doc, detected }) {
       signals: detected.signals ?? {},
       generatedDocs: detected.stack?.generatedDocs ?? [],
       publishing: detected.publishing ?? [],
-      ciGates: detected.ciGates ?? { gates: [], shared: [], contexts: [] },
+      ciGates: detected.ciGates ?? { gates: [], setup: [], shared: [], contexts: [], unread: [] },
       instructions: detected.instructions ?? { files: [], prChecklist: null, mentions: [] },
     },
     questions: QUESTIONS.map((q) => ({
@@ -254,6 +254,29 @@ function shapeProblem(q, value, { detected, answers }) {
     default:
       return `cannot check a "${q.type}" answer.`
   }
+}
+
+/** A test runner, as CI invokes one. */
+const TEST_RUNNER = /\b(pytest|go test|cargo test|(npm|yarn|pnpm)( run)? test|jest|vitest|mocha|tox|nox|swift test|dotnet test|rspec|mvn\b.*\b(test|verify)|gradlew?\b.*\b(test|check)|make (test|check)[\w-]*)\b/
+
+/**
+ * What a person should check before confirming a draft that holds up. Not
+ * errors: the answer may be right, and the human decides. Round 4 of the
+ * DEF-274 re-score: an agent drafted pyvisa's boundary as "run the full test
+ * suite" while CI runs pytest on every change; only the Keysight-assisted
+ * subset could not run.
+ *
+ * @returns {string[]}
+ */
+export function draftDoubts(draft, detected = {}) {
+  const answers = Object.fromEntries((draft.questions || []).map((d) => [d.id, d.answer]))
+  const cannot = Array.isArray(answers['authority.cannot']) ? answers['authority.cannot'] : []
+  const out = []
+  if (cannot.includes('full-suite')) {
+    const runner = (detected.ciGates?.gates || []).find((g) => TEST_RUNNER.test(g.cmd))
+    if (runner) out.push(`"run the full test suite" is drafted as something the agent cannot do, but CI runs \`${runner.cmd}\` on every change (\`${runner.file}:${runner.line}\`). If only part of the suite cannot run here, name that part as the boundary instead.`)
+  }
+  return out
 }
 
 /** Null when the evidence holds up; otherwise what is wrong with it. */

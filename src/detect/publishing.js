@@ -32,6 +32,15 @@ const PUBLISHERS = [
   [/softprops\/action-gh-release|\bgh release create\b/, 'a GitHub release'],
   // CI that commits and pushes (ntfy's docs workflow pushes the built site to another repository).
   [/\bgit push\b/, 'a git push made by CI'],
+  // Announcements: homebridge posts every npm publish to Discord (round 4 of the DEF-274 re-score).
+  [/discord-webhooks?\b|DISCORD_WEBHOOK|discord(app)?\.com\/api\/webhooks|Ilshidur\/action-discord|sarisia\/actions-status-discord/i, 'a Discord channel (a webhook post)', { announce: true }],
+  [/SLACK_WEBHOOK|slackapi\/slack-github-action|hooks\.slack\.com|rtCamp\/action-slack-notify|8398a7\/action-slack/i, 'a Slack channel (a webhook post)', { announce: true }],
+]
+
+/** Hosted builds configured outside the repository: the file says it builds, its settings say when. */
+const HOSTED_DOCS = [
+  [/^\.readthedocs\.ya?ml$|^readthedocs\.ya?ml$/, 'Read the Docs (the documentation site)',
+    'the pushes its project settings on readthedocs.org select (they are not in this repository)'],
 ]
 
 export function emptyPublishing() {
@@ -67,6 +76,12 @@ export async function detectPublishing(root, walked) {
       s.what = name(s, { text, jobs, goreleaser, makeRelease })
     }
     out.push({ file, triggers: workflowTriggers(text), publishes: steps })
+  }
+  // pyvisa's documentation is built and published by Read the Docs from
+  // `.readthedocs.yaml`, with no workflow at all (round 4).
+  for (const [re, what, when] of HOSTED_DOCS) {
+    const file = walked.files.find((f) => re.test(f))
+    if (file) out.push({ file, triggers: [when], publishes: [{ what, line: 1, when: [when], conditions: [], branches: [] }] })
   }
   return { publishing: out, warnings: [] }
 }
@@ -208,11 +223,11 @@ export function publishSteps(text) {
   const seen = new Map()
   text.split(/\r?\n/).forEach((line, i) => {
     if (/^\s*#/.test(line)) return
-    for (const [re, what] of PUBLISHERS) {
-      if (re.test(line)) { if (!seen.has(what)) seen.set(what, i + 1); break }
+    for (const [re, what, opts] of PUBLISHERS) {
+      if (re.test(line)) { if (!seen.has(what)) seen.set(what, { line: i + 1, ...opts }); break }
     }
   })
-  return [...seen.entries()].map(([what, line]) => ({ what, line }))
+  return [...seen.entries()].map(([what, { line, announce }]) => (announce ? { what, line, announce } : { what, line }))
 }
 
 /**
@@ -243,7 +258,11 @@ export function workflowEvents(text) {
   const events = []
   for (let i = 0; i < block.length; i++) {
     if (indent(block[i]) !== eventIndent) continue
-    const m = /^\s*([\w-]+)\s*:\s*(.*)$/.exec(block[i])
+    // An event alone on its line, or as a list item: homebridge's wiki
+    // notification is `on:` then `gollum` (round 4 of the DEF-274 re-score).
+    const bare = /^\s*(?:-\s*)?["']?([\w-]+)["']?\s*(?:#.*)?$/.exec(block[i])
+    if (bare) { events.push({ event: bare[1], filters: {} }); continue }
+    const m = /^\s*(?:-\s*)?([\w-]+)\s*:\s*(.*)$/.exec(block[i])
     if (!m) continue
     const filters = {}
     for (let j = i + 1; j < block.length && indent(block[j]) > eventIndent; j++) {
@@ -277,6 +296,7 @@ function phrase(event, f) {
     case 'workflow_dispatch': return ['running the workflow by hand']
     case 'schedule': return ['a schedule']
     case 'workflow_run': case 'workflow_call': return ['another workflow']
+    case 'gollum': return ['an edit to the repository\'s wiki']
     default: return [`the \`${event}\` event`]
   }
 }

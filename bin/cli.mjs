@@ -30,7 +30,7 @@ import { docsOwner } from '../src/detect/docs-owner.js'
 import { runInterview } from '../src/interview/runner.js'
 import { QUESTIONS } from '../src/interview/questions.js'
 import { ttyPrompt } from '../src/interview/prompt.js'
-import { buildDraft, writeDraft, loadDraft, removeDraft, validateDraft, draftPrompt, applyDeclarations, applyNotes, draftSheet, DRAFT_PATH } from '../src/interview/draft.js'
+import { buildDraft, writeDraft, loadDraft, removeDraft, validateDraft, draftDoubts, draftPrompt, applyDeclarations, applyNotes, draftSheet, DRAFT_PATH } from '../src/interview/draft.js'
 import * as answersStore from '../src/core/answers.js'
 import { cleanDoctrineDir, doctrineDirOf, doctrineDirAt, DEFAULT_DOCTRINE_DIR, FALLBACK_DOCTRINE_DIR } from '../src/core/doctrine.js'
 import * as manifestStore from '../src/core/manifest.js'
@@ -489,6 +489,11 @@ async function initFromDraft({ root, doc, detected, args }) {
     for (const e of errors) say(`  - ${e}`)
     say('  Fix them in the draft and run this again. Nothing was written.')
     return 1
+  }
+  const doubts = draftDoubts(draft, detected)
+  if (doubts.length) {
+    say('\n  Before confirming, check:')
+    for (const d of doubts) say(`  - ${d}`)
   }
   const human = isInteractive() && !args.yes && !args.dryRun
   if (!human && !args.yes && !args.dryRun) {

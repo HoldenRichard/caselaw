@@ -50,6 +50,25 @@ export const OUTSIDE_LABELS = {
   'external-reviewer': 'a person outside the team who approves it',
 }
 
+/** Registries by the names a publish step or a manifest gives them. */
+const REGISTRY_NAMES = { npm: 'npm', pypi: 'PyPI', PyPI: 'PyPI', 'crates.io': 'crates.io' }
+
+/**
+ * An outside authority's label, with the registry named where the repository
+ * says which it is (round 4 of the DEF-274 re-score: homebridge's read "the
+ * package registry's policies" and never said npm).
+ */
+export function outsideLabel(o, detected = {}) {
+  if (o !== 'registry-policy') return OUTSIDE_LABELS[o] || plain(o, 200)
+  const named = [
+    ...(detected.publishing || []).flatMap((p) => p.publishes.map((s) => s.what)),
+    ...(detected.signals?.registries || []).map((r) => r.kind),
+  ].map((k) => REGISTRY_NAMES[k]).filter(Boolean)
+  const names = [...new Set(named)]
+  if (!names.length) return OUTSIDE_LABELS[o]
+  return `the package registry's policies (${names.join(', ')})`
+}
+
 /**
  * A one-command way to settle an untested boundary, where an obvious one
  * exists. Deliberately conservative: a wrong suggestion is worse than none,
@@ -168,7 +187,7 @@ export function buildModel({ answers = {}, provenance = {}, detected = {}, proje
     unverified,
     truthSources: answers['authority.truth_sources'] || [],
     humanProof: plain(answers['authority.human_proof'] || ''),
-    outside: (answers['outside.authority'] || []).map((o) => OUTSIDE_LABELS[o] || plain(o, 200)),
+    outside: (answers['outside.authority'] || []).map((o) => outsideLabel(o, detected)),
     declares: (answers['outside.claims'] || []).length > 0,
     publishing: publishingRows(detected.publishing),
     // Round 2 of the DEF-274 re-score: the repository's own instructions come
@@ -237,13 +256,17 @@ function buildCanList({ answers, detected, selected = [] }) {
   // What CI runs on a change outranks commands inferred from the language: on
   // the DEF-274 re-score, ntfy's inferred `go test ./...` failed on a fresh
   // checkout while CI built the docs and web app first and then ran `make checkv`.
+  // A workflow's jobs run separately, so the order is per job (round 4 of the
+  // DEF-274 re-score: ntfy's `build` and `docker-build` were read as one
+  // sequence), and the setup CI runs first is named with the gates it precedes.
   const gates = detected.ciGates?.gates || []
-  const byFile = new Map()
-  for (const g of gates) byFile.set(g.file, [...(byFile.get(g.file) || []), g])
-  for (const [file, list] of byFile) {
+  for (const { file, job, list, split } of gateGroups(gates)) {
     const steps = list.map((g) => `\`${plain(g.cmd, 160)}\`${g.step ? ` (${plain(g.step, 80)})` : ''}`).join('; ')
-    const contexts = (detected.ciGates?.contexts || []).filter((c) => c.file === file).map(ciContext).filter(Boolean)
-    can.push(`Run what CI runs on a change, in its order (\`${file}\`): ${steps}.${contexts.length ? ` ${contexts.join(' ')}` : ''}`)
+    const setup = (detected.ciGates?.setup || []).filter((s) => s.file === file && (!split || s.job === job))
+    const first = setup.length ? ` CI sets up first with ${setup.map((s) => `\`${plain(s.cmd, 160)}\` (line ${s.line})`).join(', ')}; a clean machine needs that too.` : ''
+    const contexts = (detected.ciGates?.contexts || []).filter((c) => c.file === file && (!split || c.job === job)).map(ciContext).filter(Boolean)
+    const where = split ? `\`${file}\`, job \`${plain(job, 60)}\`` : `\`${file}\``
+    can.push(`Run what CI runs on a change, in its order (${where}): ${steps}.${first}${contexts.length ? ` ${contexts.join(' ')}` : ''}`)
   }
 
   // The commands inferred from the language are a fallback for a project with
@@ -268,6 +291,22 @@ function buildCanList({ answers, detected, selected = [] }) {
 
   if (!can.length) can.push('Read and edit source in this repository.')
   return can
+}
+
+/**
+ * Gates by workflow, and by job where a workflow has more than one: each job
+ * runs on its own, so "in its order" is true only within one.
+ */
+export function gateGroups(gates = []) {
+  const byFile = new Map()
+  for (const g of gates) byFile.set(g.file, [...(byFile.get(g.file) || []), g])
+  const out = []
+  for (const [file, list] of byFile) {
+    const jobs = [...new Set(list.map((g) => g.job ?? null))]
+    if (jobs.length < 2) { out.push({ file, job: jobs[0], list, split: false }); continue }
+    for (const job of jobs) out.push({ file, job, list: list.filter((g) => (g.job ?? null) === job), split: true })
+  }
+  return out
 }
 
 /** What CI has that a run here may not: its services, secrets and matrix, said plainly. */
@@ -298,7 +337,13 @@ function instructionsLine(instructions = {}) {
 /** The shared-workflow note: what CI runs that cannot be seen from here. Not a capability. */
 function sharedCiLine(ciGates = {}) {
   const shared = ciGates.shared || []
-  return shared.length ? `CI also runs workflows kept in another repository, whose steps are not visible here: ${shared.map((s) => `\`${plain(s.uses, 160)}\``).join(', ')}.` : ''
+  const unread = ciGates.unread || []
+  const out = []
+  if (shared.length) out.push(`CI also runs workflows kept in another repository, whose steps are not visible here: ${shared.map((s) => `\`${plain(s.uses, 160)}\``).join(', ')}.`)
+  // Round 4 of the DEF-274 re-score: a second CI that was not read must not be
+  // implied to have been (D3: a check states what it did not cover).
+  for (const u of unread) out.push(`CI also runs in ${plain(u.system, 60)} (\`${plain(u.file, 160)}\`), which caselaw does not read: its gates, and anything it publishes, are not listed in this file.`)
+  return out.join(' ')
 }
 
 export async function generate(input) {

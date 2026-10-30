@@ -9,7 +9,7 @@
  * to pass, so its run steps outrank anything inferred from a language.
  *
  * Read line by line from workflows that run on a push or a pull request and
- * publish nothing. Setup lines (installs, `cd`, `echo`) are not gates. A job
+ * publish nothing (a chat announcement aside: a test workflow may post to Slack). Setup lines (installs, `cd`, `echo`) are not gates. A job
  * that `uses:` a workflow from another repository is reported as such: its
  * gates exist, and are not visible from here.
  */
@@ -28,8 +28,25 @@ const SETUP_STEP = /^(install|set ?up|setup|cache|checkout|print|configure|prepa
 const GATE_NAME = /(build|test|lint|check|typecheck|ci)[^/]*\.ya?ml/i
 
 export function emptyCiGates() {
-  return { gates: [], shared: [], contexts: [] }
+  return { gates: [], setup: [], shared: [], contexts: [], unread: [] }
 }
+
+/**
+ * CI systems other than GitHub Actions. Their gates and anything they publish
+ * are not read; the authority split says so rather than implying it covered
+ * them (round 4 of the DEF-274 re-score: pyvisa's Azure pipeline builds its
+ * Keysight environment on a Python its pyproject.toml no longer allows).
+ */
+const OTHER_CI = [
+  [/^azure-pipelines\.ya?ml$|^\.azure-pipelines\//, 'Azure Pipelines'],
+  [/^\.gitlab-ci\.ya?ml$/, 'GitLab CI'],
+  [/^\.circleci\/config\.ya?ml$/, 'CircleCI'],
+  [/^Jenkinsfile$/, 'Jenkins'],
+  [/^\.travis\.ya?ml$/, 'Travis CI'],
+  [/^appveyor\.ya?ml$|^\.appveyor\.ya?ml$/, 'AppVeyor'],
+  [/^bitbucket-pipelines\.ya?ml$/, 'Bitbucket Pipelines'],
+  [/^\.buildkite\/pipeline\.ya?ml$/, 'Buildkite'],
+]
 
 /**
  * @param {string} root
@@ -42,7 +59,7 @@ export async function detectCiGates(root, walked) {
   for (const file of workflows) {
     let text
     try { text = await readFile(join(root, file), 'utf8') } catch { continue }
-    if (!runsOnChange(text) || publishSteps(text).length) continue
+    if (!runsOnChange(text) || publishSteps(text).some((p) => !p.announce)) continue
     // Each gate carries its job, and each job its own context: pyvisa's matrix
     // belongs to the pytest job only, and round 3 of the DEF-274 re-score found
     // it attached to the format, lint and type checks as well.
@@ -51,12 +68,24 @@ export async function detectCiGates(root, walked) {
     const jobOf = (line) => jobs.find((j) => line - 1 > j.start && line - 1 < j.end)
     const gates = runSteps(text).map((g) => ({ ...g, job: jobOf(g.line)?.name ?? null }))
     for (const g of gates) if (ciGates.gates.length < MAX_GATES) ciGates.gates.push({ file, ...g })
+    // The project's own setup, which CI runs before its gates: ntfy's gates do
+    // not run on a clean machine without `make build-deps-ubuntu` (round 4).
+    // Only what runs before the job's first gate: ntfy's "Print build results"
+    // runs after `make build`, and is not setup the build needs.
+    for (const s of setupSteps(text)) {
+      const job = jobOf(s.line)?.name ?? null
+      if (gates.some((g) => g.job === job && g.line > s.line)) ciGates.setup.push({ file, ...s, job })
+    }
     for (const s of sharedWorkflows(text)) ciGates.shared.push({ file, ...s })
     for (const job of jobs) {
       if (!gates.some((g) => g.job === job.name)) continue
       const context = runContext(lines.slice(job.start, job.end).join('\n'))
       if (context.services.length || context.secrets.length || context.matrix.length) ciGates.contexts.push({ file, job: job.name, ...context })
     }
+  }
+  for (const [re, system] of OTHER_CI) {
+    const file = walked.files.filter((f) => re.test(f)).sort()[0]
+    if (file) ciGates.unread.push({ file, system })
   }
   return { ciGates, warnings: [] }
 }
@@ -110,6 +139,19 @@ export function runsOnChange(text) {
 
 /** Each gate command with the line it is on and the name of its step, in file order. */
 export function runSteps(text) {
+  return scanSteps(text).filter((c) => !c.setup && !SETUP.test(c.cmd)).map(({ cmd, line, step }) => ({ cmd, line, step }))
+}
+
+/**
+ * The project's own commands inside steps named for setup: `make
+ * build-deps-ubuntu`, a repository script. Package-manager installs and shell
+ * housekeeping are not listed; a reader knows to install dependencies.
+ */
+export function setupSteps(text) {
+  return scanSteps(text).filter((c) => c.setup && !SETUP.test(c.cmd)).map(({ cmd, line, step }) => ({ cmd, line, step }))
+}
+
+function scanSteps(text) {
   const lines = text.split(/\r?\n/)
   const out = []
   const indent = (l) => l.match(/^\s*/)[0].length
@@ -133,11 +175,11 @@ export function runSteps(text) {
       commands.push({ cmd: value, line: i + 1 })
     }
     // A step named for setup is setup, whatever it runs: ntfy's "Install dependencies" is `make build-deps-ubuntu`.
-    if (SETUP_STEP.test(stepName || '')) continue
+    const setup = SETUP_STEP.test(stepName || '')
     for (const c of commands) {
       const cmd = c.cmd.replace(/;\s*$/, '').replace(/\s+#.*$/, '').trim()
-      if (!cmd || cmd.startsWith('#') || SETUP.test(cmd)) continue
-      out.push({ cmd, line: c.line, step: stepName })
+      if (!cmd || cmd.startsWith('#')) continue
+      out.push({ cmd, line: c.line, step: stepName, setup })
     }
   }
   return out
