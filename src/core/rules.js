@@ -1191,9 +1191,14 @@ export function matchesTriggerPath(triggerText, filePath) {
     if (p === token || token.endsWith('/' + base)) return true
   }
 
-  // 3. Fallback: Trigger explicitly mentions file extension in backticks (e.g. `*.js` or `.sql`)
-  if (ext && (t.includes(`\`*${ext}\``) || t.includes(`\`${ext}\``))) {
-    return true
+  // 3. Fallback: Trigger mentions file extension in backticks or prose (e.g. `*.js`, `*.sql`, or editing .js files)
+  // Only applies if the trigger does not specify explicit path prefixes.
+  const hasPathTokens = tokens.some((tok) => tok.includes('/'))
+  if (!hasPathTokens && ext) {
+    if (t.includes(`\`*${ext}\``) || t.includes(`\`${ext}\``)) return true
+    const bareExt = ext.replace(/^\./, '')
+    const extRe = new RegExp(`(?:\\*|\\s|^)\\.${bareExt}\\b`, 'i')
+    if (extRe.test(t)) return true
   }
 
   return false

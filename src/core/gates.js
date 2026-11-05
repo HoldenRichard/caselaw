@@ -386,7 +386,22 @@ export function reconstructFileFromDiff(diff) {
   const lines = String(diff ?? '').split('\n')
   const result = []
   for (const l of lines) {
-    if (l.startsWith('---') || l.startsWith('+++') || l.startsWith('@@')) {
+    if (
+      l.startsWith('---') ||
+      l.startsWith('+++') ||
+      l.startsWith('@@') ||
+      l.startsWith('diff --git') ||
+      l.startsWith('index ') ||
+      l.startsWith('commit ') ||
+      l.startsWith('Author:') ||
+      l.startsWith('Date:') ||
+      l.startsWith('new file mode') ||
+      l.startsWith('deleted file mode') ||
+      l.startsWith('similarity index') ||
+      l.startsWith('rename from') ||
+      l.startsWith('rename to') ||
+      l.startsWith('\\ ')
+    ) {
       continue
     }
     if (l.startsWith('+')) {
@@ -395,8 +410,8 @@ export function reconstructFileFromDiff(diff) {
       continue
     } else if (l.startsWith(' ')) {
       result.push(l.slice(1))
-    } else if (l.length > 0) {
-      result.push(l)
+    } else if (l === '') {
+      result.push('')
     }
   }
   return result.join('\n')

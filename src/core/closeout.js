@@ -152,23 +152,49 @@ export function verifyCloseout({ text, root = process.cwd(), gitFiles = null }) 
     }
   }
 
+const HOMOGLYPH_MAP = {
+  '\u0430': 'a', '\u0410': 'A',
+  '\u0441': 'c', '\u0421': 'C',
+  '\u0435': 'e', '\u0415': 'E',
+  '\u043E': 'o', '\u041E': 'O',
+  '\u0440': 'p', '\u0420': 'P',
+  '\u0455': 's', '\u0405': 'S',
+  '\u0445': 'x', '\u0425': 'X',
+  '\u0443': 'y', '\u0423': 'Y',
+  '\u0456': 'i', '\u0406': 'I',
+  '\u0458': 'j', '\u0408': 'J',
+}
+
+function normalizeCloseoutText(str) {
+  return String(str ?? '')
+    .normalize('NFKC')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/[\u0430\u0410\u0441\u0421\u0435\u0415\u043E\u041E\u0440\u0420\u0455\u0405\u0445\u0425\u0443\u0423\u0456\u0406\u0458\u0408]/g, (ch) => HOMOGLYPH_MAP[ch] || ch)
+}
+
+const HUMAN_AUTHORITY_REGEX = /\b(?:ui|render|rendering|frontend|front-end|gui|display|screen|ux|database|datastore|data-store|db|prod|production|hardware|physical)\b/i
+const FAILING_COMMAND_REGEX = /\b(?:exit(?:ed)?(?:\s+with)?(?:\s+(?:code|status))?\s+[1-9]\d*|status\s+[1-9]\d*|code\s+[1-9]\d*|command\s+not\s+found|FAIL|ERR_[A-Z0-9_]+|failed\s+with)\b/i
+
   // 2. Verification Exit Code Honesty
   for (const line of parsed.verified) {
-    if (/\b(?:exit(?:ed)?(?:\s+with)?(?:\s+code)?\s+[1-9]\d*|code\s+[1-9]\d*|command\s+not\s+found|FAIL)\b/i.test(line)) {
+    const norm = normalizeCloseoutText(line)
+    if (FAILING_COMMAND_REGEX.test(norm)) {
       errors.push(`Failing command placed inside ## Verified: "${line}". Non-zero exits must be listed under ## Not Verified.`)
     }
   }
 
   // 3. Authority Split Enforcement: Human-only items must never be marked [x] or placed in ## Verified
   for (const line of parsed.verified) {
-    if (/\b(?:ui|render|database|datastore|prod|production|hardware|physical)\b/i.test(line)) {
+    const norm = normalizeCloseoutText(line)
+    if (HUMAN_AUTHORITY_REGEX.test(norm)) {
       errors.push(`Human-only authority boundary marked as verified with [x]: "${line.trim()}". Only a human observation is authoritative.`)
     }
   }
   const allLines = String(text ?? '').split(/\r?\n/)
   for (const line of allLines) {
-    if (/\[x\]/i.test(line)) {
-      if (/\b(?:ui|render|database|datastore|prod|production|hardware|physical)\b/i.test(line)) {
+    const norm = normalizeCloseoutText(line)
+    if (/\[x\]/i.test(line) || /\[x\]/i.test(norm)) {
+      if (HUMAN_AUTHORITY_REGEX.test(norm)) {
         if (!errors.some((e) => e.includes(line.trim()))) {
           errors.push(`Human-only authority boundary marked as verified with [x]: "${line.trim()}". Only a human observation is authoritative.`)
         }
@@ -176,7 +202,8 @@ export function verifyCloseout({ text, root = process.cwd(), gitFiles = null }) 
     }
   }
   for (const line of parsed.notVerified) {
-    if (/\[x\]/i.test(line)) {
+    const norm = normalizeCloseoutText(line)
+    if (/\[x\]/i.test(line) || /\[x\]/i.test(norm)) {
       if (!errors.some((e) => e.includes(line.trim()))) {
         errors.push(`Human-only authority boundary marked as verified with [x]: "${line}". Only a human observation is authoritative.`)
       }

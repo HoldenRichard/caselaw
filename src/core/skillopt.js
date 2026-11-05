@@ -97,7 +97,15 @@ export function reconstituteRuleAST(ast, newMutable) {
 
   // Disallow injecting markdown section headers into mutable fields (F4)
   const headerRegex = /\*\*(?:Enforcement|Origin|Precedent|Ratified|Merges|Default):\*\*/i
-  if (headerRegex.test(trigger) || headerRegex.test(rule)) {
+  const cleanHomoglyphs = (s) =>
+    String(s ?? '')
+      .normalize('NFKC')
+      .replace(/[\u200B-\u200D\uFEFF]/g, '')
+      .replace(/[\u0415\u0435]/g, 'e')
+      .replace(/[\u041E\u043E]/g, 'o')
+      .replace(/[\u0420\u0440]/g, 'p')
+      .replace(/[\u0410\u0430]/g, 'a')
+  if (headerRegex.test(cleanHomoglyphs(trigger)) || headerRegex.test(cleanHomoglyphs(rule))) {
     throw new ConstitutionError('A2: Section headers cannot be injected into mutable trigger or rule fields', {
       article: 'A2',
     })
