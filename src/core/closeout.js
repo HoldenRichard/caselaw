@@ -159,17 +159,24 @@ export function verifyCloseout({ text, root = process.cwd(), gitFiles = null }) 
     }
   }
 
-  // 3. Authority Split Enforcement: Human-only items must never be marked [x] in ANY section
+  // 3. Authority Split Enforcement: Human-only items must never be marked [x] or placed in ## Verified
+  for (const line of parsed.verified) {
+    if (/\b(?:ui|render|database|datastore|prod|production|hardware|physical)\b/i.test(line)) {
+      errors.push(`Human-only authority boundary marked as verified with [x]: "${line.trim()}". Only a human observation is authoritative.`)
+    }
+  }
   const allLines = String(text ?? '').split(/\r?\n/)
   for (const line of allLines) {
-    if (/-\s*\[x\]/i.test(line)) {
+    if (/\[x\]/i.test(line)) {
       if (/\b(?:ui|render|database|datastore|prod|production|hardware|physical)\b/i.test(line)) {
-        errors.push(`Human-only authority boundary marked as verified with [x]: "${line.trim()}". Only a human observation is authoritative.`)
+        if (!errors.some((e) => e.includes(line.trim()))) {
+          errors.push(`Human-only authority boundary marked as verified with [x]: "${line.trim()}". Only a human observation is authoritative.`)
+        }
       }
     }
   }
   for (const line of parsed.notVerified) {
-    if (/^-\s*\[x\]/i.test(line)) {
+    if (/\[x\]/i.test(line)) {
       if (!errors.some((e) => e.includes(line.trim()))) {
         errors.push(`Human-only authority boundary marked as verified with [x]: "${line}". Only a human observation is authoritative.`)
       }

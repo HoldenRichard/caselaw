@@ -482,14 +482,14 @@ describe('SkillOpt and optimizer subprocess CLI commands', () => {
     assert.equal(incRes.code, 0, incRes.out + incRes.err)
     assert.match(incRes.out, /Recorded contrastive incident fixture/)
 
-    // Run caselaw rule evolve --compress
+    // Run caselaw rule evolve --compress (non-interactive stages to proposed)
     const evolveRes = await cli(['rule', 'evolve', 'stage-explicit', '--compress'], { cwd: root })
     assert.equal(evolveRes.code, 0, evolveRes.out + evolveRes.err)
     assert.match(evolveRes.out, /words saved/)
 
-    const updated = await readFile(join(root, 'docs/rules/active/stage-explicit.md'), 'utf8')
-    assert.doesNotMatch(updated, /Please make sure to always remember to/)
-    assert.match(updated, new RegExp(badSha))
+    const proposed = await readFile(join(root, 'docs/rules/proposed/stage-explicit.md'), 'utf8')
+    assert.doesNotMatch(proposed, /Please make sure to always remember to/)
+    assert.match(proposed, new RegExp(badSha))
   })
 
   test('POSITIVE CONTROL: subprocess runs rules --for and rule list --for', async () => {

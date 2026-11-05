@@ -224,8 +224,8 @@ describe('lossless compression via SkillOpt', () => {
     })
     const r = await applyProposal({ root, doc: doc(), id: 'compress:verbose', now: new Date('2026-10-31') })
     assert.equal(r.ok, true, r.message)
-    const updated = await readFile(join(root, 'docs/rules/active/verbose.md'), 'utf8')
-    assert.doesNotMatch(updated, /Please make sure to always remember to/)
+    const staged = await readFile(join(root, 'docs/rules/proposed/verbose.md'), 'utf8')
+    assert.doesNotMatch(staged, /Please make sure to always remember to/)
   })
 })
 

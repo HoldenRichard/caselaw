@@ -375,6 +375,52 @@ export class GateError extends Error {
  * @param {string} [opts.dir='docs']
  * @returns {{success: boolean, gate?: object, reason?: string, details?: object}}
  */
+/**
+ * Reconstruct post-diff file contents from a unified diff.
+ * Context and added lines are included; removed lines are omitted.
+ *
+ * @param {string} diff
+ * @returns {string}
+ */
+export function reconstructFileFromDiff(diff) {
+  const lines = String(diff ?? '').split('\n')
+  const result = []
+  for (const l of lines) {
+    if (l.startsWith('---') || l.startsWith('+++') || l.startsWith('@@')) {
+      continue
+    }
+    if (l.startsWith('+')) {
+      result.push(l.slice(1))
+    } else if (l.startsWith('-')) {
+      continue
+    } else if (l.startsWith(' ')) {
+      result.push(l.slice(1))
+    } else if (l.length > 0) {
+      result.push(l)
+    }
+  }
+  return result.join('\n')
+}
+
+function escapeRe(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function matchesRuntimeLiteral(content, literal) {
+  const re = new RegExp(escapeRe(literal), 'g')
+  return re.test(content)
+}
+
+/**
+ * Synthesize a deterministic machine gate from contrastive incident fixtures (0.4).
+ * Replays reconstructed post-diff file snapshots through exact runtime/gate.mjs literal matching (F6).
+ *
+ * @param {object} opts
+ * @param {{name: string, rule: string, trigger?: string}} opts.rule
+ * @param {object[]} opts.incidentFixtures
+ * @param {string} [opts.dir='docs']
+ * @returns {{success: boolean, gate?: object, reason?: string, details?: object}}
+ */
 export function synthesizeMachineGate({ rule, incidentFixtures = [], dir = 'docs' }) {
   if (!rule || !rule.name) {
     return { success: false, reason: 'rule with a name is required' }
@@ -399,6 +445,17 @@ export function synthesizeMachineGate({ rule, incidentFixtures = [], dir = 'docs
         if (trimmed.length >= 4 && !/^[{}();,\s]+$/.test(trimmed)) {
           candidatePatterns.add(trimmed)
         }
+        // Extract member expressions or identifiers (e.g. CONSOLE.LOG from CONSOLE.LOG("leak"))
+        const identifiers = trimmed.match(/[A-Za-z0-9_$]+(?:\.[A-Za-z0-9_$]+)+/g) || []
+        for (const id of identifiers) {
+          if (id.length >= 4) candidatePatterns.add(id)
+        }
+        // Extract quoted strings
+        const quotes = trimmed.match(/"([^"]+)"|'([^']+)'/g) || []
+        for (const q of quotes) {
+          const inner = q.slice(1, -1).trim()
+          if (inner.length >= 4) candidatePatterns.add(inner)
+        }
       }
     }
   }
@@ -419,21 +476,16 @@ export function synthesizeMachineGate({ rule, incidentFixtures = [], dir = 'docs
     }
   }
 
-  // Exact case matching matching runtime/gate.mjs literal behavior
-  const matchesDiff = (diff, pattern) => {
-    return String(diff ?? '').includes(pattern)
-  }
-
   for (const pat of candidatePatterns) {
     let positivePasses = 0
     let negativePasses = 0
 
     for (const inc of incidentFixtures) {
-      const posDiff = inc.positiveControl?.diff || ''
-      const negDiff = inc.negativeControl?.diff || ''
+      const posContent = reconstructFileFromDiff(inc.positiveControl?.diff || '')
+      const negContent = reconstructFileFromDiff(inc.negativeControl?.diff || '')
 
-      const matchesPos = matchesDiff(posDiff, pat)
-      const matchesNeg = matchesDiff(negDiff, pat)
+      const matchesPos = matchesRuntimeLiteral(posContent, pat)
+      const matchesNeg = matchesRuntimeLiteral(negContent, pat)
 
       if (matchesPos) positivePasses++
       if (!matchesNeg) negativePasses++

@@ -160,8 +160,13 @@ async function synthesize(args, { root, say }) {
     const existingIdx = config.gates.findIndex((g) => g.id === res.gate.id)
     if (existingIdx !== -1) {
       const existing = config.gates[existingIdx]
-      if (existing.severity === 'block') {
-        say(`  Refusing to overwrite gate "${res.gate.id}": existing gate has severity "block". Synthesizing a warning gate cannot downgrade a blocking gate (Axiom A1).`)
+      const isForce = Boolean(args.force || args.opt?.force)
+      if (!isForce) {
+        say(`  Refusing to overwrite gate "${res.gate.id}": existing gate already registered. Overwriting an existing gate requires explicit human authorization with --force (Axiom A1).`)
+        return 1
+      }
+      if (existing.severity === 'block' && res.gate.severity !== 'block') {
+        say(`  Refusing to downgrade gate "${res.gate.id}": existing gate has severity "block". Synthesizing a warning gate cannot downgrade a blocking gate (Axiom A1).`)
         return 1
       }
       config.gates[existingIdx] = res.gate

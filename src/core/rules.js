@@ -1164,7 +1164,7 @@ export function matchesTriggerPath(triggerText, filePath) {
   // 2. Extract paths, directories, and globs mentioned in trigger
   const tokens = [
     ...[...triggerText.matchAll(/`([^`]+)`/g)].map((m) => m[1]),
-    ...[...triggerText.matchAll(/\b(?:src|docs|test|bin|templates)\/[a-zA-Z0-9_./-]*\b/g)].map((m) => m[0]),
+    ...[...triggerText.matchAll(/\b(?:src|docs|test|bin|templates)\/[a-zA-Z0-9_./*-]+/g)].map((m) => m[0]),
   ]
 
   for (const rawToken of tokens) {

@@ -254,8 +254,14 @@ export async function applyProposal({ root, doc, id, now = new Date(), name = nu
       isCompression: true,
     })
     if (res.success && res.savedWords > 0) {
-      await writeFile(path, res.bestRuleText, 'utf8')
-      return { ok: true, message: `Losslessly compressed ${dirs.active}/${rule}.md (${res.savedWords} words saved).`, wrote: [path] }
+      const propPath = join(root, dirs.proposed, `${rule}.md`)
+      await mkdir(dirname(propPath), { recursive: true })
+      await writeFile(propPath, res.bestRuleText, 'utf8')
+      return {
+        ok: true,
+        message: `Staged losslessly compressed candidate to ${dirs.proposed}/${rule}.md (${res.savedWords} words saved). Run "caselaw rule ratify ${rule}" to ratify.`,
+        wrote: [propPath],
+      }
     }
     return { ok: false, message: `"${rule}" could not be further compressed without regressions.` }
   }

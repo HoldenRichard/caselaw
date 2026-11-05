@@ -106,14 +106,13 @@ describe('caselaw rule evolve command', () => {
     }, { root, ...io })
 
     assert.equal(code, 0)
-    assert.ok(io.lines.some((l) => l.includes('Evolved docs/rules/active/stage-explicit-paths.md')))
+    assert.ok(io.lines.some((l) => l.includes('staged to docs/rules/proposed/stage-explicit-paths.md')))
 
-    // Read back and verify A2 preservation
-    const updated = await readFile(rulePath, 'utf8')
-    const parsed = parseRule(updated)
-    assert.equal(parsed.origin, 'commit a1b2c3d4 (swept config secrets into repo)')
-    assert.equal(parsed.ratified, '2026-08-13')
-    assert.match(parsed.rule, /Stage explicit paths by name/)
+    // Read proposed and verify A2 preservation
+    const proposed = await readFile(join(root, 'docs/rules/proposed/stage-explicit-paths.md'), 'utf8')
+    const parsedProp = parseRule(proposed)
+    assert.equal(parsedProp.origin, 'commit a1b2c3d4 (swept config secrets into repo)')
+    assert.match(parsedProp.rule, /Stage explicit paths by name/)
   })
 
   test('POSITIVE CONTROL: evolve without candidate runs active iterative loop and feeds RejectedEditBuffer', async () => {
@@ -160,9 +159,10 @@ describe('caselaw rule evolve command', () => {
     assert.ok(io.lines.some((l) => l.includes('SkillOpt Iterative Evolution Pass')))
     assert.ok(io.lines.some((l) => l.includes('words saved')))
 
-    const updated = await readFile(rulePath, 'utf8')
-    assert.doesNotMatch(updated, /Please make sure to always remember to/)
-    const parsed = parseRule(updated)
+    // Read proposed and verify compression and Origin preservation
+    const proposed = await readFile(join(root, 'docs/rules/proposed/verbose-rule.md'), 'utf8')
+    assert.doesNotMatch(proposed, /Please make sure to always remember to/)
+    const parsed = parseRule(proposed)
     assert.equal(parsed.origin, 'commit c1c2c3c4 (initial leak)')
   })
 

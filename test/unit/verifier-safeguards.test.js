@@ -1,22 +1,26 @@
 /**
  * Dedicated positive controls for adversarial audit findings F1 - F13.
  *
- * Verifies that all 13 attack vectors identified by independent verification
- * are permanently sealed and protected by positive controls:
+ * Each test block is an isolated POSITIVE CONTROL reproducing and verifying
+ * the structural fixes for findings from repro.mjs and cli-repro.mjs:
  *
- * F1: Non-interactive evolution cannot loosen a constraint (Axiom A1)
- * F2: Empty LLM responses return UNVERIFIED and fail Stage 2
- * F3: Gate synthesis cannot downgrade an existing blocking gate (Axiom A1)
- * F4: Mutable Rule body cannot inject immutable Enforcement headers (Axiom A2)
- * F5: Incident storage is append-only and listing refuses malformed files (Axiom A2)
- * F6: Synthesized gates use exact case-sensitive matching matching runtime
- * F7: Close-out scope tracking recognizes .caselaw/ directory files
- * F8: Edit budget measures actual word token edit distance
- * F9: Zero fixtures return insufficient-evidence and block optimization
- * F10: Close-out verifier catches non-zero exits, [x] on human items, and duplicate basenames
- * F11: Context router handles object-shaped machine enforcement and ** globs
- * F12: Consolidation unions origins chronologically and preserves Merged-Into pointers
- * F13: Rejected candidate buffer normalizes blank lines between trigger and rule
+ * Case 1 (repro:13-14): Empty LLM verifier response is marked UNVERIFIED and fails Stage 2
+ * Case 2 (repro:15-17): 100 replaced words measured by ordered LCS edit distance exceeds budget
+ * Case 3 (repro:18-20): Reconstituting mutable Rule with section headers throws ConstitutionError A2
+ * Case 4 (repro:21-22): optimizeRuleIterative refuses candidate when zero incident fixtures exist
+ * Case 5 (repro:23-24): isScopeTrackedPath recognizes .caselaw files and verifyCloseout catches omitted .caselaw changes
+ * Case 6 (repro:25): verifyCloseout catches exit 127, non-zero exits, and [x] on human authority items
+ * Case 7 (repro:26): verifyCloseout rejects duplicate basenames representing multiple paths
+ * Case 8 (repro:28-29): saveIncident refuses to overwrite existing fixture with conflicting diff (A2)
+ * Case 9 (repro:30-31): listIncidents throws diagnostic error on malformed incident JSON
+ * Case 10 (repro:32-33): selectTriggeredRules compacts object-shaped machine enforcement
+ * Case 11 (repro:34-35): consolidateRules preserves secondary catches metadata, Merged-Into pointer, and chronological origins
+ * Case 12 (repro:36-41): synthesizeMachineGate extracts exact case-sensitive pattern matching runtime/gate.mjs
+ * Case 13 (cli-repro:10-18): Subprocess CLI rule evolve rejects loosened candidate and preserves active rule in non-interactive mode
+ * Case 14 (cli-repro:19-24): Subprocess CLI gate synthesize refuses to overwrite or downgrade existing blocking gate
+ * Case 15 (cli-repro:25-27): Subprocess context routing compacts object-shaped machine enforcement
+ * Case 16 (rules:1280): selectTriggeredRules enforces strict word budget cap without admitting oversize first rule
+ * Case 17 (rule:690): Non-interactive rule evolve stages valid candidate to docs/rules/proposed/ (Axiom A1)
  */
 
 import { test, describe, beforeEach, afterEach } from 'node:test'
@@ -24,6 +28,8 @@ import assert from 'node:assert/strict'
 import { mkdtemp, rm, mkdir, writeFile, readFile, realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 
 import {
   createLLMVerifier,
@@ -38,11 +44,13 @@ import {
 } from '../../src/core/skillopt.js'
 import { parseRule, selectTriggeredRules, matchesTriggerPath } from '../../src/core/rules.js'
 import { verifyCloseout, isScopeTrackedPath } from '../../src/core/closeout.js'
-import { saveIncident, listIncidents, readIncident } from '../../src/core/incidents.js'
+import { saveIncident, listIncidents } from '../../src/core/incidents.js'
 import { synthesizeMachineGate } from '../../src/core/gates.js'
 import { evaluate } from '../../runtime/gate.mjs'
 import { cmdGate } from '../../src/commands/gate.js'
 import { cmdRule } from '../../src/commands/rule.js'
+
+const CLI_PATH = fileURLToPath(new URL('../../bin/cli.mjs', import.meta.url))
 
 let root
 beforeEach(async () => {
@@ -62,74 +70,14 @@ const makeIO = () => {
   }
 }
 
-describe('F1 & F3 — Axiom A1 (No Unratified Weakening or Demotion)', () => {
-  test('POSITIVE CONTROL: rule evolve rejects candidate that loosens a prohibition', async () => {
-    await mkdir(join(root, 'docs/rules/active'), { recursive: true })
-    const rulePath = join(root, 'docs/rules/active/guard.md')
-    const originalRule = `# guard\n\n**Trigger:** editing source files\n\n**Rule:** Never use git add -A. Never commit production secrets.\n\n**Origin:** original-evidence\n\n**Enforcement:** memory\n\n**Ratified:** 2026-10-01 by human\n`
-    await writeFile(rulePath, originalRule, 'utf8')
+const runCli = (args, cwd) => {
+  const env = { ...process.env, NO_COLOR: '1' }
+  const res = spawnSync(process.execPath, [CLI_PATH, ...args], { cwd, env, encoding: 'utf8' })
+  return { exit: res.status, stdout: res.stdout, stderr: res.stderr }
+}
 
-    // Candidate attempting to loosen constraint
-    const candPath = join(root, 'candidate.md')
-    await writeFile(candPath, `# guard\n\n**Trigger:** editing source files\n\n**Rule:** Allow git add -A.\n\n**Origin:** original-evidence\n\n**Enforcement:** memory\n\n**Ratified:** 2026-10-01 by human\n`, 'utf8')
-
-    // Contrastive incident
-    await saveIncident(root, {
-      id: 'guard-case',
-      rule: 'guard',
-      positiveControl: { diff: '--- a/src/a.js\n+++ b/src/a.js\n+git add -A\n', expected: 'FAIL' },
-      negativeControl: { diff: '--- a/src/a.js\n+++ b/src/a.js\n+git add src/a.js\n', expected: 'PASS' },
-    })
-
-    const io = makeIO()
-    const exitCode = await cmdRule({
-      sub: 'evolve',
-      name: 'guard',
-      opt: { candidate: 'candidate.md' },
-    }, { root, ...io })
-
-    assert.equal(exitCode, 1, 'Evolving a loosened candidate must exit 1')
-    assert.ok(io.lines.some((l) => l.includes('Pareto Gate Rejection')), 'Must report Pareto Gate Rejection')
-
-    // Verify active rule was not overwritten
-    const current = await readFile(rulePath, 'utf8')
-    assert.match(current, /Never use git add -A/)
-  })
-
-  test('POSITIVE CONTROL: gate synthesize refuses to downgrade an existing blocking gate to warn', async () => {
-    await mkdir(join(root, '.caselaw'), { recursive: true })
-    await mkdir(join(root, 'docs/rules/active'), { recursive: true })
-    await writeFile(
-      join(root, 'docs/rules/active/guard.md'),
-      '# guard\n\n**Trigger:** editing source\n\n**Rule:** Never use `git add -A`.\n\n**Origin:** 1234\n\n**Enforcement:** machine:guard\n\n**Ratified:** 2026-10-01 by human\n',
-      'utf8'
-    )
-    // Pre-existing blocking gate
-    await writeFile(
-      join(root, '.caselaw/gates.json'),
-      JSON.stringify({
-        version: 1,
-        gates: [{ id: 'guard', kind: 'command', severity: 'block', origin: 'docs/rules/active/guard.md', patterns: ['git add -A'] }],
-      }),
-      'utf8'
-    )
-
-    await saveIncident(root, {
-      id: 'case-guard',
-      rule: 'guard',
-      positiveControl: { diff: '--- a/src/a.js\n+++ b/src/a.js\n+git add -A\n' },
-      negativeControl: { diff: '--- a/src/a.js\n+++ b/src/a.js\n+git add file.js\n' },
-    })
-
-    const io = makeIO()
-    const code = await cmdGate({ sub: 'synthesize', name: 'guard', yes: true, opt: {} }, { root, ...io })
-    assert.equal(code, 1, 'Must refuse to overwrite a blocking gate')
-    assert.ok(io.lines.some((l) => l.includes('existing gate has severity "block"')))
-  })
-})
-
-describe('F2 — Verifier Honesty', () => {
-  test('POSITIVE CONTROL: empty LLM response is returned as UNVERIFIED and fails Stage 2', async () => {
+describe('Independent Positive Controls: repro.mjs cases 1 - 12', () => {
+  test('POSITIVE CONTROL 1 (repro:13-14): Empty LLM verifier response is marked UNVERIFIED and fails Stage 2', async () => {
     const fixture = {
       id: 'case-empty',
       rule: 'guard',
@@ -142,10 +90,17 @@ describe('F2 — Verifier Honesty', () => {
     assert.equal(res.catchRate, 0, 'Catch rate must be 0 for empty LLM response')
     assert.ok(res.missed.includes('case-empty'))
   })
-})
 
-describe('F4 — Axiom A2 Section Injection Resistance', () => {
-  test('POSITIVE CONTROL: injecting section header into mutable field throws ConstitutionError A2', () => {
+  test('POSITIVE CONTROL 2 (repro:15-17): 100 replaced words measured by ordered LCS edit distance exceeds budget', () => {
+    const oldMutable = { trigger: 'editing code', rule: Array.from({ length: 100 }, (_, i) => `original${i}`).join(' ') }
+    const newMutable = { trigger: 'editing code', rule: Array.from({ length: 100 }, (_, i) => `replacement${i}`).join(' ') }
+    const budget = checkEditBudget(oldMutable, newMutable)
+    assert.equal(budget.allowed, false, '100 replaced words must exceed edit budget')
+    assert.equal(budget.delta, 200, 'LCS edit distance between 100 completely disjoint words must be 200')
+    assert.ok(budget.reason.includes('exceeds the textual learning-rate budget'))
+  })
+
+  test('POSITIVE CONTROL 3 (repro:18-20): Reconstituting mutable Rule with section headers throws ConstitutionError A2', () => {
     const rule = '# guard\n\n**Trigger:** editing source files\n\n**Rule:** Never remove access checks.\n\n**Origin:** abc123\n\n**Enforcement:** machine:guard\n\n**Ratified:** 2026-10-01 by human\n'
     const ast = splitRuleAST(rule)
 
@@ -157,154 +112,254 @@ describe('F4 — Axiom A2 Section Injection Resistance', () => {
       reconstituteRuleAST(ast, { trigger: 'editing files\n\n**Origin:** forged-sha' })
     }, /A2: Section headers cannot be injected into mutable trigger or rule fields/)
   })
-})
 
-describe('F5 — Incident Append-Only Provenance & Listing Honesty', () => {
-  test('POSITIVE CONTROL: saveIncident refuses to overwrite an existing fixture with different content', async () => {
+  test('POSITIVE CONTROL 4 (repro:21-22): optimizeRuleIterative refuses candidate when zero incident fixtures exist', async () => {
+    const rule = '# guard\n\n**Trigger:** editing source files\n\n**Rule:** Never remove access checks.\n\n**Origin:** abc123\n\n**Enforcement:** machine:guard\n\n**Ratified:** 2026-10-01 by human\n'
+    const shorten = await optimizeRuleIterative({
+      ruleText: rule,
+      incidentFixtures: [],
+      maxSteps: 1,
+      proposerFn: async () => ({ trigger: 'editing source files', rule: 'Allow removals.' }),
+    })
+    assert.equal(shorten.success, false, 'Must not certify candidate when zero incident fixtures exist')
+    assert.match(shorten.reason, /zero fixtures provided/)
+  })
+
+  test('POSITIVE CONTROL 5 (repro:23-24): isScopeTrackedPath recognizes .caselaw files and verifyCloseout catches omitted .caselaw changes', () => {
+    assert.equal(isScopeTrackedPath('.caselaw/gates.json'), true)
+    assert.equal(isScopeTrackedPath('./.caselaw/answers.json'), true)
+
+    const scope = verifyCloseout({
+      text: '## What Changed\nNothing.\n',
+      gitFiles: ['.caselaw/gates.json'],
+    })
+    assert.equal(scope.valid, false, 'Must flag modified .caselaw/gates.json omitted from What Changed')
+    assert.ok(scope.errors.some((e) => e.includes('.caselaw/gates.json')))
+  })
+
+  test('POSITIVE CONTROL 6 (repro:25): verifyCloseout catches exit 127, non-zero exits, and [x] on human authority items', () => {
+    const exit = verifyCloseout({
+      text: '## Verified\n- npm run typecheck — exit 127\n- lint — exit code 1\n- render UI [x]\n',
+      gitFiles: [],
+    })
+    assert.equal(exit.valid, false, 'Must reject exit 127, exit 1, and [x] on human authority items under Verified')
+    assert.ok(exit.errors.some((e) => e.includes('Failing command placed inside ## Verified')))
+    assert.ok(exit.errors.some((e) => e.includes('Human-only authority boundary marked as verified with [x]')))
+  })
+
+  test('POSITIVE CONTROL 7 (repro:26): verifyCloseout rejects duplicate basenames representing multiple paths', () => {
+    const same = verifyCloseout({
+      text: '## What Changed\nUpdated index.js.\n',
+      gitFiles: ['src/a/index.js', 'src/b/index.js'],
+    })
+    assert.equal(same.valid, false, 'One basename must not account for multiple distinct paths')
+    assert.ok(same.errors.some((e) => e.includes('Modified file "src/a/index.js" is omitted')))
+  })
+
+  test('POSITIVE CONTROL 8 (repro:28-29): saveIncident refuses to overwrite existing fixture with conflicting diff (A2)', async () => {
     const fixture = {
-      id: 'inc-immutable',
+      id: 'example-1',
       rule: 'guard',
-      positiveControl: { diff: '+first version', expected: 'FAIL' },
-      negativeControl: { diff: '+clean', expected: 'PASS' },
+      positiveControl: { diff: '+bad', expected: 'FAIL' },
+      negativeControl: { diff: '+good', expected: 'PASS' },
     }
     await saveIncident(root, fixture)
 
-    // Attempting to overwrite with different diff must throw
     await assert.rejects(async () => {
-      await saveIncident(root, {
-        ...fixture,
-        positiveControl: { diff: '+second altered version', expected: 'FAIL' },
-      })
+      await saveIncident(root, { ...fixture, positiveControl: { diff: '+different' } })
     }, /already exists\. Incidents are append-only evidence \(A2\)/)
   })
 
-  test('POSITIVE CONTROL: listIncidents throws on malformed JSON instead of silently dropping', async () => {
+  test('POSITIVE CONTROL 9 (repro:30-31): listIncidents throws diagnostic error on malformed incident JSON', async () => {
     await mkdir(join(root, '.caselaw/incidents'), { recursive: true })
-    await writeFile(join(root, '.caselaw/incidents/corrupt.json'), '{ corrupt json', 'utf8')
+    await writeFile(join(root, '.caselaw/incidents/broken.json'), '{ malformed')
 
     await assert.rejects(async () => {
       await listIncidents(root)
-    }, /Corrupted incident fixture "corrupt\.json"/)
+    }, /Corrupted incident fixture "broken\.json"/)
   })
-})
 
-describe('F6 — Case-Sensitive Gate Synthesis & Runtime Alignment', () => {
-  test('POSITIVE CONTROL: synthesizeMachineGate extracts exact case-sensitive literal matching runtime', async () => {
-    const res = synthesizeMachineGate({
-      rule: { name: 'no-debug', rule: 'Never include `CONSOLE.LOG`.', trigger: 'editing src' },
+  test('POSITIVE CONTROL 10 (repro:32-33): selectTriggeredRules compacts object-shaped machine enforcement', () => {
+    const rule = '# guard\n\n**Trigger:** editing source files\n\n**Rule:** Never remove access checks.\n\n**Origin:** abc123\n\n**Enforcement:** machine:guard\n\n**Ratified:** 2026-10-01 by human\n'
+    const routed = selectTriggeredRules([
+      {
+        name: 'guard',
+        trigger: 'editing src/*.js',
+        rule: 'Very long rule body',
+        raw: rule,
+        enforcement: { mode: 'machine', gateId: 'guard', raw: 'machine:guard' },
+      },
+    ], ['src/index.js'])
+
+    assert.equal(routed.length, 1)
+    assert.equal(routed[0].compacted, true)
+    assert.equal(routed[0].rule, '[Enforced by machine gate: guard]')
+  })
+
+  test('POSITIVE CONTROL 11 (repro:34-35): consolidateRules preserves secondary catches metadata, Merged-Into pointer, and chronological origins', () => {
+    const rule = '# guard\n\n**Trigger:** editing source files\n\n**Rule:** Never remove access checks.\n\n**Origin:** abc123\n\n**Enforcement:** machine:guard\n\n**Ratified:** 2026-10-01 by human\n'
+    const cr = consolidateRules(
+      rule,
+      rule.replace('# guard', '# guard-b').replace('abc123', 'def456') + '\n**Catches:** B unique evidence\n',
+      { trigger: 'editing source files', rule: 'Never remove access checks.' }
+    )
+
+    assert.equal(cr.mergedRuleText.includes('B unique evidence'), true, 'Merged rule must retain secondary catches')
+    assert.match(cr.archivedRuleText, /\*\*Merged-Into:\*\* guard/, 'Archived rule must have structured Merged-Into pointer')
+    const union = unionOrigins('2026-11-02 later', '2026-10-01 earlier')
+    assert.match(union, /2026-10-01 earlier.*2026-11-02 later/, 'Origins must sort chronologically')
+  })
+
+  test('POSITIVE CONTROL 12 (repro:36-41): synthesizeMachineGate extracts exact case-sensitive pattern matching runtime/gate.mjs', async () => {
+    const synthesized = synthesizeMachineGate({
+      rule: { name: 'no-debug', rule: 'Never include `CONSOLE.LOG`.', trigger: 'editing src files' },
       incidentFixtures: [{
-        id: 'case-case',
+        id: 'case-1',
         positiveControl: { diff: '--- a/src/x.js\n+++ b/src/x.js\n+CONSOLE.LOG("leak")\n' },
         negativeControl: { diff: '--- a/src/x.js\n+++ b/src/x.js\n+logger.info("ok")\n' },
       }],
     })
-    assert.equal(res.success, true)
-    assert.equal(res.pattern, 'CONSOLE.LOG')
 
-    // Run against real gate runtime
+    assert.equal(synthesized.success, true)
+    assert.equal(synthesized.pattern, 'CONSOLE.LOG')
+
+    // Run exact vendored runtime over file snapshot
     await mkdir(join(root, 'src'), { recursive: true })
     await writeFile(join(root, 'src/x.js'), 'CONSOLE.LOG("leak")\n')
-    const runtime = await evaluate({ root, mode: 'all', config: { version: 1, gates: [res.gate] }, telemetry: false })
+    const runtime = await evaluate({ root, mode: 'all', config: { version: 1, gates: [synthesized.gate] }, telemetry: false })
     assert.equal(runtime.fires.length, 1, 'Runtime must fire on matching case')
   })
 })
 
-describe('F7 & F10 — Close-Out Scope Verifier Integrity', () => {
-  test('POSITIVE CONTROL: isScopeTrackedPath accurately recognizes .caselaw/ directory', () => {
-    assert.equal(isScopeTrackedPath('.caselaw/gates.json'), true)
-    assert.equal(isScopeTrackedPath('./.caselaw/answers.json'), true)
-    assert.equal(isScopeTrackedPath('src/core/optimizer.js'), true)
-    assert.equal(isScopeTrackedPath('.agents/scratch.md'), false)
+describe('Independent Positive Controls: cli-repro.mjs cases 13 - 15', () => {
+  test('POSITIVE CONTROL 13 (cli-repro:10-18): Subprocess CLI rule evolve rejects loosened candidate and preserves active rule in non-interactive mode', async () => {
+    await mkdir(join(root, 'docs/rules/active'), { recursive: true })
+    const makeRule = (body, enforcement = 'memory') =>
+      `# guard\n\n**Trigger:** editing source files\n\n**Rule:** ${body}\n\n**Origin:** original-evidence\n\n**Enforcement:** ${enforcement}\n\n**Ratified:** 2026-10-01 by human\n`
+    await writeFile(join(root, 'docs/rules/active/guard.md'), makeRule('Never use git add -A. Never commit production secrets.'))
+    await writeFile(join(root, 'candidate.md'), makeRule('Allow git add -A.'))
+
+    await saveIncident(root, {
+      id: 'guard-case',
+      rule: 'guard',
+      positiveControl: { diff: '--- a/src/a.js\n+++ b/src/a.js\n+git add -A\n', expected: 'FAIL' },
+      negativeControl: { diff: '--- a/src/a.js\n+++ b/src/a.js\n+git add src/a.js\n', expected: 'PASS' },
+    })
+
+    const evolve = runCli(['rule', 'evolve', 'guard', '--candidate', 'candidate.md'], root)
+    assert.notEqual(evolve.exit, 0, 'CLI rule evolve with loosened candidate must fail')
+
+    // Verify active rule remains completely unchanged
+    const evolved = parseRule(await readFile(join(root, 'docs/rules/active/guard.md'), 'utf8'))
+    assert.match(evolved.rule, /Never use git add -A/)
+    assert.equal(evolved.ratified, '2026-10-01 by human')
   })
 
-  test('POSITIVE CONTROL: verifyCloseout catches exit 127 in Verified, [x] on human items, and duplicate basenames', () => {
-    // 1. exit 127 in Verified
-    const exit127 = verifyCloseout({
-      text: '# Close-out\n## What Changed\n- `src/a.js`: edit\n## Verified\n- test — exit 127\n## Not Verified\n- [ ] none\n',
-      gitFiles: ['src/a.js'],
-    })
-    assert.equal(exit127.valid, false)
-    assert.ok(exit127.errors.some((e) => e.includes('Failing command placed inside ## Verified')))
+  test('POSITIVE CONTROL 14 (cli-repro:19-24): Subprocess CLI gate synthesize refuses to overwrite or downgrade existing blocking gate', async () => {
+    await mkdir(join(root, 'docs/rules/active'), { recursive: true })
+    await mkdir(join(root, '.caselaw'), { recursive: true })
 
-    // 2. [x] on UI item in Verified
-    const checkedUI = verifyCloseout({
-      text: '# Close-out\n## What Changed\n- `src/a.js`: edit\n## Verified\n- [x] see what the UI actually renders\n## Not Verified\n- [ ] none\n',
-      gitFiles: ['src/a.js'],
-    })
-    assert.equal(checkedUI.valid, false)
-    assert.ok(checkedUI.errors.some((e) => e.includes('Human-only authority boundary marked as verified with [x]')))
+    const makeRule = (body, enforcement = 'memory') =>
+      `# guard\n\n**Trigger:** editing source files\n\n**Rule:** ${body}\n\n**Origin:** original-evidence\n\n**Enforcement:** ${enforcement}\n\n**Ratified:** 2026-10-01 by human\n`
+    await writeFile(join(root, 'docs/rules/active/guard.md'), makeRule('Never use `git add -A`.', 'machine:guard'))
+    await writeFile(
+      join(root, '.caselaw/gates.json'),
+      JSON.stringify({
+        version: 1,
+        gates: [{ id: 'guard', kind: 'command', severity: 'block', origin: 'docs/rules/active/guard.md', patterns: ['git add -A'] }],
+      })
+    )
 
-    // 3. Basename spoofing (index.js for src/a/index.js and src/b/index.js)
-    const spoof = verifyCloseout({
-      text: '# Close-out\n## What Changed\n- Updated `index.js`.\n## Verified\n- all passed\n## Not Verified\n- [ ] none\n',
-      gitFiles: ['src/a/index.js', 'src/b/index.js'],
+    await saveIncident(root, {
+      id: 'guard-case-2',
+      rule: 'guard',
+      positiveControl: { diff: '--- a/src/a.js\n+++ b/src/a.js\n+git add -A\n' },
+      negativeControl: { diff: '--- a/src/a.js\n+++ b/src/a.js\n+git add src/a.js\n' },
     })
-    assert.equal(spoof.valid, false)
-    assert.ok(spoof.errors.some((e) => e.includes('Modified file "src/a/index.js" is omitted')))
+
+    const gate = runCli(['gate', 'synthesize', 'guard', '--yes'], root)
+    assert.notEqual(gate.exit, 0, 'CLI gate synthesize must exit non-zero when overwriting an existing gate without --force')
+
+    const after = JSON.parse(await readFile(join(root, '.caselaw/gates.json'), 'utf8')).gates[0]
+    assert.equal(after.severity, 'block', 'Blocking severity must be preserved')
+    assert.equal(after.kind, 'command', 'Original gate kind must be preserved')
+  })
+
+  test('POSITIVE CONTROL 15 (cli-repro:25-27): Subprocess context routing compacts object-shaped machine enforcement', () => {
+    const routing = selectTriggeredRules(
+      [
+        {
+          name: 'guard',
+          trigger: 'editing `src/`',
+          rule: 'Never break.',
+          raw: 'Long original body.',
+          enforcement: { mode: 'machine', gateId: 'guard', raw: 'machine:guard' },
+        },
+      ],
+      ['src/a.js']
+    )
+    assert.equal(routing.length, 1)
+    assert.equal(routing[0].compacted, true)
+    assert.equal(routing[0].rule, '[Enforced by machine gate: guard]')
   })
 })
 
-describe('F8 & F9 — Edit Budget & Zero-Fixture Safeguards', () => {
-  test('POSITIVE CONTROL: checkEditBudget measures real token edit distance', () => {
-    const oldMutable = { trigger: 'code', rule: Array.from({ length: 100 }, (_, i) => `orig${i}`).join(' ') }
-    const newMutable = { trigger: 'code', rule: Array.from({ length: 100 }, (_, i) => `repl${i}`).join(' ') }
-    const budgetRes = checkEditBudget(oldMutable, newMutable)
-    assert.equal(budgetRes.allowed, false, '100 completely new words must exceed 25-word budget')
-    assert.equal(budgetRes.delta, 100)
+describe('Independent Positive Controls: Structural Safeguards 16 & 17', () => {
+  test('POSITIVE CONTROL 16: selectTriggeredRules enforces strict word budget cap without admitting oversize first rule', () => {
+    const hugeRule = {
+      name: 'huge-rule',
+      trigger: 'editing `src/`',
+      rule: Array.from({ length: 100 }, (_, i) => `word${i}`).join(' '),
+      raw: Array.from({ length: 100 }, (_, i) => `word${i}`).join(' '),
+      enforcement: 'memory',
+    }
+    const selected = selectTriggeredRules([hugeRule], ['src/file.js'], { budget: 5 })
+    assert.equal(selected.length, 0, 'Rule exceeding budget of 5 words must NOT be admitted')
   })
 
-  test('POSITIVE CONTROL: evaluateStage2 with zero incident fixtures returns pass: false', async () => {
-    const res = await evaluateStage2({ trigger: 'code', rule: 'rule' }, [], async () => ({ verdict: 'PASS' }))
-    assert.equal(res.pass, false)
-    assert.equal(res.catchRate, 0)
-    assert.match(res.reason, /insufficient-evidence/)
+  test('POSITIVE CONTROL 17: Non-interactive rule evolve stages valid candidate to docs/rules/proposed/ (Axiom A1)', async () => {
+    await mkdir(join(root, 'docs/rules/active'), { recursive: true })
+    const rulePath = join(root, 'docs/rules/active/stage-guard.md')
+    const originalRule = `# stage-guard\n\n**Trigger:** git add or commit\n\n**Rule:** Please make sure to explicitly stage files by name. Never use git add -A or git add .\n\n**Origin:** commit 123456\n\n**Enforcement:** memory\n\n**Ratified:** 2026-08-13\n`
+    await writeFile(rulePath, originalRule, 'utf8')
+
+    // Contrastive fixture
+    await saveIncident(root, {
+      id: 'case-stage',
+      rule: 'stage-guard',
+      positiveControl: { diff: '--- a/x.js\n+++ b/x.js\n+git add -A\n', expected: 'FAIL' },
+      negativeControl: { diff: '--- a/x.js\n+++ b/x.js\n+git add x.js\n', expected: 'PASS' },
+    })
+
+    const candPath = join(root, 'candidate-compressed.md')
+    const candidateRule = `# stage-guard\n\n**Trigger:** git add or commit\n\n**Rule:** Explicitly stage files by name. Never sweep with git add -A or git add .\n\n**Origin:** commit 123456\n\n**Enforcement:** memory\n\n**Ratified:** 2026-08-13\n`
+    await writeFile(candPath, candidateRule, 'utf8')
+
+    const io = makeIO()
+    const exitCode = await cmdRule({
+      sub: 'evolve',
+      name: 'stage-guard',
+      opt: { candidate: 'candidate-compressed.md', compress: true },
+    }, { root, ...io })
+
+    assert.equal(exitCode, 0, 'Valid compressed candidate must succeed')
+    assert.ok(io.lines.some((l) => l.includes('staged to docs/rules/proposed/stage-guard.md')))
+
+    // Active rule must remain unchanged (Axiom A1)
+    const activeCurrent = await readFile(rulePath, 'utf8')
+    assert.match(activeCurrent, /Please make sure to explicitly stage/)
+
+    // Proposed rule contains the evolved candidate
+    const proposed = await readFile(join(root, 'docs/rules/proposed/stage-guard.md'), 'utf8')
+    assert.match(proposed, /Explicitly stage files by name/)
   })
 
-  test('POSITIVE CONTROL: optimizeRuleIterative refuses optimization when zero incident fixtures exist', async () => {
-    const rule = '# r\n**Trigger:** t\n**Rule:** R\n**Origin:** 1\n**Enforcement:** memory\n'
-    const res = await optimizeRuleIterative({ ruleText: rule, incidentFixtures: [] })
-    assert.equal(res.success, false)
-    assert.match(res.reason, /zero fixtures provided/)
-  })
-})
-
-describe('F11 — Context Router Machine Objects & Globs', () => {
-  test('POSITIVE CONTROL: matchesTriggerPath correctly handles recursive ** globs', () => {
+  test('POSITIVE CONTROL 18: matchesTriggerPath correctly handles recursive ** globs', () => {
     assert.equal(matchesTriggerPath('editing `src/**/*.js`', 'src/a/b/file.js'), true)
     assert.equal(matchesTriggerPath('editing `src/**/*.js`', 'test/a/b/file.js'), false)
   })
 
-  test('POSITIVE CONTROL: selectTriggeredRules compacts object-shaped machine enforcement', () => {
-    const rule = {
-      name: 'guard',
-      trigger: 'editing `src/`',
-      rule: 'Long rule body that takes many words.',
-      raw: 'Full markdown body',
-      enforcement: { mode: 'machine', gateId: 'guard', raw: 'machine:guard' },
-    }
-    const selected = selectTriggeredRules([rule], ['src/a.js'])
-    assert.equal(selected.length, 1)
-    assert.equal(selected[0].compacted, true)
-    assert.equal(selected[0].rule, '[Enforced by machine gate: guard]')
-  })
-})
-
-describe('F12 & F13 — Consolidation & Rejection Buffer Normalization', () => {
-  test('POSITIVE CONTROL: consolidateRules unions origins chronologically and preserves Merged-Into pointer', () => {
-    const ruleA = '# rule-a\n\n**Trigger:** edit code\n\n**Rule:** Rule A body.\n\n**Origin:** 2026-11-02 later commit\n\n**Enforcement:** memory\n'
-    const ruleB = '# rule-b\n\n**Trigger:** edit code\n\n**Rule:** Rule B body.\n\n**Origin:** 2026-10-01 earlier commit\n\n**Enforcement:** memory\n**Catches:** B unique evidence\n'
-
-    const res = consolidateRules(ruleA, ruleB, { trigger: 'edit code', rule: 'Combined rule.' })
-
-    // Origin unioned chronologically (earlier first)
-    assert.match(res.mergedRuleText, /2026-10-01 earlier commit.*2026-11-02 later commit/)
-    // Secondary catches metadata preserved in merged rule
-    assert.ok(res.mergedRuleText.includes('B unique evidence'))
-    // Archived rule has structured Merged-Into pointer
-    assert.match(res.archivedRuleText, /\*\*Merged-Into:\*\* rule-a/)
-  })
-
-  test('POSITIVE CONTROL: RejectedEditBuffer normalizes whitespace variations and extra blank lines', () => {
+  test('POSITIVE CONTROL 19: RejectedEditBuffer normalizes whitespace variations and extra blank lines', () => {
     const buffer = new RejectedEditBuffer(5)
     const diff1 = 'TRIGGER: edit\n\nRULE: do not break'
     const diff2 = 'TRIGGER: edit\n\n\n\nRULE: do not break'

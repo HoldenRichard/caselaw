@@ -15,8 +15,8 @@
  *   - `ratify` and `reject` refuse without one — only a human promotes or drops.
  */
 
-import { writeFile, stat, readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { writeFile, stat, readFile, mkdir } from 'node:fs/promises'
+import { join, dirname } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -38,6 +38,7 @@ import {
   evaluatePareto,
   evaluateStage1,
   evaluateStage2,
+  defaultVerifier,
   optimizeRuleIterative,
   ConstitutionError,
 } from '../core/skillopt.js'
@@ -665,28 +666,17 @@ async function evolve(args, { root, say, interactive }) {
       return 1
     }
 
-    const budgetRes = checkEditBudget(ast.mutable, candidateAST.mutable, { isCompression: Boolean(o.compress) })
+    // Stage 2 verifier check using built-in verifier (blind to control labels)
+    const stage2 = await evaluateStage2(candidateAST.mutable, incidents, defaultVerifier)
+
+    const isLossless = stage2.catchRate === 1.0 && stage2.falsePositives === 0
+    const budgetRes = checkEditBudget(ast.mutable, candidateAST.mutable, {
+      isCompressionVerified: Boolean(o.compress && isLossless),
+    })
     if (!budgetRes.allowed) {
       say(`  Learning-Rate Budget Rejection: ${budgetRes.reason}`)
       return 1
     }
-
-    // Stage 2 verifier check using built-in verifier
-    const stage2 = await evaluateStage2(candidateAST.mutable, incidents, async ({ fixture, control, diff }) => {
-      const r = (candidateAST.mutable.rule || '').toLowerCase()
-      const d = String(diff ?? '')
-      const isPermissive = /\b(?:allow|allowed|permit|permitted|enable|enabled|may\s+use|can\s+use)\b/i.test(r)
-      const hasProhibition = /\b(?:never|must\s+not|do\s+not|cannot|prohibit|forbidden|avoid|refuse|prevent)\b/i.test(r)
-      const forbidsSweep = !isPermissive && hasProhibition && (r.includes('sweep') || r.includes('git add -a') || r.includes('git add .') || r.includes('stage') || r.includes('explicit'))
-      const wouldFlag = forbidsSweep && /\bgit\s+add\s+(?:-A|--all|\.)(?=\s|$|[;&|\n])/.test(d)
-
-      if (control === 'negative') {
-        if (wouldFlag) return { verdict: 'FAIL', reason: 'False positive: flags clean negative control diff' }
-        return { verdict: 'PASS' }
-      }
-      if (wouldFlag) return { verdict: 'FAIL', reason: 'violates explicit staging prohibition' }
-      return { verdict: 'PASS' }
-    })
 
     const pareto = evaluatePareto(
       { catchRate: stage2.catchRate, falsePositives: stage2.falsePositives, wordCount: candidateAST.totalWords },
@@ -699,10 +689,14 @@ async function evolve(args, { root, say, interactive }) {
     }
 
     // Structural A2 reconstitution: guarantees Origin and Catches remain intact
+    // Axiom A1 structural enforcement: stages to proposed/ unless human ratifies
     const reconstituted = reconstituteRuleAST(ast, candidateAST.mutable)
-    await writeFile(path, reconstituted, 'utf8')
-    say(`  Evolved ${dirs.active}/${ruleName}.md:`)
+    const proposedPath = join(root, dirs.proposed, `${ruleName}.md`)
+    await mkdir(dirname(proposedPath), { recursive: true })
+    await writeFile(proposedPath, reconstituted, 'utf8')
+    say(`  Evolved candidate staged to ${dirs.proposed}/${ruleName}.md:`)
     say(`    ${pareto.reason}`)
+    say(`  Run "caselaw rule ratify ${ruleName}" to ratify.`)
     return 0
   }
 
@@ -741,8 +735,11 @@ async function evolve(args, { root, say, interactive }) {
     for (const step of res.acceptedSteps) {
       say(`  Step ${step.step}: [${step.mode}] ${step.reason}`)
     }
-    await writeFile(path, res.bestRuleText, 'utf8')
-    say(`  Evolved ${dirs.active}/${ruleName}.md: ${res.savedWords} words saved (${res.stats.initialWords} -> ${res.stats.finalWords}) across ${res.acceptedSteps.length} accepted step(s).`)
+    const proposedPath = join(root, dirs.proposed, `${ruleName}.md`)
+    await mkdir(dirname(proposedPath), { recursive: true })
+    await writeFile(proposedPath, res.bestRuleText, 'utf8')
+    say(`  Evolved candidate staged to ${dirs.proposed}/${ruleName}.md: ${res.savedWords} words saved (${res.stats.initialWords} -> ${res.stats.finalWords}) across ${res.acceptedSteps.length} accepted step(s).`)
+    say(`  Run "caselaw rule ratify ${ruleName}" to ratify.`)
     return 0
   }
 
