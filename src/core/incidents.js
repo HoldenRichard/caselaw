@@ -109,7 +109,9 @@ export function validateIncident(inc) {
 }
 
 /**
- * Save an incident fixture into .caselaw/incidents/<id>.json
+ * Save an incident fixture into .caselaw/incidents/<id>.json.
+ * Incident fixtures are append-only evidence under Constitution Axiom A2;
+ * existing fixtures cannot be overwritten unless content is byte-identical.
  *
  * @param {string} root
  * @param {object} incident
@@ -120,7 +122,20 @@ export async function saveIncident(root, incident) {
   const dir = join(root, INCIDENTS_DIR)
   await mkdir(dir, { recursive: true })
   const file = join(dir, `${validated.id}.json`)
-  await writeFile(file, JSON.stringify(validated, null, 2) + '\n', 'utf8')
+  const newContent = JSON.stringify(validated, null, 2) + '\n'
+
+  try {
+    const existing = await readFile(file, 'utf8')
+    if (existing === newContent) return file // Idempotent identical write
+    throw new IncidentError(
+      `Incident fixture "${validated.id}" already exists. Incidents are append-only evidence (A2) and cannot be overwritten.`,
+      { code: 'INCIDENT_EXISTS' }
+    )
+  } catch (err) {
+    if (err?.code === 'INCIDENT_EXISTS') throw err
+  }
+
+  await writeFile(file, newContent, { encoding: 'utf8', flag: 'wx' })
   return file
 }
 
@@ -179,8 +194,11 @@ export async function listIncidents(root, opts = {}) {
       if (!opts.rule || inc.rule === opts.rule) {
         out.push(inc)
       }
-    } catch {
-      // Malformed incident files in directory are skipped in listing
+    } catch (err) {
+      throw new IncidentError(
+        `Corrupted incident fixture "${f}": ${err?.message || 'invalid JSON'}. Malformed evidence must be fixed or removed; it cannot be silently dropped.`,
+        { code: 'MALFORMED_INCIDENT' }
+      )
     }
   }
   return out.sort((a, b) => a.id.localeCompare(b.id))
@@ -198,13 +216,24 @@ export function gitDiffOfCommit(root, commitRef) {
   if (!commitRef || typeof commitRef !== 'string') return null
   const ref = commitRef.trim()
   if (!/^[a-zA-Z0-9_./~^-]+$/.test(ref)) return null
-  const res = spawnSync('git', ['show', '--format=', '--unified=3', ref], {
+  let res = spawnSync('git', ['show', '--format=', '--unified=3', '-m', ref], {
     cwd: root,
     encoding: 'utf8',
     maxBuffer: 10 * 1024 * 1024,
   })
-  if (res.status !== 0 || !res.stdout) return null
-  return res.stdout
+  if (res.status === 0 && res.stdout && res.stdout.trim().length > 0) {
+    return res.stdout
+  }
+  // Fallback to git diff ref~1..ref
+  res = spawnSync('git', ['diff', `${ref}~1..${ref}`], {
+    cwd: root,
+    encoding: 'utf8',
+    maxBuffer: 10 * 1024 * 1024,
+  })
+  if (res.status === 0 && res.stdout && res.stdout.trim().length > 0) {
+    return res.stdout
+  }
+  return null
 }
 
 /**

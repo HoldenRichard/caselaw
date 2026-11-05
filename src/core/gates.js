@@ -419,10 +419,9 @@ export function synthesizeMachineGate({ rule, incidentFixtures = [], dir = 'docs
     }
   }
 
+  // Exact case matching matching runtime/gate.mjs literal behavior
   const matchesDiff = (diff, pattern) => {
-    const cleanPattern = pattern.toLowerCase()
-    const cleanDiff = diff.toLowerCase()
-    return cleanDiff.includes(cleanPattern)
+    return String(diff ?? '').includes(pattern)
   }
 
   for (const pat of candidatePatterns) {

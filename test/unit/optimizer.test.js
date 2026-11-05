@@ -216,6 +216,12 @@ describe('lossless compression via SkillOpt', () => {
       text: 'Please make sure to always remember to write down migrations in order to avoid issues.',
       origin: 'commit 1234',
     }))
+    await saveIncident(root, {
+      id: 'INC-VERBOSE-01',
+      rule: 'verbose',
+      positiveControl: { commit: '1234', diff: '--- a/m.sql\n+++ b/m.sql\n@@ -1 +1 @@\n+migration\n', expected: 'FAIL' },
+      negativeControl: { commit: '1235', diff: '--- a/m.sql\n+++ b/m.sql\n@@ -1 +1 @@\n+select 1\n', expected: 'PASS' },
+    })
     const r = await applyProposal({ root, doc: doc(), id: 'compress:verbose', now: new Date('2026-10-31') })
     assert.equal(r.ok, true, r.message)
     const updated = await readFile(join(root, 'docs/rules/active/verbose.md'), 'utf8')

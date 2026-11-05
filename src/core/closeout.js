@@ -60,7 +60,7 @@ export function parseCloseout(text) {
  * Code (src, bin), tests, active governance doctrine (docs/rules), and gate configs (.caselaw).
  */
 export function isScopeTrackedPath(p) {
-  const clean = String(p ?? '').replace(/^[./]+/, '')
+  const clean = String(p ?? '').replace(/^\.\//, '')
   return (
     clean.startsWith('src/') ||
     clean.startsWith('bin/') ||
@@ -132,11 +132,10 @@ export function verifyCloseout({ text, root = process.cwd(), gitFiles = null }) 
   const actualChanged = gitFiles !== null ? gitFiles : gitChangedFiles(root)
   const whatChangedText = parsed.whatChanged.join('\n')
 
-  // Check: Every modified file in scope must be mentioned in What Changed
+  // Check: Every modified file in scope must be mentioned in What Changed by full relative path
   const trackedFiles = actualChanged.filter(isScopeTrackedPath)
   for (const cf of trackedFiles) {
-    const basename = cf.split('/').pop()
-    if (!whatChangedText.includes(cf) && !whatChangedText.includes(basename)) {
+    if (!whatChangedText.includes(cf)) {
       errors.push(`Modified file "${cf}" is omitted from ## What Changed (Silent Scope Drop)`)
     }
   }
@@ -155,16 +154,23 @@ export function verifyCloseout({ text, root = process.cwd(), gitFiles = null }) 
 
   // 2. Verification Exit Code Honesty
   for (const line of parsed.verified) {
-    if (/\b(?:exit(?:ed)?\s+with\s+code\s+(?:127|[1-9][0-9]*)|code\s+127|command\s+not\s+found|FAIL)\b/i.test(line)) {
+    if (/\b(?:exit(?:ed)?(?:\s+with)?(?:\s+code)?\s+[1-9]\d*|code\s+[1-9]\d*|command\s+not\s+found|FAIL)\b/i.test(line)) {
       errors.push(`Failing command placed inside ## Verified: "${line}". Non-zero exits must be listed under ## Not Verified.`)
     }
   }
 
-  // 3. Authority Split Enforcement: Human-only items must remain unchecked
+  // 3. Authority Split Enforcement: Human-only items must never be marked [x] in ANY section
+  const allLines = String(text ?? '').split(/\r?\n/)
+  for (const line of allLines) {
+    if (/-\s*\[x\]/i.test(line)) {
+      if (/\b(?:ui|render|database|datastore|prod|production|hardware|physical)\b/i.test(line)) {
+        errors.push(`Human-only authority boundary marked as verified with [x]: "${line.trim()}". Only a human observation is authoritative.`)
+      }
+    }
+  }
   for (const line of parsed.notVerified) {
     if (/^-\s*\[x\]/i.test(line)) {
-      // Check if it's a known human-only boundary
-      if (/ui|render|datastore|production|database/i.test(line)) {
+      if (!errors.some((e) => e.includes(line.trim()))) {
         errors.push(`Human-only authority boundary marked as verified with [x]: "${line}". Only a human observation is authoritative.`)
       }
     }

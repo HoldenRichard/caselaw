@@ -1173,7 +1173,12 @@ export function matchesTriggerPath(triggerText, filePath) {
 
     // A. Glob match (e.g. *.test.js or src/**/*.js)
     if (token.includes('*')) {
-      const globRegex = new RegExp('^' + token.replace(/\./g, '\\.').replace(/\*\*/g, '.*').replace(/\*/g, '[^/]*') + '$')
+      const escaped = token.replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+      const globPattern = escaped
+        .replace(/\*\*/g, '§GLOBSTAR§')
+        .replace(/\*/g, '[^/]*')
+        .replace(/§GLOBSTAR§/g, '.*')
+      const globRegex = new RegExp('^' + globPattern + '$')
       if (globRegex.test(p) || globRegex.test(base)) return true
       continue
     }
@@ -1222,9 +1227,11 @@ export function selectTriggeredRules(activeRules = [], touchedFilePaths = [], op
   // Machine-promoted rules are already enforced deterministically by CI/hooks,
   // so prose rules must receive model memory context first.
   const isMachineEnforced = (r) => {
-    const enf = r.enforcement?.mode || r.enforcement || r.parsed?.enforcement
-    if (typeof enf === 'string') return enf.toLowerCase().startsWith('machine:')
-    return enf?.mode === 'machine'
+    if (r.enforcement?.mode === 'machine') return true
+    if (typeof r.enforcement === 'string' && r.enforcement.toLowerCase().startsWith('machine')) return true
+    if (typeof r.parsed?.enforcement === 'string' && r.parsed.enforcement.toLowerCase().startsWith('machine')) return true
+    if (r.parsed?.enforcement?.mode === 'machine') return true
+    return false
   }
 
   const getCatchCount = (r) => {
@@ -1248,25 +1255,30 @@ export function selectTriggeredRules(activeRules = [], touchedFilePaths = [], op
   for (const r of matching) {
     const machine = isMachineEnforced(r)
     let processed = r
-    let bodyText = r.raw || `${r.trigger || ''} ${r.rule || ''}`
+    let bodyText = r.raw || `${r.trigger || r.parsed?.trigger || ''} ${r.rule || r.parsed?.rule || ''}`
 
     if (machine) {
-      const rawEnf = typeof r.enforcement === 'string'
-        ? r.enforcement
-        : (r.enforcement?.raw || (r.enforcement?.gateId ? `machine:${r.enforcement.gateId}` : (r.parsed?.enforcement || 'machine:active')))
-      const gateId = rawEnf.includes(':') ? rawEnf.split(':')[1].trim() : (r.enforcement?.gateId || 'active')
-      // Compact machine rule to a lightweight 1-line pointer, genuinely freeing up context budget
+      let gateId = 'active'
+      if (r.enforcement?.gateId) {
+        gateId = r.enforcement.gateId
+      } else if (typeof r.enforcement === 'string' && r.enforcement.includes(':')) {
+        gateId = r.enforcement.split(':')[1].trim()
+      } else if (typeof r.parsed?.enforcement === 'string' && r.parsed.enforcement.includes(':')) {
+        gateId = r.parsed.enforcement.split(':')[1].trim()
+      } else if (r.enforcement?.raw?.includes(':')) {
+        gateId = r.enforcement.raw.split(':')[1].trim()
+      }
       processed = {
         ...r,
         compacted: true,
         rule: `[Enforced by machine gate: ${gateId}]`,
-        raw: `**Trigger:** ${r.trigger || ''}\n**Enforcement:** machine:${gateId}`,
+        raw: `**Trigger:** ${r.trigger || r.parsed?.trigger || ''}\n**Enforcement:** machine:${gateId}`,
       }
-      bodyText = `${r.trigger || ''} machine:${gateId}`
+      bodyText = `${r.trigger || r.parsed?.trigger || ''} machine:${gateId}`
     }
 
     const w = bodyText.trim().split(/\s+/).filter(Boolean).length
-    if (totalWords + w <= budget || selected.length === 0) {
+    if (totalWords + w <= budget) {
       selected.push(processed)
       totalWords += w
     } else {

@@ -234,7 +234,9 @@ export async function applyProposal({ root, doc, id, now = new Date(), name = nu
     }
 
     await mkdir(dirname(path), { recursive: true })
-    await writeFile(path, mergedProposal(into, [parsedA, parsedB], isoDay(now)), 'utf8')
+    const consolidated = consolidateRules(ta, tb, candidateMutable, { originSep: ' And: ' })
+    const proposalBody = `${consolidated.mergedRuleText.trim()}\n\n**Merges:** ${a}, ${b}\n---\n_Proposed by \`caselaw optimize\` on ${isoDay(now)}: \`${a}\` and \`${b}\` as one rule, built from both files verbatim. You may reword the Trigger and add to the Rule. Ratifying checks that each one's Rule, Origin and Precedent is still here word for word, then moves them to archive/._\n`
+    await writeFile(path, proposalBody, 'utf8')
     return { ok: true, message: `Wrote ${dirs.proposed}/${into}.md. Ratifying it moves ${a} and ${b} to ${dirs.archive}/.`, wrote: [`${dirs.proposed}/${into}.md`] }
   }
   if (action === 'compress') {
@@ -243,6 +245,9 @@ export async function applyProposal({ root, doc, id, now = new Date(), name = nu
     const text = await read(path)
     if (text === null) return { ok: false, message: `No active rule named "${rule}".` }
     const incidents = await listIncidents(root, { rule })
+    if (incidents.length === 0) {
+      return { ok: false, message: `Cannot compress "${rule}": no incident fixtures recorded. Record incident fixtures first to prove lossless compression.` }
+    }
     const res = await optimizeRuleIterative({
       ruleText: text,
       incidentFixtures: incidents,

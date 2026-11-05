@@ -159,6 +159,11 @@ async function synthesize(args, { root, say }) {
     if (!config) config = gatesStore.emptyConfig()
     const existingIdx = config.gates.findIndex((g) => g.id === res.gate.id)
     if (existingIdx !== -1) {
+      const existing = config.gates[existingIdx]
+      if (existing.severity === 'block') {
+        say(`  Refusing to overwrite gate "${res.gate.id}": existing gate has severity "block". Synthesizing a warning gate cannot downgrade a blocking gate (Axiom A1).`)
+        return 1
+      }
       config.gates[existingIdx] = res.gate
     } else {
       config.gates.push(res.gate)

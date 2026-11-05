@@ -95,6 +95,14 @@ export function reconstituteRuleAST(ast, newMutable) {
   const trigger = typeof newMutable.trigger === 'string' ? newMutable.trigger.trim() : ast.mutable.trigger
   const rule = typeof newMutable.rule === 'string' ? newMutable.rule.trim() : ast.mutable.rule
 
+  // Disallow injecting markdown section headers into mutable fields (F4)
+  const headerRegex = /\*\*(?:Enforcement|Origin|Precedent|Ratified|Merges|Default):\*\*/i
+  if (headerRegex.test(trigger) || headerRegex.test(rule)) {
+    throw new ConstitutionError('A2: Section headers cannot be injected into mutable trigger or rule fields', {
+      article: 'A2',
+    })
+  }
+
   // Assemble fields for serializeRule
   const fields = {
     name: ast.immutable.name,
@@ -123,6 +131,9 @@ export function reconstituteRuleAST(ast, newMutable) {
   }
   if (normalize(verify.ratified || '') !== normalize(ast.immutable.ratified || '')) {
     throw new ConstitutionError('A2: Ratified block was modified during reconstitution', { article: 'A2' })
+  }
+  if (normalize(verify.enforcement || '') !== normalize(ast.immutable.enforcement || '')) {
+    throw new ConstitutionError('A2: Enforcement block was modified during reconstitution', { article: 'A2' })
   }
 
   return serialized
@@ -153,17 +164,33 @@ export function calculateEditBudget(mutableContent) {
  * @returns {{allowed: boolean, budget: number, delta: number, reason?: string}}
  */
 export function checkEditBudget(oldMutable, newMutable, opts = {}) {
-  const oldWords = words(oldMutable.trigger) + words(oldMutable.rule)
-  const newWords = words(newMutable.trigger) + words(newMutable.rule)
+  const oldText = `${oldMutable.trigger || ''} ${oldMutable.rule || ''}`
+  const newText = `${newMutable.trigger || ''} ${newMutable.rule || ''}`
+  const oldWords = words(oldText)
+  const newWords = words(newText)
   const budget = calculateEditBudget(oldWords)
+
+  // Measure actual word token edit distance
+  const oldTokens = oldText.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  const newTokens = newText.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  const oldFreq = new Map()
+  for (const w of oldTokens) oldFreq.set(w, (oldFreq.get(w) || 0) + 1)
+  const newFreq = new Map()
+  for (const w of newTokens) newFreq.set(w, (newFreq.get(w) || 0) + 1)
+
+  let edits = 0
+  const allWords = new Set([...oldFreq.keys(), ...newFreq.keys()])
+  for (const w of allWords) {
+    const o = oldFreq.get(w) || 0
+    const n = newFreq.get(w) || 0
+    edits += Math.abs(o - n)
+  }
+  const delta = Math.ceil(edits / 2)
 
   // Lossless compression and multi-rule merges are exempt from diff cap
   if (opts.isCompression || opts.isMerge || newWords < oldWords) {
-    return { allowed: true, budget, delta: Math.abs(newWords - oldWords) }
+    return { allowed: true, budget, delta }
   }
-
-  const delta = Math.abs(words(newMutable.trigger) - words(oldMutable.trigger)) +
-                Math.abs(words(newMutable.rule) - words(oldMutable.rule))
 
   if (delta > budget) {
     return {
@@ -200,8 +227,11 @@ export class RejectedEditBuffer {
   static hashDiff(diff) {
     const compact = String(diff ?? '')
       .replace(/\r\n/g, '\n')
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .join('\n')
       .replace(/[ \t]+/g, ' ')
-      .trim()
     return hash(compact)
   }
 
@@ -405,13 +435,14 @@ export function extractPathsFromDiff(diff) {
 export async function evaluateStage2(candidateRule, incidentFixtures, verifierFn) {
   if (!Array.isArray(incidentFixtures) || incidentFixtures.length === 0) {
     return {
-      pass: true,
-      catchRate: 1.0,
+      pass: false,
+      catchRate: 0,
       falsePositives: 0,
       caught: [],
       missed: [],
       falsePositivesList: [],
       details: [],
+      reason: 'insufficient-evidence: no incident fixtures provided',
     }
   }
 
@@ -485,18 +516,31 @@ export async function evaluateStage2(candidateRule, incidentFixtures, verifierFn
  * @param {string} originB
  * @returns {string}
  */
-export function unionOrigins(originA, originB) {
+export function unionOrigins(originA, originB, sep = '; ') {
   const cleanA = (originA || '').trim()
   const cleanB = (originB || '').trim()
   if (!cleanA) return cleanB
   if (!cleanB) return cleanA
   if (cleanA === cleanB) return cleanA
 
+  // Sort chronologically if dates are present: earlier date first
+  const dateRegex = /\b(\d{4}-\d{2}-\d{2})\b/
+  const dateA = dateRegex.exec(cleanA)?.[1]
+  const dateB = dateRegex.exec(cleanB)?.[1]
+
+  if (dateA && dateB) {
+    if (dateA <= dateB) {
+      return `${cleanA}${sep}${cleanB}`
+    } else {
+      return `${cleanB}${sep}${cleanA}`
+    }
+  }
+
   const lines = [cleanA]
   if (!cleanA.includes(cleanB)) {
     lines.push(cleanB)
   }
-  return lines.join('; ')
+  return lines.join(sep)
 }
 
 /**
@@ -506,14 +550,26 @@ export function unionOrigins(originA, originB) {
  * @param {string} ruleTextA - target rule (kept)
  * @param {string} ruleTextB - absorbed rule (archived)
  * @param {{trigger: string, rule: string}} mergedMutable
+ * @param {object} [opts]
  * @returns {{mergedRuleText: string, archivedRuleText: string}}
  */
-export function consolidateRules(ruleTextA, ruleTextB, mergedMutable) {
+export function consolidateRules(ruleTextA, ruleTextB, mergedMutable, opts = {}) {
   const astA = splitRuleAST(ruleTextA)
   const astB = splitRuleAST(ruleTextB)
+  const sep = opts.originSep || '; '
 
-  const unionOrigin = unionOrigins(astA.immutable.origin, astB.immutable.origin)
-  const unionPrecedent = unionOrigins(astA.immutable.precedent, astB.immutable.precedent)
+  const unionOrigin = unionOrigins(astA.immutable.origin, astB.immutable.origin, sep)
+  const unionPrecedent = unionOrigins(astA.immutable.precedent, astB.immutable.precedent, sep)
+
+  // Union extras from both rules (including Catches)
+  const extrasA = astA.immutable.extras || []
+  const extrasB = astB.immutable.extras || []
+  const combinedExtras = [...extrasA]
+  for (const eb of extrasB) {
+    if (!combinedExtras.some((ea) => ea.name === eb.name && ea.body === eb.body)) {
+      combinedExtras.push(eb)
+    }
+  }
 
   const mergedFields = {
     name: astA.immutable.name,
@@ -525,7 +581,7 @@ export function consolidateRules(ruleTextA, ruleTextB, mergedMutable) {
     default: astA.immutable.default || astB.immutable.default || null,
     triggered: astA.immutable.triggered || astB.immutable.triggered || null,
     ratified: astA.immutable.ratified || astB.immutable.ratified || null,
-    extras: astA.immutable.extras || [],
+    extras: combinedExtras,
     preamble: astA.immutable.preamble || '',
     footer: astA.immutable.footer || '',
   }
@@ -535,8 +591,13 @@ export function consolidateRules(ruleTextA, ruleTextB, mergedMutable) {
   // Build the archived version of rule B with Merged-Into pointer
   const parsedB = parseRule(ruleTextB)
   const archiveFooter = `_Merged into \`${astA.immutable.name}\` on ${new Date().toISOString().slice(0, 10)}._`
+  const archivedExtras = [
+    ...(parsedB.extras || []),
+    { label: 'Merged-Into', key: 'merged-into', value: astA.immutable.name },
+  ]
   const archivedFields = {
     ...parsedB,
+    extras: archivedExtras,
     footer: parsedB.footer ? `${parsedB.footer}\n---\n${archiveFooter}` : `---\n${archiveFooter}`,
   }
   const archivedRuleText = serializeRule(archivedFields)
@@ -555,23 +616,36 @@ export function consolidateRules(ruleTextA, ruleTextB, mergedMutable) {
  * @returns {Promise<{verdict: 'PASS'|'FAIL', reason?: string}>}
  */
 export function syncVerifier({ rule, fixture, control, diff }) {
+  const r = (rule?.rule || '').toLowerCase()
+  const d = String(diff ?? '')
+
+  // Prohibitive language required; permissive language exempts
+  const isPermissive = /\b(?:allow|allowed|permit|permitted|enable|enabled|may\s+use|can\s+use)\b/i.test(r)
+  const forbidsSweep = !isPermissive &&
+    /\b(?:never|must\s+not|do\s+not|cannot|prohibit|forbidden|avoid|refuse|prevent)\b/i.test(r) &&
+    (r.includes('sweep') || r.includes('git add -a') || r.includes('git add .') || r.includes('stage') || r.includes('explicit'))
+
+  const forbidsMigration = !isPermissive &&
+    /\b(?:never|must\s+not|do\s+not|cannot|prohibit|forbidden|avoid|refuse|prevent)\b/i.test(r) &&
+    r.includes('migration')
+
+  const flagsSweep = forbidsSweep && (
+    /\bgit\s+add\s+(?:-A|--all|\.)(?=\s|$|[;&|\n])/.test(d) ||
+    /(?:^\+\+\+\s+[ab]\/.*(?:\.env|secret)|^\+.*(?:\.env|secret))/im.test(d)
+  )
+  const flagsMigration = forbidsMigration && /(?:^\+\+\+\s+[ab]\/.*migration|^\+.*migration)/im.test(d)
+  const wouldFlag = flagsSweep || flagsMigration
+
   if (control === 'negative') {
-    // Clean fix commit: must pass unless it contains blatant forbidden sweep
+    if (wouldFlag) {
+      return { verdict: 'FAIL', reason: 'False positive: rule flags clean negative control diff' }
+    }
     return { verdict: 'PASS' }
   }
 
-  // Positive control: check if rule's prohibition flags the diff
-  const r = (rule?.rule || '').toLowerCase()
-  const d = String(diff ?? '')
-  if ((r.includes('sweep') || r.includes('git add -a') || r.includes('git add .') || r.includes('stage') || r.includes('explicit')) &&
-      (/\bgit\s+add\s+(?:-A|--all|\.)(?=\s|$|[;&|\n])/.test(d) || /\.env|\bsecret\b/i.test(d))) {
-    return { verdict: 'FAIL', reason: 'Caught sweeping staging flag or unintended file' }
+  if (wouldFlag) {
+    return { verdict: 'FAIL', reason: 'Caught violation in positive control' }
   }
-
-  if (r.includes('migration') && /migration/i.test(d)) {
-    return { verdict: 'FAIL', reason: 'Caught migration modification' }
-  }
-
   return { verdict: 'PASS' }
 }
 
@@ -735,7 +809,7 @@ export function createLLMVerifier(llmRunner) {
     const { verdict, body } = parseVerdict(response)
 
     return {
-      verdict: verdict || (control === 'negative' ? 'PASS' : 'FAIL'),
+      verdict: (verdict === 'PASS' || verdict === 'FAIL') ? verdict : 'UNVERIFIED',
       reason: body || 'LLM verifier verdict',
     }
   }
@@ -770,6 +844,26 @@ export async function optimizeRuleIterative({
 }) {
   const buffer = new RejectedEditBuffer(opts.bufferSize || 5)
   const initialAST = splitRuleAST(ruleText)
+
+  if (!Array.isArray(incidentFixtures) || incidentFixtures.length === 0) {
+    return {
+      success: false,
+      reason: 'Cannot optimize or evolve rule without incident fixtures: zero fixtures provided.',
+      savedWords: 0,
+      initialWords: initialAST.totalWords,
+      finalWords: initialAST.totalWords,
+      bestRuleText: ruleText,
+      acceptedSteps: [],
+      rejectedBuffer: buffer,
+      stats: {
+        initialWords: initialAST.totalWords,
+        finalWords: initialAST.totalWords,
+        initialCatchRate: 0,
+        finalCatchRate: 0,
+      },
+    }
+  }
+
   let currentAST = initialAST
   let currentRuleText = ruleText
 

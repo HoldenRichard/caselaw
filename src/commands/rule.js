@@ -673,10 +673,18 @@ async function evolve(args, { root, say, interactive }) {
 
     // Stage 2 verifier check using built-in verifier
     const stage2 = await evaluateStage2(candidateAST.mutable, incidents, async ({ fixture, control, diff }) => {
-      const forbidsSweep = /sweep|git add -A|git add \./i.test(candidateAST.mutable.rule)
-      if (forbidsSweep && /\bgit\s+add\s+(?:-A|--all|\.)(?=\s|$|[;&|\n])/.test(diff)) {
-        return { verdict: 'FAIL', reason: 'violates explicit staging prohibition' }
+      const r = (candidateAST.mutable.rule || '').toLowerCase()
+      const d = String(diff ?? '')
+      const isPermissive = /\b(?:allow|allowed|permit|permitted|enable|enabled|may\s+use|can\s+use)\b/i.test(r)
+      const hasProhibition = /\b(?:never|must\s+not|do\s+not|cannot|prohibit|forbidden|avoid|refuse|prevent)\b/i.test(r)
+      const forbidsSweep = !isPermissive && hasProhibition && (r.includes('sweep') || r.includes('git add -a') || r.includes('git add .') || r.includes('stage') || r.includes('explicit'))
+      const wouldFlag = forbidsSweep && /\bgit\s+add\s+(?:-A|--all|\.)(?=\s|$|[;&|\n])/.test(d)
+
+      if (control === 'negative') {
+        if (wouldFlag) return { verdict: 'FAIL', reason: 'False positive: flags clean negative control diff' }
+        return { verdict: 'PASS' }
       }
+      if (wouldFlag) return { verdict: 'FAIL', reason: 'violates explicit staging prohibition' }
       return { verdict: 'PASS' }
     })
 
