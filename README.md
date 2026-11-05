@@ -1,5 +1,8 @@
 # caselaw
 
+[![npm version](https://img.shields.io/npm/v/caselaw.svg?color=24292e&label=npm)](https://www.npmjs.com/package/caselaw)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 **Case law for your codebase.** An interview that generates your project's own
 rules, gates that earn their teeth, and an audit that keeps both honest.
 
