@@ -1,0 +1,1 @@
+{"rule":"advertise-only-what-dispatches","at":"2026-11-05","what":"commit 9557daf: --compress flag was declared in BOOL_FLAGS without dispatch branch in parseArgs","by":"Holden R.","firstLocal":false}
