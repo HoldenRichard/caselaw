@@ -92,10 +92,14 @@ export function gitChangedFiles(root) {
         const realPath = pathPart.includes(' -> ') ? pathPart.split(' -> ')[1] : pathPart
         files.push(realPath)
       }
-      if (files.length > 0) return files
+      if (files.length > 0) {
+        const scopeTracked = files.filter(isScopeTrackedPath)
+        if (scopeTracked.length > 0) return files
+      }
     }
 
-    // Clean working tree fallback: inspect the most recent commit (HEAD)
+    // Clean working tree fallback (or working tree with no in-scope modifications):
+    // inspect the most recent commit (HEAD)
     const headRes = spawnSync('git', ['diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'], {
       cwd: root,
       encoding: 'utf8',

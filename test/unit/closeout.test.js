@@ -11,7 +11,7 @@
 
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { verifyCloseout, parseCloseout } from '../../src/core/closeout.js'
+import { verifyCloseout, parseCloseout, gitChangedFiles } from '../../src/core/closeout.js'
 
 const VALID_CLOSEOUT = `# Session close-out — caselaw
 
@@ -143,5 +143,11 @@ describe('close-out verifier', () => {
     })
     assert.equal(res.valid, false)
     assert.ok(res.errors.some((e) => e.includes('Human-only authority boundary marked as verified with [x]')))
+  })
+
+  test('POSITIVE CONTROL: out-of-scope untracked files do not prevent HEAD fallback when verifying clean tree', () => {
+    const files = gitChangedFiles(process.cwd())
+    assert.ok(Array.isArray(files) && files.length > 0)
+    assert.ok(files.some((f) => f.includes('advertise-only-what-dispatches') || f.includes('closeout')))
   })
 })
