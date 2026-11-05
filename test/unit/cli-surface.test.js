@@ -22,7 +22,7 @@ import { join, extname, relative } from 'node:path'
 import { spawn, execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
-import { COMMANDS, KNOWN_FLAGS, USAGE, parseArgs } from '../../bin/cli.mjs'
+import { COMMANDS, KNOWN_FLAGS, BOOL_FLAGS, VALUED_FLAGS, USAGE, parseArgs } from '../../bin/cli.mjs'
 import { buildArtifacts } from '../../src/generate/artifacts.js'
 import { buildPlan, UNCHANGED } from '../../src/core/plan.js'
 import * as answersStore from '../../src/core/answers.js'
@@ -421,5 +421,95 @@ describe('caselaw gate', () => {
     const r = await cli(['gate', 'promote', 'no-console-log', '--force'], { cwd: root })
     assert.equal(r.code, 0, r.out + r.err)
     assert.match(r.out, /forced/)
+  })
+})
+
+describe('flag-to-parser parity gate', () => {
+  test('every registered boolean flag is recognized by parseArgs without throwing Unknown option', () => {
+    for (const flag of BOOL_FLAGS) {
+      const parsed = parseArgs([`--${flag}`])
+      assert.deepEqual(parsed.unknown, [], `Boolean flag --${flag} was rejected as unknown option`)
+    }
+  })
+
+  test('every registered valued flag is recognized by parseArgs without throwing Unknown option', () => {
+    for (const flag of VALUED_FLAGS) {
+      const parsed = parseArgs([`--${flag}`, 'test-val'])
+      assert.deepEqual(parsed.unknown, [], `Valued flag --${flag} was rejected as unknown option`)
+      assert.equal(parsed.opt[flag], 'test-val')
+    }
+  })
+
+  test('POSITIVE CONTROL: unregistered flag is rejected with Unknown option', () => {
+    const parsed = parseArgs(['--definitely-not-a-valid-flag'])
+    assert.deepEqual(parsed.unknown, ['--definitely-not-a-valid-flag'])
+  })
+})
+
+describe('SkillOpt and optimizer subprocess CLI commands', () => {
+  test('POSITIVE CONTROL: subprocess end-to-end runs rule incident and rule evolve --compress', async () => {
+    // Setup git repo
+    const exec = (cmd, args) => execFileSync(cmd, args, { cwd: root, encoding: 'utf8' })
+    exec('git', ['init'])
+    exec('git', ['config', 'user.name', 'Tester'])
+    exec('git', ['config', 'user.email', 'test@test.local'])
+
+    await writeFile(join(root, 'f.js'), 'console.log(1)\n')
+    exec('git', ['add', 'f.js'])
+    exec('git', ['commit', '-m', 'init'])
+
+    // Failure commit
+    await writeFile(join(root, 'f.js'), 'console.log(2)\n')
+    await writeFile(join(root, 'secret.env'), 'SECRET=1\n')
+    exec('git', ['add', '-A'])
+    exec('git', ['commit', '-m', 'bad'])
+    const badSha = exec('git', ['rev-parse', 'HEAD']).trim()
+
+    // Clean fix commit
+    exec('git', ['rm', 'secret.env'])
+    await writeFile(join(root, 'f.js'), 'console.log(3)\n')
+    exec('git', ['add', 'f.js'])
+    exec('git', ['commit', '-m', 'clean'])
+    const cleanSha = exec('git', ['rev-parse', 'HEAD']).trim()
+
+    // Active rule
+    await mkdir(join(root, 'docs/rules/active'), { recursive: true })
+    const ruleText = `# stage-explicit\n\n**Trigger:** git add operations\n\n**Rule:** Please make sure to always remember to explicitly stage target files by name and never use sweep flags.\n\n**Origin:** ${badSha} (leak)\n\n**Enforcement:** memory\n\n**Ratified:** 2026-08-13\n`
+    await writeFile(join(root, 'docs/rules/active/stage-explicit.md'), ruleText)
+
+    // Run caselaw rule incident
+    const incRes = await cli(['rule', 'incident', 'stage-explicit', '--positive', badSha, '--negative', cleanSha], { cwd: root })
+    assert.equal(incRes.code, 0, incRes.out + incRes.err)
+    assert.match(incRes.out, /Recorded contrastive incident fixture/)
+
+    // Run caselaw rule evolve --compress
+    const evolveRes = await cli(['rule', 'evolve', 'stage-explicit', '--compress'], { cwd: root })
+    assert.equal(evolveRes.code, 0, evolveRes.out + evolveRes.err)
+    assert.match(evolveRes.out, /words saved/)
+
+    const updated = await readFile(join(root, 'docs/rules/active/stage-explicit.md'), 'utf8')
+    assert.doesNotMatch(updated, /Please make sure to always remember to/)
+    assert.match(updated, new RegExp(badSha))
+  })
+
+  test('POSITIVE CONTROL: subprocess runs rules --for and rule list --for', async () => {
+    await mkdir(join(root, 'docs/rules/active'), { recursive: true })
+    const ruleText = `# no-eval\n\n**Trigger:** When editing \`src/engine/\`\n\n**Rule:** Never use eval.\n\n**Origin:** SHA1234 on 2026-08-13\n\n**Enforcement:** memory\n\n**Ratified:** 2026-08-13 by Tester\n`
+    await writeFile(join(root, 'docs/rules/active/no-eval.md'), ruleText)
+
+    // Run caselaw rules --for
+    const res1 = await cli(['rules', '--for', 'src/engine/evaluator.js'], { cwd: root })
+    assert.equal(res1.code, 0)
+    assert.match(res1.out, /no-eval/)
+
+    // Run caselaw rule list --for
+    const res2 = await cli(['rule', 'list', '--for', 'src/engine/evaluator.js'], { cwd: root })
+    assert.equal(res2.code, 0)
+    assert.match(res2.out, /no-eval/)
+
+    // Unrelated path
+    const res3 = await cli(['rules', '--for', 'docs/readme.md'], { cwd: root })
+    assert.equal(res3.code, 0)
+    assert.match(res3.out, /No active rules triggered/)
   })
 })

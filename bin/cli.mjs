@@ -74,18 +74,22 @@ export const COMMANDS = {
   review: { help: 'print a review prompt for a DIFFERENT model to run' },
   optimize: { help: 'measure what a session loads, and propose what to compact or trim' },
   detect: { help: 'print what Stage 0 sees, and ask nothing' },
+  rules: { help: 'list active rules, optionally filtered with --for <paths>' },
   rule: { subs: RULE_SUBCOMMANDS, help: 'the case-law loop: draft, ratify, adopt, promote' },
   gate: { subs: GATE_SUBCOMMANDS, help: 'run a gate by hand; promote one that has earned it' },
   harness: { subs: HARNESS_SUBCOMMANDS, help: 'the harness\'s own changes: propose, apply, reject, revert, log' },
   personal: { subs: PERSONAL_SUBCOMMANDS, help: 'your own layer across your repositories, on this machine only' },
+  closeout: { subs: ['verify'], help: 'verify close-out report against git status and authority split' },
 }
 
-export const BOOL_FLAGS = ['help', 'dry-run', 'yes', 'force', 'json', 'agent', 'strict', 'purge', 'reconfigure', 'draft', 'from-draft']
+export const BOOL_FLAGS = ['help', 'dry-run', 'yes', 'force', 'json', 'agent', 'strict', 'purge', 'reconfigure', 'draft', 'from-draft', 'compress', 'llm']
 export const VALUED_FLAGS = [
   'with', 'doctrine-dir', 'origin', 'trigger', 'rule', 'enforcement', 'by', 'reason', 'what', 'apply',
   'set', 'enable', 'disable', 'autonomy', 'note', 'why', 'signal', 'window',
   'role', 'claim', 'base', 'builder', 'refuter', 'verifier',
   'kind', 'id', 'paths', 'patterns', 'message', 'command', 'args', 'when', 'require', 'extract', 'assert',
+  'positive', 'negative', 'candidate', 'positive-desc', 'negative-desc',
+  'commit', 'fix', 'runner', 'for',
 ]
 export const KNOWN_FLAGS = [...BOOL_FLAGS, ...VALUED_FLAGS]
 
@@ -100,6 +104,7 @@ export const USAGE = `caselaw ${CLI_VERSION}
   caselaw review [dir]          print a review prompt for a DIFFERENT model to run
   caselaw optimize [dir]        measure what a session loads, and propose what to compact or trim
   caselaw detect [dir]          print what Stage 0 sees, and ask nothing
+  caselaw rules [dir]           list active rules, optionally filtered with --for <paths>
 
   caselaw rule propose <name>   draft a rule into docs/rules/proposed/ (an agent may do this)
   caselaw rule ratify <name>    move a proposal into active/ — a human, at a terminal
@@ -118,6 +123,7 @@ export const USAGE = `caselaw ${CLI_VERSION}
   caselaw harness log           every change, and whether it helped
   caselaw personal list         your rules that caught something, across your repositories (this machine only)
   caselaw personal export <f>   the same, for sharing by hand: no paths, no repository names
+  caselaw closeout verify <f>   verify close-out report against git status and authority split
   caselaw --help
 
 Options
@@ -131,6 +137,9 @@ Options
   --reconfigure          init: ask every question again, including ones already answered
   --draft                init: write .caselaw/draft.json for an agent to answer from the repository
   --from-draft           init: confirm the agent's drafted answers, then generate (--yes after confirming in chat)
+  --compress             rule evolve: optimize rule for word budget compression
+  --llm                  rule evolve: run model-driven iterative proposal and verification
+  --runner <cmd>         rule evolve: command line for LLM completions
   --doctrine-dir <dir>   init: where the doctrine goes (default docs/; governance/ when a tool owns docs/)
   --purge                eject: remove the generated docs too
   --origin <text>        rule adopt / rule propose: the incident in THIS project that proved it
@@ -200,6 +209,8 @@ export async function main(list = argv.slice(2)) {
     case 'gate': return cmdGate(args, { root, say })
     case 'personal': return cmdPersonal(args, { say })
     case 'harness': return cmdHarness(args, { root, say, interactive: isInteractive(), prompt: ttyPrompt, rerender: () => rerender(root) })
+    case 'closeout': return cmdCloseout(args, root)
+    case 'rules': return cmdRules(args, root)
     default:
       say(`Unknown command "${args.command}".\n`)
       say(USAGE)
@@ -515,6 +526,38 @@ async function cmdDetect(args, root) {
   const report = await detect(root)
   say(JSON.stringify(report, null, 2))
   return 0
+}
+
+async function cmdCloseout(args, root) {
+  const file = args.name || (args.sub !== 'verify' ? args.sub : null) || args.dir
+  if (!file) {
+    say('  caselaw closeout verify needs a path to the close-out markdown document.')
+    return 2
+  }
+  let text
+  try {
+    text = await readFile(resolve(root, file), 'utf8')
+  } catch (err) {
+    say(`  Cannot read close-out file at ${file}: ${err.message}`)
+    return 1
+  }
+
+  const { verifyCloseout } = await import('../src/core/closeout.js')
+  const res = verifyCloseout({ text, root })
+
+  if (!res.valid) {
+    say('  Close-out verification FAILED:')
+    for (const err of res.errors) say(`    - ${err}`)
+    return 1
+  }
+
+  say('  Close-out report VERIFIED: zero scope drops, zero exit honesty violations, zero authority breaches.')
+  return 0
+}
+
+async function cmdRules(args, root) {
+  const { listRulesCmd } = await import('../src/commands/rule.js')
+  return listRulesCmd(args, { root, say })
 }
 
 async function cmdInit(args, root) {
@@ -852,15 +895,12 @@ export function parseArgs(list) {
     if (a === '--help' || a === '-h') out.help = true
     else if (a === '--dry-run') out.dryRun = true
     else if (a === '--yes' || a === '-y') out.yes = true
-    else if (a === '--force') out.force = true
-    else if (a === '--json') out.json = true
-    else if (a === '--agent') out.agent = true
-    else if (a === '--strict') out.strict = true
-    else if (a === '--purge') out.purge = true
-    else if (a === '--reconfigure') out.reconfigure = true
-    else if (a === '--draft') out.draft = true
-    else if (a === '--from-draft') out.fromDraft = true
-    else if (a.startsWith('--')) {
+    else if (a.startsWith('--') && BOOL_FLAGS.includes(a.slice(2))) {
+      const key = a.slice(2)
+      const camel = key.replace(/-([a-z])/g, (_, c) => c.toUpperCase())
+      out[camel] = true
+      out.opt[key] = true
+    } else if (a.startsWith('--')) {
       const eq = a.indexOf('=')
       const key = eq === -1 ? a.slice(2) : a.slice(2, eq)
       if (!VALUED_FLAGS.includes(key)) {

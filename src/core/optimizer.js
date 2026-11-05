@@ -24,6 +24,8 @@ import { doctrineDirOf, ruleDirsFor } from './doctrine.js'
 import { DEFAULTS } from './defaults.js'
 import { TRIGGERS } from './triggers.js'
 import { archivePrecedent } from './precedent.js'
+import { consolidateRules, optimizeRuleIterative, evaluateStage2, defaultVerifier } from './skillopt.js'
+import { listIncidents } from './incidents.js'
 
 /**
  * The session-start budget, in words: the pointer block, the authority split
@@ -140,6 +142,12 @@ export function optimizerProposals({ signals, listed, findings = [] }) {
           why: `its precedent is ${n} words every session reads; archived, the rule keeps the ids and a pointer`,
           how: `caselaw optimize --apply archive-precedent:${r.name}` })
       }
+      const mutWords = words(r.parsed?.rule) + words(r.parsed?.trigger)
+      if (mutWords > 15) {
+        out.push({ id: `compress:${r.name}`, action: 'compress', rules: [r.name],
+          why: `its mutable prose is ${mutWords} words; SkillOpt lossless compression can tighten it under the load budget`,
+          how: `caselaw optimize --apply compress:${r.name}` })
+      }
     }
   }
   const mergeable = listed.active.filter((r) => !/^machine:/i.test(r.parsed?.enforcement || ''))
@@ -202,9 +210,49 @@ export async function applyProposal({ root, doc, id, now = new Date(), name = nu
     if (ta === null || tb === null) return { ok: false, message: `Both rules must be active: ${ta === null ? a : b} is not.` }
     const path = join(root, dirs.proposed, `${into}.md`)
     if (await exists(path)) return { ok: false, message: `${dirs.proposed}/${into}.md already exists.` }
+
+    // Union contrastive incident fixtures: F_union = F_A U F_B
+    const incidentsA = await listIncidents(root, { rule: a })
+    const incidentsB = await listIncidents(root, { rule: b })
+    const unionFixtures = [...incidentsA, ...incidentsB]
+
+    const parsedA = parseRule(ta)
+    const parsedB = parseRule(tb)
+    const candidateMutable = {
+      trigger: `${parsedA.trigger} Also: ${parsedB.trigger}`,
+      rule: `${parsedA.rule}\n\n${parsedB.rule}`,
+    }
+
+    if (unionFixtures.length > 0) {
+      const stage2 = await evaluateStage2(candidateMutable, unionFixtures, defaultVerifier)
+      if (!stage2.pass) {
+        return {
+          ok: false,
+          message: `Merge rejected: merged candidate regressed on incident fixtures (missed: ${stage2.missed.join(', ')}, false positives: ${stage2.falsePositivesList.join(', ')}).`,
+        }
+      }
+    }
+
     await mkdir(dirname(path), { recursive: true })
-    await writeFile(path, mergedProposal(into, [parseRule(ta), parseRule(tb)], isoDay(now)), 'utf8')
+    await writeFile(path, mergedProposal(into, [parsedA, parsedB], isoDay(now)), 'utf8')
     return { ok: true, message: `Wrote ${dirs.proposed}/${into}.md. Ratifying it moves ${a} and ${b} to ${dirs.archive}/.`, wrote: [`${dirs.proposed}/${into}.md`] }
+  }
+  if (action === 'compress') {
+    const rule = rest
+    const path = join(root, dirs.active, `${rule}.md`)
+    const text = await read(path)
+    if (text === null) return { ok: false, message: `No active rule named "${rule}".` }
+    const incidents = await listIncidents(root, { rule })
+    const res = await optimizeRuleIterative({
+      ruleText: text,
+      incidentFixtures: incidents,
+      isCompression: true,
+    })
+    if (res.success && res.savedWords > 0) {
+      await writeFile(path, res.bestRuleText, 'utf8')
+      return { ok: true, message: `Losslessly compressed ${dirs.active}/${rule}.md (${res.savedWords} words saved).`, wrote: [path] }
+    }
+    return { ok: false, message: `"${rule}" could not be further compressed without regressions.` }
   }
   const p = { mechanize: 'caselaw rule promote', demote: 'caselaw rule demote' }[action]
   return { ok: false, message: p ? `Run \`${p} ${rest}\` yourself; it is a human's step.` : `"${id}" is not applied by caselaw; edit the file it names.` }

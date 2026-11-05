@@ -8,11 +8,14 @@
  */
 
 import { join } from 'node:path'
-import { stat } from 'node:fs/promises'
+import { stat, readFile, writeFile } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 import * as gatesStore from '../core/gates.js'
+import { parseRule, serializeRule } from '../core/rules.js'
+import { ruleDirsFor, doctrineDirAt } from '../core/doctrine.js'
+import { listIncidents } from '../core/incidents.js'
 
-export const GATE_SUBCOMMANDS = ['test', 'baseline', 'promote']
+export const GATE_SUBCOMMANDS = ['test', 'baseline', 'promote', 'synthesize']
 
 /**
  * @param {object} args parsed CLI args: { sub, name, force, json }
@@ -30,6 +33,7 @@ export async function cmdGate(args, { root, say }) {
       case 'test': return await testOne(args, { root, say })
       case 'baseline': return await baseline(args, { root, say })
       case 'promote': return await promote(args, { root, say })
+      case 'synthesize': return await synthesize(args, { root, say })
     }
   } catch (err) {
     if (err instanceof gatesStore.GateError || err?.code) {
@@ -112,4 +116,61 @@ async function loadRunner(root) {
     throw new gatesStore.GateError('No vendored runner at .caselaw/bin/gate.mjs. Run `caselaw upgrade` to restore it.', { code: 'NO_RUNNER' })
   }
   return import(pathToFileURL(p).href)
+}
+
+async function synthesize(args, { root, say }) {
+  if (!args.name) {
+    say('  caselaw gate synthesize needs a rule name.')
+    return 2
+  }
+  const dir = doctrineDirAt(root)
+  const dirs = ruleDirsFor(dir)
+  const path = join(root, dirs.active, `${args.name}.md`)
+  let text = null
+  try {
+    text = await readFile(path, 'utf8')
+  } catch {
+    say(`  No active rule named "${args.name}" at ${dirs.active}/${args.name}.md.`)
+    return 1
+  }
+
+  const parsed = parseRule(text)
+  const incidents = await listIncidents(root, { rule: args.name })
+  if (!incidents.length) {
+    say(`  No contrastive incidents recorded for "${args.name}".`)
+    say('  Cannot synthesize machine gate without incident fixtures.')
+    say(`  Run: caselaw rule incident ${args.name} --positive <bad-sha> --negative <good-sha>`)
+    return 1
+  }
+
+  const res = gatesStore.synthesizeMachineGate({ rule: parsed, incidentFixtures: incidents, dir })
+  if (!res.success) {
+    say(`  Cannot synthesize machine gate for "${args.name}":`)
+    say(`    ${res.reason}`)
+    return 1
+  }
+
+  say(`  Synthesized machine gate for "${args.name}":`)
+  say(`    Pattern: "${res.pattern}" (100% sensitivity, 100% specificity)`)
+  say(`    Gate ID: ${res.gate.id}`)
+
+  if (args.yes || args.opt.apply) {
+    let config = await gatesStore.load(root)
+    if (!config) config = gatesStore.emptyConfig()
+    const existingIdx = config.gates.findIndex((g) => g.id === res.gate.id)
+    if (existingIdx !== -1) {
+      config.gates[existingIdx] = res.gate
+    } else {
+      config.gates.push(res.gate)
+    }
+    await gatesStore.save(root, config)
+
+    const updatedRule = serializeRule({ ...parsed, enforcement: `machine:${res.gate.id}` })
+    await writeFile(path, updatedRule, 'utf8')
+    say(`  Registered in ${gatesStore.GATES_PATH} and updated enforcement to machine:${res.gate.id}.`)
+  } else {
+    say('  Pass --yes or --apply to register this gate and compact rule enforcement.')
+  }
+
+  return 0
 }

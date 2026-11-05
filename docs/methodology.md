@@ -148,7 +148,7 @@ required to have a **positive control** — a test where a known-bad input must
 actually fail.
 
 So: no check counts as existing until it has been watched failing. This
-repository's suite has 738 `test()` cases in source, 296 of them named POSITIVE
+repository's suite has 807 `test()` cases in source, 360 of them named POSITIVE
 CONTROL (`npm test` runs a few more, generated per adapter), a meta-test that
 fails the build if any gate kind lacks one — and another that fails if this
 sentence goes stale, because the previous version of it was wrong on both
@@ -163,6 +163,35 @@ Stated plainly, because the refusals are load-bearing.
 **It will not overwrite what you edited.** Every generated file carries a hash of
 what was written. An edited one is reported and skipped. A governance tool that
 eats your work gets uninstalled, and rightly.
+
+**It will not execute untrusted proposals.** A proposal is data, never code.
+
+**It will not alter the constitution.** The five constitutional axioms (A1–A5)
+are immutable: enforcement weakening requires humans, evidence is append-only,
+nothing is silently deleted, outward actions are never automatic, and the constitution
+is not a setting.
+
+---
+
+## 6. Self-evolution via SkillOpt & Contrastive Incidents
+
+Rules evolve over time as codebases change. Adopting Microsoft Research's SkillOpt
+(arXiv:2605.23904) within CaseLaw's zero-dependency architecture provides grounded
+rule optimization while eliminating drift:
+
+- **Contrastive Incident Fixtures**: Every incident is stored as a contrastive pair:
+  a Positive Control (the failing diff/prompt that must be caught) and a Negative
+  Control (the clean fix commit that must pass without false positives).
+- **Lexicographic Pareto Objective**: A candidate rule is accepted if and only if
+  it improves catch rate without introducing false positives, or achieves lossless
+  word compression while maintaining 100% sensitivity and 0% false positives.
+- **Bounded Edit Budget & AST Partitioning**: Rules are split into immutable provenance
+  sections (`Origin:`, `Precedent:`, `Catches:`) and mutable governance sections
+  (`Trigger:`, `Rule:`). Edits are strictly capped to prevent capability drift.
+- **Rejected Edit Diagnostics Buffer**: Proposal rejections feed failure diagnostics
+  directly into subsequent evolution steps.
+- **Prose-to-Machine Gate Synthesis**: Rules with high-confidence contrastive fixtures
+  can be mechanically synthesized into deterministic, zero-dependency machine gates.
 
 **It will not block on its own failure.** A missing checker, malformed input, or
 an unparseable config reports loudly and exits zero — but "did not run" is never

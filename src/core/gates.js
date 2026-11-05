@@ -364,3 +364,110 @@ export class GateError extends Error {
     Object.assign(this, meta)
   }
 }
+
+/**
+ * Synthesize a deterministic machine gate from a prose rule and its contrastive incident fixtures.
+ * Requires 100% sensitivity (catches all positive control diffs) and 100% specificity (passes all negative control diffs).
+ *
+ * @param {object} opts
+ * @param {{name: string, rule: string, trigger?: string}} opts.rule
+ * @param {object[]} opts.incidentFixtures
+ * @param {string} [opts.dir='docs']
+ * @returns {{success: boolean, gate?: object, reason?: string, details?: object}}
+ */
+export function synthesizeMachineGate({ rule, incidentFixtures = [], dir = 'docs' }) {
+  if (!rule || !rule.name) {
+    return { success: false, reason: 'rule with a name is required' }
+  }
+  if (!Array.isArray(incidentFixtures) || incidentFixtures.length === 0) {
+    return {
+      success: false,
+      reason: `Cannot synthesize machine gate for "${rule.name}" without recorded incident fixtures. Run caselaw rule incident first.`,
+    }
+  }
+
+  const candidatePatterns = new Set()
+  const backticked = (rule.rule.match(/`([^`]+)`/g) || []).map((m) => m.slice(1, -1).trim()).filter(Boolean)
+  for (const b of backticked) candidatePatterns.add(b)
+
+  for (const inc of incidentFixtures) {
+    const diff = inc.positiveControl?.diff || ''
+    const lines = diff.split('\n')
+    for (const l of lines) {
+      if (l.startsWith('+') && !l.startsWith('+++')) {
+        const trimmed = l.slice(1).trim()
+        if (trimmed.length >= 4 && !/^[{}();,\s]+$/.test(trimmed)) {
+          candidatePatterns.add(trimmed)
+        }
+      }
+    }
+  }
+
+  if (candidatePatterns.size === 0) {
+    return { success: false, reason: 'No extractable pattern literals found in rule or incident diffs.' }
+  }
+
+  const targetPaths = new Set()
+  for (const inc of incidentFixtures) {
+    const diff = inc.positiveControl?.diff || ''
+    const lines = diff.split('\n')
+    for (const l of lines) {
+      const match = /^(?:---|\+\+\+)\s+[ab]\/(.+)$/.exec(l)
+      if (match && match[1] && match[1] !== '/dev/null') {
+        targetPaths.add(match[1])
+      }
+    }
+  }
+
+  const matchesDiff = (diff, pattern) => {
+    const cleanPattern = pattern.toLowerCase()
+    const cleanDiff = diff.toLowerCase()
+    return cleanDiff.includes(cleanPattern)
+  }
+
+  for (const pat of candidatePatterns) {
+    let positivePasses = 0
+    let negativePasses = 0
+
+    for (const inc of incidentFixtures) {
+      const posDiff = inc.positiveControl?.diff || ''
+      const negDiff = inc.negativeControl?.diff || ''
+
+      const matchesPos = matchesDiff(posDiff, pat)
+      const matchesNeg = matchesDiff(negDiff, pat)
+
+      if (matchesPos) positivePasses++
+      if (!matchesNeg) negativePasses++
+    }
+
+    const sensitivity = positivePasses / incidentFixtures.length
+    const specificity = negativePasses / incidentFixtures.length
+
+    if (sensitivity === 1.0 && specificity === 1.0) {
+      const gate = {
+        id: rule.name,
+        kind: 'banned-content',
+        severity: 'warn',
+        origin: `${dir}/rules/active/${rule.name}.md`,
+        message: `${rule.rule.split('.')[0]}.`,
+        paths: targetPaths.size > 0 ? [...targetPaths] : ['**/*'],
+        patterns: [pat],
+      }
+
+      return {
+        success: true,
+        gate,
+        pattern: pat,
+        sensitivity: 1.0,
+        specificity: 1.0,
+        message: `Successfully synthesized machine gate "${gate.id}" with 100% sensitivity and 100% specificity`,
+      }
+    }
+  }
+
+  return {
+    success: false,
+    reason: 'Ambiguous incident traces: no candidate pattern achieved 100% sensitivity and 100% specificity across all recorded incident fixtures.',
+    candidatePatternsTested: candidatePatterns.size,
+  }
+}

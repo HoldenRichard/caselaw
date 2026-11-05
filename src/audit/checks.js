@@ -25,6 +25,7 @@ import { join } from 'node:path'
 import { isOverdue, isoDate, daysBetween } from '../core/dates.js'
 import { crossCheck, PROMOTION_THRESHOLD, EVIDENCE_MODES } from '../core/gates.js'
 import { scanMachinePaths } from '../core/secrets.js'
+import { evaluateStage1, syncVerifier } from '../core/skillopt.js'
 
 export const SEVERITY = { ERROR: 'error', WARN: 'warn', INFO: 'info' }
 
@@ -200,6 +201,113 @@ export const CHECKS = [
               hint: 'Retire it only if the thing it guards is genuinely gone. Silence alone is not grounds.',
             }),
         )
+    },
+  },
+  {
+    id: 'trigger-paths-live',
+    describe: 'concrete paths named in active rule triggers exist in git',
+    run({ rules, trackedFiles = [] }) {
+      if (!trackedFiles || trackedFiles.length === 0 || !rules?.active) return []
+      const trackedSet = new Set(trackedFiles)
+      const out = []
+      for (const r of rules.active) {
+        const trigger = String(r.trigger || '')
+        const tokens = [
+          ...[...trigger.matchAll(/`([^`]+)`/g)].map((m) => m[1]),
+          ...[...trigger.matchAll(/\b(?:src|docs|test|bin)\/[a-zA-Z0-9_./-]+\b/g)].map((m) => m[0]),
+        ]
+        const seen = new Set()
+        for (const token of tokens) {
+          const clean = token.replace(/^[./]+/, '').trim()
+          if (!clean || seen.has(clean) || clean.includes('*')) continue
+          seen.add(clean)
+          if (!clean.includes('/')) continue
+
+          const matches = trackedSet.has(clean) || trackedFiles.some((f) => f === clean || f.startsWith(clean.endsWith('/') ? clean : clean + '/'))
+          if (!matches) {
+            out.push(
+              finding(
+                'trigger-paths-live',
+                SEVERITY.WARN,
+                `rule "${r.name}" triggers on path "${clean}", which is not tracked in git (Trigger Rot)`,
+                {
+                  path: r.file,
+                  hint: 'Update the rule trigger to current repository paths, or demote the rule if the guarded code was deleted.',
+                }
+              )
+            )
+          }
+        }
+      }
+      return out
+    },
+  },
+  {
+    id: 'incident-corpus-replays',
+    describe: 'recorded incident fixtures are caught by their active rules without false positives',
+    run({ rules, incidents = [] }) {
+      if (!incidents || incidents.length === 0 || !rules?.active) return []
+      const out = []
+      const byRule = new Map()
+      for (const inc of incidents) {
+        const ruleName = inc.rule
+        if (!ruleName) continue
+        if (!byRule.has(ruleName)) byRule.set(ruleName, [])
+        byRule.get(ruleName).push(inc)
+      }
+
+      for (const r of rules.active) {
+        const ruleFixtures = byRule.get(r.name) || []
+        if (ruleFixtures.length === 0) continue
+
+        const stage1 = evaluateStage1({ trigger: r.trigger, rule: r.rule, raw: `${r.trigger} ${r.rule}` }, ruleFixtures)
+        if (!stage1.pass) {
+          out.push(
+            finding(
+              'incident-corpus-replays',
+              SEVERITY.ERROR,
+              `rule "${r.name}" failed Stage 1 audit on incident corpus: ${stage1.reason}`,
+              { path: r.file, hint: 'Fix rule trigger or length to encompass recorded incident files.' }
+            )
+          )
+          continue
+        }
+
+        for (const inc of ruleFixtures) {
+          const posRes = syncVerifier({ rule: r, fixture: inc, control: 'positive', diff: inc.positiveControl?.diff })
+          if (posRes.verdict !== 'FAIL') {
+            out.push(
+              finding(
+                'incident-corpus-replays',
+                SEVERITY.ERROR,
+                `rule "${r.name}" failed to catch positive control incident "${inc.id}"`,
+                {
+                  path: r.file,
+                  hint: `Re-run \`caselaw rule evolve ${r.name}\` to repair rule sensitivity on incident ${inc.id}.`,
+                }
+              )
+            )
+          }
+
+          if (inc.negativeControl?.diff) {
+            const negRes = syncVerifier({ rule: r, fixture: inc, control: 'negative', diff: inc.negativeControl.diff })
+            if (negRes.verdict !== 'PASS') {
+              out.push(
+                finding(
+                  'incident-corpus-replays',
+                  SEVERITY.ERROR,
+                  `rule "${r.name}" caused false positive on negative control incident "${inc.id}"`,
+                  {
+                    path: r.file,
+                    hint: `The clean fix commit for ${inc.id} was flagged by rule "${r.name}". Narrow the rule to eliminate false positives.`,
+                  }
+                )
+              )
+            }
+          }
+        }
+      }
+      return out
     },
   },
   {

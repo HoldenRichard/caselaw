@@ -339,7 +339,7 @@ const AMBIENT_TRIGGERS = new Set([
   'everywhere',
 ])
 
-function isAmbientTrigger(trigger) {
+export function isAmbientTrigger(trigger) {
   const t0 = trigger.trim()
   if (/^[*_`\s]+$/.test(t0)) return true // a bare wildcard
   const normalized = t0
@@ -1142,4 +1142,137 @@ export class RuleError extends Error {
     this.name = 'RuleError'
     Object.assign(this, meta)
   }
+}
+
+/**
+ * Test whether a trigger text matches a given file path, directory, or extension.
+ *
+ * @param {string} triggerText
+ * @param {string} filePath
+ * @returns {boolean}
+ */
+export function matchesTriggerPath(triggerText, filePath) {
+  if (!triggerText || !filePath) return false
+  const t = triggerText.toLowerCase()
+  const p = filePath.toLowerCase().replace(/^[./]+/, '')
+  const base = p.split('/').pop()
+  const ext = base && base.includes('.') ? '.' + base.split('.').pop() : ''
+
+  // 1. Direct path or backticked basename match in trigger
+  if (t.includes(p) || (base && t.includes(`\`${base}\``))) return true
+
+  // 2. Extract paths, directories, and globs mentioned in trigger
+  const tokens = [
+    ...[...triggerText.matchAll(/`([^`]+)`/g)].map((m) => m[1]),
+    ...[...triggerText.matchAll(/\b(?:src|docs|test|bin|templates)\/[a-zA-Z0-9_./-]*\b/g)].map((m) => m[0]),
+  ]
+
+  for (const rawToken of tokens) {
+    const token = rawToken.toLowerCase().replace(/^[./]+/, '').trim()
+    if (!token) continue
+
+    // A. Glob match (e.g. *.test.js or src/**/*.js)
+    if (token.includes('*')) {
+      const globRegex = new RegExp('^' + token.replace(/\./g, '\\.').replace(/\*\*/g, '.*').replace(/\*/g, '[^/]*') + '$')
+      if (globRegex.test(p) || globRegex.test(base)) return true
+      continue
+    }
+
+    // B. Directory match (token is a directory like src/core or src/core/)
+    const dirToken = token.endsWith('/') ? token : token + '/'
+    if (p.startsWith(dirToken)) return true
+
+    // C. File match
+    if (p === token || token.endsWith('/' + base)) return true
+  }
+
+  // 3. Fallback: Trigger explicitly mentions file extension in backticks (e.g. `*.js` or `.sql`)
+  if (ext && (t.includes(`\`*${ext}\``) || t.includes(`\`${ext}\``))) {
+    return true
+  }
+
+  return false
+}
+
+/**
+ * Select active rules triggered by touched file paths, sorted by leverage and capped by word budget.
+ *
+ * @param {Array<object>} activeRules
+ * @param {Array<string>|string} touchedFilePaths
+ * @param {object} [opts]
+ * @param {number} [opts.budget]
+ * @param {Map<string, number>} [opts.catchesMap]
+ * @returns {Array<object>}
+ */
+export function selectTriggeredRules(activeRules = [], touchedFilePaths = [], opts = {}) {
+  const budget = opts.budget ?? 3000
+  const rawPaths = Array.isArray(touchedFilePaths) ? touchedFilePaths : [touchedFilePaths]
+  const paths = rawPaths.filter(Boolean)
+
+  if (paths.length === 0) return []
+
+  // 1. Filter rules matching any touched file path
+  const matching = activeRules.filter((r) => {
+    const trigger = r.trigger || r.parsed?.trigger || ''
+    return paths.some((p) => matchesTriggerPath(trigger, p))
+  })
+
+  // 2. Sort rules: prioritize prose rules (memory/checklist) over machine gates,
+  // then sort by catch count descending (highest-leverage rules first).
+  // Machine-promoted rules are already enforced deterministically by CI/hooks,
+  // so prose rules must receive model memory context first.
+  const isMachineEnforced = (r) => {
+    const enf = r.enforcement?.mode || r.enforcement || r.parsed?.enforcement
+    if (typeof enf === 'string') return enf.toLowerCase().startsWith('machine:')
+    return enf?.mode === 'machine'
+  }
+
+  const getCatchCount = (r) => {
+    if (typeof r.catches === 'number') return r.catches
+    if (Array.isArray(r.catches)) return r.catches.length
+    if (opts.catchesMap && r.name && opts.catchesMap.has(r.name)) return opts.catchesMap.get(r.name)
+    return 0
+  }
+
+  matching.sort((a, b) => {
+    const aMachine = isMachineEnforced(a) ? 1 : 0
+    const bMachine = isMachineEnforced(b) ? 1 : 0
+    if (aMachine !== bMachine) return aMachine - bMachine
+    return getCatchCount(b) - getCatchCount(a)
+  })
+
+  // 3. Cap total loaded words at budget, compacting machine-enforced rules
+  const selected = []
+  let totalWords = 0
+
+  for (const r of matching) {
+    const machine = isMachineEnforced(r)
+    let processed = r
+    let bodyText = r.raw || `${r.trigger || ''} ${r.rule || ''}`
+
+    if (machine) {
+      const rawEnf = typeof r.enforcement === 'string'
+        ? r.enforcement
+        : (r.enforcement?.raw || (r.enforcement?.gateId ? `machine:${r.enforcement.gateId}` : (r.parsed?.enforcement || 'machine:active')))
+      const gateId = rawEnf.includes(':') ? rawEnf.split(':')[1].trim() : (r.enforcement?.gateId || 'active')
+      // Compact machine rule to a lightweight 1-line pointer, genuinely freeing up context budget
+      processed = {
+        ...r,
+        compacted: true,
+        rule: `[Enforced by machine gate: ${gateId}]`,
+        raw: `**Trigger:** ${r.trigger || ''}\n**Enforcement:** machine:${gateId}`,
+      }
+      bodyText = `${r.trigger || ''} machine:${gateId}`
+    }
+
+    const w = bodyText.trim().split(/\s+/).filter(Boolean).length
+    if (totalWords + w <= budget || selected.length === 0) {
+      selected.push(processed)
+      totalWords += w
+    } else {
+      break
+    }
+  }
+
+  return selected
 }

@@ -102,6 +102,10 @@ file and no `.claude/` directory.
 | `caselaw gate test` · `caselaw gate baseline` · `caselaw gate promote` | run one gate, run them all, warn → block on evidence |
 | `caselaw review` | a review prompt for a **different** model; `--role refuter`, `verifier` or `judge` reviews one change against its claim, never the builder's reasoning |
 | `caselaw optimize` | measure what a session loads; propose what to compact or trim, for a human to apply |
+| `caselaw rule evolve` · `caselaw rule incident` | SkillOpt iterative rule evolution against contrastive incident fixtures |
+| `caselaw rules` | list active rules triggered for specific paths (`--for <paths>`) |
+| `caselaw gate synthesize` | synthesize a machine gate from contrastive incident fixtures |
+| `caselaw closeout verify` | verify session close-out report against git status and authority split |
 | `caselaw rule catch` · `caselaw rule demote` | record what a rule caught; move one back to candidates |
 | `caselaw harness propose` · `caselaw harness apply` · `caselaw harness log` | the harness changing itself: an agent proposes with evidence; the bounds or a human apply; the log says whether it helped |
 | `caselaw personal list` · `caselaw personal export` | your rules that caught failures across your repositories, kept on your machine; two or more, and your next install offers them |

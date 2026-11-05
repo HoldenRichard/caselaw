@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path'
 import {
   parseRule, serializeRule, validateRule, findReferences, gitRefResolver,
   listRules, propose, ratify, reject, adopt, RULE_DIRS, RuleError,
+  selectTriggeredRules, matchesTriggerPath,
 } from '../../src/core/rules.js'
 import { hash } from '../../src/core/text.js'
 
@@ -696,5 +697,94 @@ describe('rules — adopt, where someone else\'s evidence stops', () => {
       () => adopt(root, 'no-such-candidate', { origin: MY_INCIDENT }),
       (e) => e instanceof RuleError && e.code === 'NOT_FOUND',
     )
+  })
+})
+
+describe('selectTriggeredRules — trigger-scoped context router', () => {
+  const RULES = [
+    {
+      name: 'rule-cli',
+      trigger: 'When editing `src/commands/rule.js` or `bin/cli.mjs`',
+      rule: 'Ensure all flags are tested in cli-surface.test.js.',
+      catches: 4,
+    },
+    {
+      name: 'rule-core',
+      trigger: 'Changes to `src/core/` modules',
+      rule: 'Preserve zero-dependency invariant using Node built-ins only.',
+      catches: 12,
+    },
+    {
+      name: 'rule-docs',
+      trigger: 'Edits to `docs/authority-split.md`',
+      rule: 'Keep human-only verification boundaries untouched.',
+      catches: 1,
+    },
+  ]
+
+  test('POSITIVE CONTROL: rules matching touched file paths are selected, irrelevant rules are excluded', () => {
+    const selected = selectTriggeredRules(RULES, ['src/commands/rule.js'])
+    assert.equal(selected.length, 1)
+    assert.equal(selected[0].name, 'rule-cli')
+
+    const multi = selectTriggeredRules(RULES, ['src/core/skillopt.js', 'docs/authority-split.md'])
+    assert.equal(multi.length, 2)
+    assert.ok(multi.some((r) => r.name === 'rule-core'))
+    assert.ok(multi.some((r) => r.name === 'rule-docs'))
+    assert.ok(!multi.some((r) => r.name === 'rule-cli'))
+  })
+
+  test('POSITIVE CONTROL: matching rules are sorted by catch count descending', () => {
+    // Both rule-cli and rule-core touch src/
+    const rulesUnderSrc = [
+      { name: 'low-catch', trigger: 'When modifying files in `src/`', rule: 'Do A', catches: 2 },
+      { name: 'high-catch', trigger: 'When modifying files in `src/`', rule: 'Do B', catches: 25 },
+      { name: 'med-catch', trigger: 'When modifying files in `src/`', rule: 'Do C', catches: 9 },
+    ]
+    const selected = selectTriggeredRules(rulesUnderSrc, ['src/index.js'])
+    assert.equal(selected.length, 3)
+    assert.equal(selected[0].name, 'high-catch')
+    assert.equal(selected[1].name, 'med-catch')
+    assert.equal(selected[2].name, 'low-catch')
+  })
+
+  test('POSITIVE CONTROL: word budget caps the loaded rules without splitting high-leverage rules', () => {
+    const ruleA = { name: 'rule-a', trigger: '`src/`', rule: 'word '.repeat(30), catches: 10 }
+    const ruleB = { name: 'rule-b', trigger: '`src/`', rule: 'word '.repeat(30), catches: 5 }
+    // Rule A is ~31 words, Rule B is ~31 words. Budget of 40 words allows ruleA but excludes ruleB
+    const selected = selectTriggeredRules([ruleA, ruleB], ['src/file.js'], { budget: 40 })
+    assert.equal(selected.length, 1)
+    assert.equal(selected[0].name, 'rule-a')
+  })
+
+  test('empty touchedFilePaths returns empty array', () => {
+    const selected = selectTriggeredRules(RULES, [])
+    assert.deepEqual(selected, [])
+  })
+
+  test('POSITIVE CONTROL: machine-enforced rules are deprioritized and compacted to preserve word budget', () => {
+    const proseRule = {
+      name: 'prose-rule',
+      trigger: 'When editing `src/core/`',
+      rule: 'Remember to verify invariants carefully in memory.',
+      enforcement: 'memory',
+      catches: 2,
+    }
+    const machineRule = {
+      name: 'machine-rule',
+      trigger: 'When editing `src/core/`',
+      rule: 'Never allow sweeping staging in git commits.'.repeat(5),
+      enforcement: 'machine:no-sweeping-staging',
+      catches: 20,
+    }
+
+    const selected = selectTriggeredRules([machineRule, proseRule], ['src/core/rules.js'])
+    assert.equal(selected.length, 2)
+    // Prose rule is prioritized first despite machineRule having 20 catches vs 2
+    assert.equal(selected[0].name, 'prose-rule')
+    assert.equal(selected[1].name, 'machine-rule')
+    // Machine rule is compacted
+    assert.equal(selected[1].compacted, true)
+    assert.match(selected[1].rule, /\[Enforced by machine gate: no-sweeping-staging\]/)
   })
 })

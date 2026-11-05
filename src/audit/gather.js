@@ -70,12 +70,29 @@ export async function gather(root, { now = new Date() } = {}) {
   }
   const gitignoreClaims = await gatherGitignoreClaims(root, docTexts)
 
+  let trackedFiles = []
+  try {
+    const { stdout } = await pExecFile('git', ['ls-files'], { cwd: root, encoding: 'utf8' })
+    trackedFiles = stdout.split('\n').map((s) => s.trim()).filter(Boolean)
+  } catch (err) {
+    notes.push(`trackedFiles: ${err.message}`)
+  }
+
+  let incidents = []
+  try {
+    const incMod = await import('../core/incidents.js')
+    incidents = await incMod.listIncidents(root)
+  } catch (err) {
+    notes.push(`incidents: ${err.message}`)
+  }
+
   return {
     root, now, notes,
     answers, manifest,
     gatesConfig: gatesConfig ?? gatesStore.emptyConfig(),
     rules, docTexts, docRefs, untracked, authority, staleCommands, adrs, gitignoreClaims,
     fireCounts, earnedFires, drifted, installAgeDays, borrowed, optimizer, harnessChanges,
+    trackedFiles, incidents,
     installed: Boolean(answers || manifest),
   }
 }

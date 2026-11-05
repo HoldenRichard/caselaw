@@ -15,7 +15,7 @@
  *   - `ratify` and `reject` refuse without one — only a human promotes or drops.
  */
 
-import { writeFile, stat } from 'node:fs/promises'
+import { writeFile, stat, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { execFile } from 'node:child_process'
@@ -29,10 +29,22 @@ import * as answersStore from '../core/answers.js'
 import { DEFAULTS } from '../core/defaults.js'
 import { TRIGGERS } from '../core/triggers.js'
 import { recordPersonalCatch, personalOff, PERSONAL_REPOS } from '../core/personal.js'
+import { saveIncident, listIncidents, createIncidentFromGit, IncidentError } from '../core/incidents.js'
+import {
+  splitRuleAST,
+  reconstituteRuleAST,
+  calculateEditBudget,
+  checkEditBudget,
+  evaluatePareto,
+  evaluateStage1,
+  evaluateStage2,
+  optimizeRuleIterative,
+  ConstitutionError,
+} from '../core/skillopt.js'
 
 const pExecFile = promisify(execFile)
 
-export const RULE_SUBCOMMANDS = ['propose', 'ratify', 'reject', 'adopt', 'promote', 'catch', 'demote']
+export const RULE_SUBCOMMANDS = ['propose', 'ratify', 'reject', 'adopt', 'promote', 'catch', 'demote', 'evolve', 'incident', 'list']
 
 const PROMPTS = {
   trigger: {
@@ -65,7 +77,7 @@ export async function cmdRule(args, io) {
     io.say(`  caselaw rule needs one of: ${RULE_SUBCOMMANDS.join(', ')}.`)
     return 2
   }
-  if (!args.name) {
+  if (sub !== 'list' && !args.name) {
     io.say(`  caselaw rule ${sub} needs a rule name (kebab-case).`)
     return 2
   }
@@ -78,6 +90,9 @@ export async function cmdRule(args, io) {
       case 'promote': return await promote(args, io)
       case 'catch': return await recordCatch(args, io)
       case 'demote': return await demote(args, io)
+      case 'evolve': return await evolve(args, io)
+      case 'incident': return await recordIncident(args, io)
+      case 'list': return await listRulesCmd(args, io)
     }
   } catch (err) {
     if (err instanceof rules.RuleError || err instanceof gatesStore.GateError || err?.code) {
@@ -248,9 +263,33 @@ async function forgetGenerated(root, names, say) {
 
 /** Evidence, not authority: recording a catch moves nothing and widens nothing, so an agent may. */
 async function recordCatch(args, { root, say }) {
-  const r = await rules.recordCatch(root, args.name, { what: args.opt.what, by: args.opt.by || (await gitUserName(root)) || 'unknown' })
+  const o = args.opt || {}
+  const what = o.what || (o.commit ? `commit ${o.commit.slice(0, 7)}: violation caught` : '')
+  const r = await rules.recordCatch(root, args.name, { what, by: o.by || (await gitUserName(root)) || 'unknown' })
   say(`  Recorded in .caselaw/catches.jsonl (${r.at}).`)
   if (r.firstLocal) say(`  Its first catch here: written into ${r.path} as this project's own Origin.`)
+
+  if (o.commit) {
+    const badCommit = o.commit
+    const goodCommit = o.fix || 'HEAD'
+    try {
+      const incId = `${args.name}-${badCommit.slice(0, 7)}`
+      const inc = createIncidentFromGit(root, {
+        id: incId,
+        rule: args.name,
+        positiveCommit: badCommit,
+        negativeCommit: goodCommit,
+        positiveDesc: o.what || `Catch recorded at ${r.at}`,
+        negativeDesc: 'Clean fix commit',
+        metadata: { author: o.by || (await gitUserName(root)) || null },
+      })
+      await saveIncident(root, inc)
+      say(`  Captured contrastive incident fixture to .caselaw/incidents/${inc.id}.json`)
+    } catch (err) {
+      say(`  Note: could not capture incident fixture from git: ${err.message}`)
+    }
+  }
+
   // The owner's own record across their repositories (0.3), on this machine only.
   const active = (await rules.listRules(root)).active.find((x) => x.name === args.name)
   if (active && !personalOff()) {
@@ -550,4 +589,207 @@ async function loadRunner(root) {
     throw new gatesStore.GateError('No vendored runner at .caselaw/bin/gate.mjs. Run `caselaw upgrade` to restore it.', { code: 'NO_RUNNER' })
   }
   return import(pathToFileURL(p).href)
+}
+
+async function recordIncident(args, { root, say }) {
+  const o = args.opt || {}
+  const ruleName = args.name
+  const pos = o.positive
+  const neg = o.negative
+  if (!pos || !neg) {
+    say(`  caselaw rule incident ${ruleName} needs both --positive <commit> and --negative <commit>.`)
+    say('  - positive: broken commit that violated the rule (Positive Control: must fail)')
+    say('  - negative: clean fix commit on the same files (Negative Control: must pass)')
+    return 2
+  }
+  const id = o.id || `${ruleName}-${pos.slice(0, 7)}`
+  try {
+    const inc = createIncidentFromGit(root, {
+      id,
+      rule: ruleName,
+      positiveCommit: pos,
+      negativeCommit: neg,
+      positiveDesc: o['positive-desc'] || o.why,
+      negativeDesc: o['negative-desc'],
+      metadata: { author: o.by },
+    })
+    const path = await saveIncident(root, inc)
+    say(`  Recorded contrastive incident fixture to ${path}`)
+    say(`  Positive control (${pos}): must be caught by rule`)
+    say(`  Negative control (${neg}): must pass cleanly`)
+    return 0
+  } catch (err) {
+    say(`  Failed to record incident: ${err.message}`)
+    return 1
+  }
+}
+
+async function evolve(args, { root, say, interactive }) {
+  const ruleName = args.name
+  const dir = doctrineDirAt(root)
+  const dirs = ruleDirsFor(dir)
+  const path = join(root, dirs.active, `${ruleName}.md`)
+  let text = null
+  try {
+    text = await readFile(path, 'utf8')
+  } catch {
+    say(`  No active rule named "${ruleName}" at ${dirs.active}/${ruleName}.md.`)
+    return 1
+  }
+
+  const incidents = await listIncidents(root, { rule: ruleName })
+  if (!incidents.length) {
+    say(`  No contrastive incidents recorded for "${ruleName}".`)
+    say('  Record at least one pair before evolving:')
+    say(`    caselaw rule incident ${ruleName} --positive <bad-commit> --negative <fix-commit>`)
+    return 1
+  }
+
+  const ast = splitRuleAST(text)
+  const o = args.opt || {}
+  const candidatePath = o.candidate
+
+  if (candidatePath) {
+    let candidateText
+    try {
+      candidateText = await readFile(join(root, candidatePath), 'utf8')
+    } catch {
+      say(`  Could not read candidate file at ${candidatePath}.`)
+      return 1
+    }
+
+    const candidateAST = splitRuleAST(candidateText)
+    const stage1 = evaluateStage1({ ...candidateAST.mutable, raw: candidateText }, incidents)
+    if (!stage1.pass) {
+      say(`  Stage 1 Rejection: ${stage1.reason}`)
+      return 1
+    }
+
+    const budgetRes = checkEditBudget(ast.mutable, candidateAST.mutable, { isCompression: Boolean(o.compress) })
+    if (!budgetRes.allowed) {
+      say(`  Learning-Rate Budget Rejection: ${budgetRes.reason}`)
+      return 1
+    }
+
+    // Stage 2 verifier check using built-in verifier
+    const stage2 = await evaluateStage2(candidateAST.mutable, incidents, async ({ fixture, control, diff }) => {
+      const forbidsSweep = /sweep|git add -A|git add \./i.test(candidateAST.mutable.rule)
+      if (forbidsSweep && /\bgit\s+add\s+(?:-A|--all|\.)(?=\s|$|[;&|\n])/.test(diff)) {
+        return { verdict: 'FAIL', reason: 'violates explicit staging prohibition' }
+      }
+      return { verdict: 'PASS' }
+    })
+
+    const pareto = evaluatePareto(
+      { catchRate: stage2.catchRate, falsePositives: stage2.falsePositives, wordCount: candidateAST.totalWords },
+      { catchRate: 1.0, falsePositives: 0, wordCount: ast.totalWords }
+    )
+
+    if (!pareto.accepted) {
+      say(`  Pareto Gate Rejection: ${pareto.reason}`)
+      return 1
+    }
+
+    // Structural A2 reconstitution: guarantees Origin and Catches remain intact
+    const reconstituted = reconstituteRuleAST(ast, candidateAST.mutable)
+    await writeFile(path, reconstituted, 'utf8')
+    say(`  Evolved ${dirs.active}/${ruleName}.md:`)
+    say(`    ${pareto.reason}`)
+    return 0
+  }
+
+  // Run active iterative SkillOpt optimization loop when no candidate is passed
+  const budget = calculateEditBudget(ast.mutableWords)
+  const runnerOpt = o.runner || args.runner || null
+  const useLLM = Boolean(o.llm || args.llm || runnerOpt)
+  let runnerFn = null
+
+  if (typeof runnerOpt === 'function') {
+    runnerFn = runnerOpt
+  } else if (typeof runnerOpt === 'string' && runnerOpt.trim()) {
+    runnerFn = async ({ prompt }) => {
+      const { spawnSync } = await import('node:child_process')
+      const res = spawnSync(runnerOpt, { shell: true, input: prompt, encoding: 'utf8' })
+      if (res.status !== 0) throw new Error(`LLM runner command failed (${res.status}): ${res.stderr || res.stdout}`)
+      return res.stdout
+    }
+  }
+
+  say(`SkillOpt Iterative Evolution Pass for "${ruleName}"`)
+  say(`Current words: ${ast.totalWords} (mutable: ${ast.mutableWords}) | Edit budget: ${budget} words`)
+  say(`Contrastive incident fixtures: ${incidents.length}`)
+  if (useLLM) say(`LLM Runner: ${runnerOpt ? String(runnerOpt) : 'internal prompt bridge'}`)
+
+  const res = await optimizeRuleIterative({
+    ruleText: text,
+    incidentFixtures: incidents,
+    isCompression: Boolean(o.compress),
+    useLLM,
+    llmRunner: runnerFn,
+    maxSteps: 4,
+  })
+
+  if (res.acceptedSteps.length > 0) {
+    for (const step of res.acceptedSteps) {
+      say(`  Step ${step.step}: [${step.mode}] ${step.reason}`)
+    }
+    await writeFile(path, res.bestRuleText, 'utf8')
+    say(`  Evolved ${dirs.active}/${ruleName}.md: ${res.savedWords} words saved (${res.stats.initialWords} -> ${res.stats.finalWords}) across ${res.acceptedSteps.length} accepted step(s).`)
+    return 0
+  }
+
+  if (res.rejectedBuffer.entries.length > 0) {
+    say(`  Iterative optimization completed with 0 accepted edits:`)
+    for (const rej of res.rejectedBuffer.entries) {
+      say(`    - [Stage ${rej.stage} Rejection]: ${rej.failureReason}`)
+    }
+    say('')
+  }
+  say('To evaluate a specific candidate file:')
+  say(`  caselaw rule evolve ${ruleName} --candidate <path-to-candidate.md>${o.compress ? ' --compress' : ''}`)
+  return 0
+}
+
+export async function listRulesCmd(args, { root, say }) {
+  const listed = await rules.listRules(root)
+  const catches = await rules.readCatches(root)
+  const catchesMap = new Map()
+  for (const c of catches) {
+    catchesMap.set(c.rule, (catchesMap.get(c.rule) || 0) + 1)
+  }
+
+  const enrichedActive = (listed.active || []).map((r) => ({
+    ...r,
+    trigger: r.parsed?.trigger || '',
+    rule: r.parsed?.rule || '',
+    catches: catchesMap.get(r.name) || 0,
+    raw: r.raw || `${r.parsed?.trigger || ''} ${r.parsed?.rule || ''}`,
+  }))
+
+  const forOption = args.opt?.for || args.for
+  const forPaths = typeof forOption === 'string'
+    ? forOption.split(',').map((p) => p.trim()).filter(Boolean)
+    : Array.isArray(forOption) ? forOption : null
+
+  let results = enrichedActive
+  if (forPaths && forPaths.length > 0) {
+    results = rules.selectTriggeredRules(enrichedActive, forPaths)
+  }
+
+  if (args.json) {
+    say(JSON.stringify(results, null, 2))
+    return 0
+  }
+
+  if (results.length === 0) {
+    say(forPaths ? `  No active rules triggered for: ${forPaths.join(', ')}` : '  No active rules.')
+    return 0
+  }
+
+  say(forPaths ? `  Active rules triggered for ${forPaths.join(', ')} (${results.length}):` : `  Active rules (${results.length}):`)
+  for (const r of results) {
+    const c = r.catches ? ` [${r.catches} catch${r.catches === 1 ? '' : 'es'}]` : ''
+    say(`    - ${r.name}${c}: ${r.trigger || '(no trigger)'}`)
+  }
+  return 0
 }

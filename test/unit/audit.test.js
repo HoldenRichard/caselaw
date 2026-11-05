@@ -103,6 +103,66 @@ describe('audit — the checks fire on what they claim to', () => {
     }))
     assert.ok(!r.findings.some((f) => f.code === 'claims-verifiable'))
   })
+
+  test('POSITIVE CONTROL: active rule triggering on nonexistent path triggers Trigger Rot warning', () => {
+    const r = runChecks(
+      ctx({
+        rules: {
+          active: [
+            {
+              name: 'no-legacy-auth',
+              file: 'docs/rules/active/no-legacy-auth.md',
+              origin: 'abc1234',
+              trigger: 'When editing `src/legacy/auth.js` or `src/core/auth.js`',
+              rule: 'Do not use legacy token auth',
+            },
+          ],
+          proposed: [],
+          candidates: [],
+        },
+        trackedFiles: ['src/core/auth.js'],
+      })
+    )
+    assert.ok(r.findings.some((f) => f.code === 'trigger-paths-live' && f.severity === SEVERITY.WARN))
+    assert.match(r.findings.find((f) => f.code === 'trigger-paths-live').message, /src\/legacy\/auth\.js/)
+  })
+
+  test('POSITIVE CONTROL: rule failing to catch positive control incident fixture is reported as ERROR', () => {
+    const r = runChecks(
+      ctx({
+        rules: {
+          active: [
+            {
+              name: 'no-sweeping-staging',
+              file: 'docs/rules/active/no-sweeping-staging.md',
+              origin: 'abc1234',
+              trigger: 'When staging git changes in `src/`',
+              rule: 'Always write detailed commit messages',
+            },
+          ],
+          proposed: [],
+          candidates: [],
+        },
+        trackedFiles: ['src/commands/rule.js'],
+        incidents: [
+          {
+            id: 'no-sweeping-staging-1',
+            rule: 'no-sweeping-staging',
+            positiveControl: {
+              diff: 'diff --git a/file b/file\n+git add .\n',
+              expected: 'FAIL',
+            },
+            negativeControl: {
+              diff: 'diff --git a/file b/file\n+git add file\n',
+              expected: 'PASS',
+            },
+          },
+        ],
+      })
+    )
+    assert.ok(r.findings.some((f) => f.code === 'incident-corpus-replays' && f.severity === SEVERITY.ERROR))
+    assert.match(r.findings.find((f) => f.code === 'incident-corpus-replays').message, /failed to catch positive control/)
+  })
 })
 
 describe('audit — what it must NOT do', () => {

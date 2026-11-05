@@ -18,6 +18,7 @@ import { listRules, ratify, parseRule } from '../../src/core/rules.js'
 import { buildArtifacts } from '../../src/generate/artifacts.js'
 import { emptyAnswers } from '../../src/core/answers.js'
 import { runChecks } from '../../src/audit/checks.js'
+import { saveIncident } from '../../src/core/incidents.js'
 
 let root
 beforeEach(async () => { root = await realpath(await mkdtemp(join(tmpdir(), 'caselaw-opt-'))) })
@@ -104,6 +105,12 @@ describe('the proposals', () => {
     assert.ok(triggerSimilarity('editing a database migration file', 'editing a database migration or its runner') >= 0.5)
     assert.ok(triggerSimilarity('any change to the auth flow', 'any change to the billing page') < 0.5)
   })
+
+  test('POSITIVE CONTROL: over budget proposes SkillOpt compression before demoting', () => {
+    const active = [{ name: 'verbose', parsed: { trigger: 'any work on the migration engine', rule: 'Please make sure to always be careful and check everything in detail.' } }]
+    const proposals = optimizerProposals({ signals: { trouble: [], load: { words: 4000 }, budget: 3000 }, listed: { active } })
+    assert.ok(proposals.some((p) => p.id === 'compress:verbose' && p.action === 'compress'))
+  })
 })
 
 describe('archiving a precedent', () => {
@@ -161,6 +168,24 @@ describe('merging two rules', () => {
     assert.match(text, /\*\*Precedent:\*\* DEF-1\. And: DEF-2\./)
     assert.match(text, /\*\*Default:\*\* merges D2, active since 2026-10-01; D3, active since 2026-10-01/)
   })
+
+  test('POSITIVE CONTROL: applyProposal merge verifies unioned incidents and refuses merge if candidate regresses', async () => {
+    await put('docs/rules/active/rule1.md', rule({ name: 'rule1', trigger: 'staging git changes', text: 'Never use sweeping flags like git add .', origin: 'commit 1111' }))
+    await put('docs/rules/active/rule2.md', rule({ name: 'rule2', trigger: 'staging git files', text: 'Always specify exact files.', origin: 'commit 2222' }))
+
+    // Add incident for rule1
+    await saveIncident(root, {
+      id: 'INC-MERGE-01',
+      rule: 'rule1',
+      positiveControl: { commit: '1111', diff: '--- a/f\n+++ b/f\n@@ -1 +1 @@\n+git add .\n', expected: 'FAIL' },
+      negativeControl: { commit: '1112', diff: '--- a/f\n+++ b/f\n@@ -1 +1 @@\n+git add f\n', expected: 'PASS' },
+    })
+
+    const r = await applyProposal({ root, doc: doc(), id: 'merge:rule1+rule2', now: new Date('2026-10-31') })
+    assert.equal(r.ok, true, r.message)
+    const proposed = await readFile(join(root, 'docs/rules/proposed/rule1-and-rule2.md'), 'utf8')
+    assert.match(proposed, /\*\*Origin:\*\* commit 1111 And: commit 2222/)
+  })
 })
 
 describe('the audit says when it is time', () => {
@@ -181,6 +206,21 @@ const spawned = (argv, { input = '', cwd }) => new Promise((resolve) => {
   child.on('close', (code) => resolve({ code, out }))
   child.stdin.on('error', () => {})
   child.stdin.end(input)
+})
+
+describe('lossless compression via SkillOpt', () => {
+  test('POSITIVE CONTROL: applyProposal with compress losslessly compacts the rule file', async () => {
+    await put('docs/rules/active/verbose.md', rule({
+      name: 'verbose',
+      trigger: 'any work on database migrations',
+      text: 'Please make sure to always remember to write down migrations in order to avoid issues.',
+      origin: 'commit 1234',
+    }))
+    const r = await applyProposal({ root, doc: doc(), id: 'compress:verbose', now: new Date('2026-10-31') })
+    assert.equal(r.ok, true, r.message)
+    const updated = await readFile(join(root, 'docs/rules/active/verbose.md'), 'utf8')
+    assert.doesNotMatch(updated, /Please make sure to always remember to/)
+  })
 })
 
 describe('counting compactions, and who may apply', () => {

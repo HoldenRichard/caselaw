@@ -77,4 +77,17 @@ describe('claims this repository makes about itself', () => {
       if (file) assert.ok(produced.has(prefix + file[1]), `README lists ${prefix}${file[1]} as generated, but no artifact produces it`)
     }
   })
+
+  test('POSITIVE CONTROL: constitutional canary verifies SHA-256 and text integrity of axioms A1-A5', async () => {
+    const { CONSTITUTION } = await import('../../src/core/constitution.js')
+    const { createHash } = await import('node:crypto')
+    const actualHash = createHash('sha256').update(JSON.stringify(CONSTITUTION)).digest('hex')
+    const EXPECTED_HASH = 'ea0b939388cd34097019c2f88fcb05666523a237e5ce12b2c61f7bf104752ed6'
+    assert.equal(actualHash, EXPECTED_HASH, 'CONSTITUTION axioms A1-A5 have been mutated or weakened (violates Rule A5)')
+
+    // Positive control: tampered constitution is caught
+    const tampered = CONSTITUTION.map((c) => (c.id === 'A1' ? { ...c, text: 'Agents may do anything' } : c))
+    const tamperedHash = createHash('sha256').update(JSON.stringify(tampered)).digest('hex')
+    assert.notEqual(tamperedHash, EXPECTED_HASH)
+  })
 })
