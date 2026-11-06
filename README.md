@@ -19,16 +19,13 @@ shows you every file before it writes anything.
 
 That is the whole idea, so it goes first.
 
-Every other tool in this space hands you a curated pack — someone else's rules,
-someone else's incidents, arriving with no evidence attached. `caselaw` creates
-`docs/rules/active/` **empty**, with a file explaining why.
+caselaw starts with an empty active-rules directory. Rules accumulate from incidents in your own repository.
 
 A rule without an incident behind it is a superstition with a filename. It costs
 every future session the attention it takes to read, and nobody enforces a rule
-they cannot trace. So rules accumulate here from things that actually went wrong
-in *your* repo, each one citing the commit that proved it.
+they cannot trace.
 
-Five universal rules ship as **candidates** — readable, adoptable, and not in
+Five universal rules ship as **candidates**: readable, adoptable, and not in
 force. Adopting one requires writing your own Origin:
 
 ```
@@ -37,7 +34,7 @@ caselaw rule adopt trace-the-premise --origin "PR #418: built against a spec lin
 
 If you cannot name a time it bit you, you do not need the rule yet.
 
-## The question nobody else asks
+## Define the agent's boundaries
 
 The interview's first real question is:
 
@@ -51,7 +48,7 @@ And then, for each thing you name:
 That third option is the one that matters. A silent misconfiguration reads
 exactly like a permanent boundary, and boundaries do not get re-tested. Anything
 you mark untested is written into `docs/authority-split.md` with a one-command
-way to settle it and a date — and the audit fails when that date passes.
+way to settle it and a date, and the audit fails when that date passes.
 
 This came from a real incident: a months-long belief that an agent "could not
 read the database" turned out to be a wrong `--dir` flag. Two long-open defects
@@ -63,12 +60,12 @@ A rule starts as prose and earns enforcement:
 
 | Rung | Form | How it still fails |
 |---|---|---|
-| memory | prose in `active/` | the agent forgets — silently, and only sometimes |
+| memory | prose in `active/` | the agent forgets, silently, and only sometimes |
 | checklist | a line in the close-out | a human has to actually run it |
 | `machine:<id>` | a gate in `.caselaw/gates.json` | only catches what is expressible |
 
 `caselaw rule promote <name>` walks a rule up. Gates are **born as warnings** and
-earn `block` by demonstrably catching real violations — a gate that blocks work
+earn `block` by demonstrably catching real violations; a gate that blocks work
 which already existed gets disabled on day one.
 
 ## What lands in your repo
@@ -79,7 +76,7 @@ docs/
   close-out.md            the session template that asks for rules
   rules/                  README, template, EMPTY active/, 5 candidates
 .caselaw/
-  answers.json            your answers — edit this, not the docs
+  answers.json            your answers: edit this, not the docs
   gates.json              empty until a rule earns one
   bin/gate.mjs            vendored, zero-dependency
 CLAUDE.md / AGENTS.md     a pointer block, not a copy of the doctrine
@@ -123,7 +120,7 @@ workflow gets deleted within a day.
 not need this tool to be useful. Only the machinery goes.
 
 **It is not Claude-only.** Claude Code, AGENTS.md, Cursor and Copilot, each with
-a golden-render test. A tool counts as supported when a test renders it — this
+a golden-render test. A tool counts as supported when a test renders it. This
 list is generated from the test suite, not from optimism.
 
 ## Where it came from
