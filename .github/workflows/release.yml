@@ -52,8 +52,10 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
+          node-version: '22.14.0'
+
+      - name: Ensure npm 11.5.1 or later for trusted publishing
+        run: npm install -g npm@latest
 
       - run: node --test test/unit/*.test.js
       - run: node bin/cli.mjs audit .
@@ -71,5 +73,3 @@ jobs:
 
       - name: Publish with provenance
         run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
