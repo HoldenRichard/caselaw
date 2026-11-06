@@ -1,5 +1,8 @@
 # caselaw
 
+[![npm version](https://img.shields.io/npm/v/caselaw.svg?color=24292e&label=npm)](https://www.npmjs.com/package/caselaw)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 **Case law for your codebase.** An interview that generates your project's own
 rules, gates that earn their teeth, and an audit that keeps both honest.
 
@@ -37,7 +40,7 @@ caselaw rule adopt rename-greps-the-tree --origin "PR #418: a rename missed two 
 
 If you cannot name a time it bit you, you do not need the rule yet.
 
-## The question nobody else asks
+## Define the agent's boundaries
 
 The interview's first real question is:
 
@@ -51,7 +54,7 @@ And then, for each thing you name:
 That third option is the one that matters. A silent misconfiguration reads
 exactly like a permanent boundary, and boundaries do not get re-tested. Anything
 you mark untested is written into `docs/authority-split.md` with a one-command
-way to settle it and a date — and the audit fails when that date passes.
+way to settle it and a date, and the audit fails when that date passes.
 
 This came from a real incident: a months-long belief that an agent "could not
 read the database" turned out to be a wrong `--dir` flag. Two long-open defects
@@ -63,12 +66,12 @@ A rule starts as prose and earns enforcement:
 
 | Rung | Form | How it still fails |
 |---|---|---|
-| memory | prose in `active/` | the agent forgets — silently, and only sometimes |
+| memory | prose in `active/` | the agent forgets, silently, and only sometimes |
 | checklist | a line in the close-out | a human has to actually run it |
 | `machine:<id>` | a gate in `.caselaw/gates.json` | only catches what is expressible |
 
 `caselaw rule promote <name>` walks a rule up. Gates are **born as warnings** and
-earn `block` by demonstrably catching real violations — a gate that blocks work
+earn `block` by demonstrably catching real violations; a gate that blocks work
 which already existed gets disabled on day one.
 
 ## What lands in your repo
@@ -79,7 +82,7 @@ docs/
   close-out.md            the session template that asks for rules
   rules/                  README, template, the defaults and triggered rules you chose, 2 candidates
 .caselaw/
-  answers.json            your answers — edit this, not the docs
+  answers.json            your answers: edit this, not the docs
   gates.json              empty until a rule earns one
   bin/gate.mjs            vendored, zero-dependency
 CLAUDE.md / AGENTS.md     a pointer block, not a copy of the doctrine
@@ -151,7 +154,7 @@ does not establish that a check passed.
 not need this tool to be useful. Only the machinery goes.
 
 **It is not Claude-only.** Claude Code, AGENTS.md, Cursor and Copilot, each with
-a golden-render test. A tool counts as supported when a test renders it — this
+a golden-render test. A tool counts as supported when a test renders it. This
 list is generated from the test suite, not from optimism.
 
 ## Where it came from

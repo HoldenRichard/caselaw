@@ -1,31 +1,35 @@
-# Publish to npm with provenance.
+# Publish npm with provenance; GitHub Packages is an explicit manual choice.
 #
 # Provenance is a signed attestation linking the published tarball to the exact
-# commit and workflow run that produced it. Without it, "this package came from
-# this source" is something you take on trust; with it, anyone can verify it.
-# For a tool whose entire pitch is that claims should be checkable, publishing
-# on trust would be an odd look.
+# commit and workflow run that produced it.
 #
-# It requires three things, and all three are easy to get wrong:
-#   - id-token: write        so the runner can request a Sigstore token
-#   - a public repo          provenance is not available for private repos
-#   - `repository` in        the URL must match the repo doing the publishing
-#     package.json
-#
-# Triggered by pushing a tag: git tag v0.1.1 && git push origin v0.1.1
+# Triggered by pushing a tag: git tag v0.3.0 && git push origin v0.3.0
+# or via manual workflow_dispatch in GitHub Actions.
+
 name: release
 
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      target:
+        description: Registry to publish to
+        type: choice
+        default: npm
+        options:
+          - npm
+          - github
+          - both
 
 permissions:
   contents: read
-  id-token: write # required for provenance; the publish silently loses it otherwise
+  id-token: write # required for npm provenance
+  packages: write # required to publish to GitHub Packages
 
 jobs:
-  release:
+  github-packages:
+    if: github.event_name == 'workflow_dispatch' && inputs.target != 'npm'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -33,18 +37,40 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@holdenrichard'
 
-      # Nothing to install — zero dependencies. Run the suite anyway: a release
-      # is the worst possible moment to discover the tests were red.
       - run: node --test test/unit/*.test.js
-
-      # The tool must pass its own audit before it ships. A governance tool
-      # whose own governance is stale has already lost the argument.
       - run: node bin/cli.mjs audit .
 
-      # The tag must match the version being published. Publishing v0.1.1 from
-      # a tree that says 0.1.0 produces a release nobody can trace back.
+      - name: Publish to GitHub Packages
+        run: |
+          node -e "
+            const pkg = require('./package.json');
+            pkg.name = '@holdenrichard/caselaw';
+            pkg.publishConfig = { registry: 'https://npm.pkg.github.com' };
+            require('fs').writeFileSync('./package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+          npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  npm-release:
+    if: github.event_name != 'workflow_dispatch' || inputs.target != 'github'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Ensure npm 11.5.1 or later for trusted publishing
+        run: npm install -g npm@11.16.0
+
+      - run: node --test test/unit/*.test.js
+      - run: node bin/cli.mjs audit .
+
       - name: Tag matches package version
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
@@ -58,5 +84,3 @@ jobs:
 
       - name: Publish with provenance
         run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
