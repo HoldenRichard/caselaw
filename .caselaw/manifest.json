@@ -2,15 +2,15 @@
   "schemaVersion": 1,
   "cliVersion": "0.3.0",
   "templateVersion": "1.2",
-  "generatedAt": "2026-11-06T18:55:12.328Z",
+  "generatedAt": "2026-11-06T18:58:52.511Z",
   "entries": {
     "docs/authority-split.md": {
       "kind": "file",
-      "hash": "f95822027f7d3d8da0053f14824cc04f5d4dcf58bdcbbec84b02895036496139"
+      "hash": "e52ee8a8da5e09d711f6ec82f28c7515c61bb657a36362b1fd1c77ab076ae08d"
     },
     "docs/close-out.md": {
       "kind": "file",
-      "hash": "8b9ed72a4bed1a057686dd8b165603572ad370b2e9bf887c75d6407c186d4b38"
+      "hash": "065fcfd6f5a10ac13ae01fc44c579425452bf6b8ce0806752e9cf1a504d5da73"
     },
     "docs/rules/README.md": {
       "kind": "file",

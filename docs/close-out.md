@@ -43,7 +43,7 @@ Your project's human-only tier, from `docs/authority-split.md`:
 Did this session do any of these? Each one publishes outside the repository, so each is a human's
 to do, or to ask for by name:
 
-- [ ] running the workflow by hand — publishes to npm (`.github/workflows/release.yml:54`), only if `github.event_name == 'workflow_dispatch' && inputs.target != 'npm'` (line 32)
+- [ ] running the workflow by hand — publishes to npm (`.github/workflows/release.yml:56`), only if `github.event_name == 'workflow_dispatch' && inputs.target != 'npm'` (line 32)
 
 ## Rule proposals
 

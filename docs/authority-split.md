@@ -31,7 +31,7 @@ Each of these publishes outside the repository, and git starts it. Doing what st
 outward-facing action: the agent may prepare it, and a human does it, or asks for it by name, each
 time. Conditions this could not read are quoted, not interpreted.
 
-- **npm** (`.github/workflows/release.yml:54`): when running the workflow by hand. Only if `github.event_name == 'workflow_dispatch' && inputs.target != 'npm'` (line 32).
+- **npm** (`.github/workflows/release.yml:56`): when running the workflow by hand. Only if `github.event_name == 'workflow_dispatch' && inputs.target != 'npm'` (line 32).
 
 ## What a human still has to do
 
