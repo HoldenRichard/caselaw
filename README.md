@@ -19,7 +19,7 @@ shows you every file before it writes anything.
 
 That is the whole idea, so it goes first.
 
-caselaw starts with an empty active-rules directory. Rules accumulate from incidents in your own repository.
+`caselaw` starts with an empty active-rules directory. Rules accumulate from incidents in your own repository.
 
 A rule without an incident behind it is a superstition with a filename. It costs
 every future session the attention it takes to read, and nobody enforces a rule
