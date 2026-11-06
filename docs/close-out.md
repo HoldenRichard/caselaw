@@ -15,7 +15,15 @@ Keep it short. A close-out nobody writes is worth less than a rough one they do.
 ## Verified
 
 <!-- One line per check that actually ran. Value — who ran it — what it showed.
-     "Tests pass" is not a verification line; "npm run test — agent — 41 passed, 0 failed" is. -->
+     "Tests pass" is not a verification line; "node --test test/unit/*.test.js — agent — 41 passed, 0 failed" is. -->
+
+The gates CI runs on a change, job by job, each job in its own order. Run the ones your change touches before calling the
+work done; CI will run the rest.
+
+- [ ] `node --test test/unit/*.test.js`
+- [ ] `node bin/cli.mjs audit .`
+- [ ] `docker run --rm -v "$PWD:/repo"   ghcr.io/gitleaks/gitleaks:v8.30.1   dir /repo --no-banner --no-color --redact`
+- [ ] `docker run --rm -v "$PWD:/repo"   -e GIT_CONFIG_COUNT=1   -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/repo   ghcr.io/trufflesecurity/trufflehog:3.96.0   git file:///repo --results=verified --fail --no-update --no-color`
 
 -
 
@@ -23,10 +31,19 @@ Keep it short. A close-out nobody writes is worth less than a rough one they do.
 
 <!-- The device/console/production remainder. Anything on this list is a claim
      nobody has checked yet, so say so plainly rather than implying it is done. -->
+How a human proves a change here: Run the CLI against a real repo and read the generated docs yourself; a suite cannot judge whether a generated sentence is true.
+
 Your project's human-only tier, from `docs/authority-split.md`:
 
 - [ ] see what the UI actually renders
 - [ ] read production datastore state
+
+## Published?
+
+Did this session do any of these? Each one publishes outside the repository, so each is a human's
+to do, or to ask for by name:
+
+- [ ] pushing a tag matching `v*`, or running the workflow by hand — publishes to npm (`.github/workflows/release.yml:60`)
 
 ## Rule proposals
 
@@ -35,6 +52,16 @@ Your project's human-only tier, from `docs/authority-split.md`:
      First occurrence: write it down as an observation.
      Second occurrence: that is a rule — `caselaw rule propose <name>`.
      Nothing to propose is a perfectly good answer, and the common one. -->
+
+- none
+
+## Caught by a rule
+
+<!-- Did an active rule stop or catch something this session? Record it, with the
+     commit, date or issue that shows it:
+     `caselaw rule catch <name> --what "<what it caught>"`. A rule counts once it
+     has caught the failure it came from; a default's first catch here becomes
+     this project's own Origin for it. -->
 
 - none
 

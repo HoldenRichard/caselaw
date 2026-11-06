@@ -11,6 +11,10 @@
 
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { execFileSync } from 'node:child_process'
 import { verifyCloseout, parseCloseout, gitChangedFiles } from '../../src/core/closeout.js'
 
 const VALID_CLOSEOUT = `# Session close-out — caselaw
@@ -146,8 +150,15 @@ describe('close-out verifier', () => {
   })
 
   test('POSITIVE CONTROL: out-of-scope untracked files do not prevent HEAD fallback when verifying clean tree', () => {
-    const files = gitChangedFiles(process.cwd())
-    assert.ok(Array.isArray(files) && files.length > 0)
-    assert.ok(files.some((f) => f.includes('advertise-only-what-dispatches') || f.includes('closeout')))
+    const root = mkdtempSync(join(tmpdir(), 'caselaw-head-control-'))
+    try {
+      const git = (...args) => execFileSync('git', args, { cwd: root, stdio: 'pipe' })
+      git('init', '-q'); git('config', 'user.name', 'Test'); git('config', 'user.email', 'test@example.invalid')
+      mkdirSync(join(root, 'src'))
+      writeFileSync(join(root, 'src', 'example.js'), 'export const value = 1;\n')
+      git('add', 'src/example.js'); git('-c', 'commit.gpgsign=false', 'commit', '-qm', 'fixture')
+      writeFileSync(join(root, 'unrelated.txt'), 'not tracked by the scope verifier')
+      assert.deepEqual(gitChangedFiles(root), ['src/example.js'])
+    } finally { rmSync(root, { recursive: true, force: true }) }
   })
 })

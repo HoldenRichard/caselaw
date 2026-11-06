@@ -151,6 +151,19 @@ export function setupSteps(text) {
   return scanSteps(text).filter((c) => c.setup && !SETUP.test(c.cmd)).map(({ cmd, line, step }) => ({ cmd, line, step }))
 }
 
+// A shell comment ends at the physical newline; its trailing slash does not continue it.
+function hasShellComment(text) {
+  let quote = null
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    if (ch === "\\" && quote !== "'") { i++; continue }
+    if (quote) { if (ch === quote) quote = null; continue }
+    if (ch === "'" || ch === '"' || ch === '`') { quote = ch; continue }
+    if (ch === '#' && (i === 0 || /[\s;|&()]/.test(text[i-1]))) return true
+  }
+  return false
+}
+
 function scanSteps(text) {
   const lines = text.split(/\r?\n/)
   const out = []
@@ -168,8 +181,17 @@ function scanSteps(text) {
     const commands = []
     if (/^[|>][-+]?$/.test(value)) {
       const base = indent(l)
+      const first = lines.slice(i + 1).find(line => line.trim())
+      const contentIndent = first ? indent(first) : base + 2
       for (let j = i + 1; j < lines.length && (!lines[j].trim() || indent(lines[j]) > base); j++) {
-        if (lines[j].trim()) commands.push({ cmd: lines[j].trim(), line: j + 1 })
+        const fragment = lines[j].slice(contentIndent)
+        if (!fragment.trim()) continue
+        const previous = commands.at(-1)
+        // YAML folded scalars join lines; literal shell blocks join only explicit continuations.
+        const continued = previous && !hasShellComment(previous.cmd) && ((previous.cmd.match(/\\+$/)?.[0].length || 0) % 2 === 1)
+        if (previous && (value.startsWith('>') || continued)) {
+          previous.cmd = value.startsWith('>') ? previous.cmd + ' ' + fragment : previous.cmd.slice(0, -1) + fragment
+        } else commands.push({ cmd: fragment, line: j + 1 })
       }
     } else if (value) {
       commands.push({ cmd: value, line: i + 1 })
@@ -177,7 +199,7 @@ function scanSteps(text) {
     // A step named for setup is setup, whatever it runs: ntfy's "Install dependencies" is `make build-deps-ubuntu`.
     const setup = SETUP_STEP.test(stepName || '')
     for (const c of commands) {
-      const cmd = c.cmd.replace(/;\s*$/, '').replace(/\s+#.*$/, '').trim()
+      const cmd = c.cmd.trim()
       if (!cmd || cmd.startsWith('#')) continue
       out.push({ cmd, line: c.line, step: stepName, setup })
     }

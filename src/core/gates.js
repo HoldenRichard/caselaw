@@ -16,9 +16,14 @@
  * to keep it.
  */
 
-import { readFile, writeFile, mkdir, appendFile } from 'node:fs/promises'
+import { readFile, writeFile, mkdir, appendFile, mkdtemp, rm, realpath } from 'node:fs/promises'
 import { normalize } from './text.js'
 import { dirname, join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { spawnSync } from 'node:child_process'
+import { pathToFileURL } from 'node:url'
+import { validateSnapshotFiles } from './incidents.js'
+import { atomicWrite, withMutationLock } from './safe-write.js'
 
 export const GATES_PATH = '.caselaw/gates.json'
 export const FIRES_PATH = '.caselaw/gate-fires.jsonl'
@@ -74,7 +79,7 @@ export async function load(root) {
 export async function save(root, config) {
   const p = join(root, GATES_PATH)
   await mkdir(dirname(p), { recursive: true })
-  await writeFile(p, JSON.stringify(config, null, 2) + '\n', 'utf8')
+  await atomicWrite(p, JSON.stringify(config, null, 2) + '\n')
   return config
 }
 
@@ -289,6 +294,7 @@ export async function promotionStatus(root, gateId, { threshold = PROMOTION_THRE
 }
 
 export async function promote(root, gateId, { force = false, threshold = PROMOTION_THRESHOLD } = {}) {
+  return withMutationLock(root, async () => {
   const config = await load(root)
   if (!config) throw new GateError('No .caselaw/gates.json in this project.', { code: 'NO_CONFIG' })
 
@@ -313,6 +319,7 @@ export async function promote(root, gateId, { force = false, threshold = PROMOTI
   gate.promotedOn = force ? 'forced' : `${status.fires} recorded fires`
   await save(root, config)
   return { gate: gateId, status, config, forced: force }
+  })
 }
 
 /**
@@ -447,6 +454,20 @@ export function synthesizeMachineGate({ rule, incidentFixtures = [], dir = 'docs
     }
   }
 
+  try {
+    for (const inc of incidentFixtures) {
+      if (!inc.positiveControl?.files || !inc.negativeControl?.files) {
+        return { success: false, reason: 'Complete file snapshots are required; diff fragments cannot certify a gate. Re-capture the incident from Git.' }
+      }
+      validateSnapshotFiles(inc.positiveControl.files)
+      validateSnapshotFiles(inc.negativeControl.files)
+      const paths = new Set([...Object.keys(inc.positiveControl.files), ...Object.keys(inc.negativeControl.files)])
+      if (!paths.size || [...paths].some(path => !Object.hasOwn(inc.positiveControl.files, path) || !Object.hasOwn(inc.negativeControl.files, path))) {
+        return { success: false, reason: 'Both controls must explicitly snapshot the same paths (null for deleted files).' }
+      }
+    }
+  } catch (error) { return { success: false, reason: error.message } }
+
   const candidatePatterns = new Set()
   const backticked = (rule.rule.match(/`([^`]+)`/g) || []).map((m) => m.slice(1, -1).trim()).filter(Boolean)
   for (const b of backticked) candidatePatterns.add(b)
@@ -479,28 +500,20 @@ export function synthesizeMachineGate({ rule, incidentFixtures = [], dir = 'docs
     return { success: false, reason: 'No extractable pattern literals found in rule or incident diffs.' }
   }
 
-  const targetPaths = new Set()
-  for (const inc of incidentFixtures) {
-    const diff = inc.positiveControl?.diff || ''
-    const lines = diff.split('\n')
-    for (const l of lines) {
-      const match = /^(?:---|\+\+\+)\s+[ab]\/(.+)$/.exec(l)
-      if (match && match[1] && match[1] !== '/dev/null') {
-        targetPaths.add(match[1])
-      }
-    }
-  }
+  const targetPaths = new Set(incidentFixtures.flatMap(inc => Object.keys(inc.positiveControl.files)))
+  try { replaySnapshots([...targetPaths], incidentFixtures) }
+  catch (error) { return { success: false, reason: error.message } }
 
   for (const pat of candidatePatterns) {
     let positivePasses = 0
     let negativePasses = 0
 
     for (const inc of incidentFixtures) {
-      const posContent = reconstructFileFromDiff(inc.positiveControl?.diff || '')
-      const negContent = reconstructFileFromDiff(inc.negativeControl?.diff || '')
+      const posFiles = Object.values(inc.positiveControl.files).filter(x => x !== null)
+      const negFiles = Object.values(inc.negativeControl.files).filter(x => x !== null)
 
-      const matchesPos = matchesRuntimeLiteral(posContent, pat)
-      const matchesNeg = matchesRuntimeLiteral(negContent, pat)
+      const matchesPos = posFiles.some(content => matchesRuntimeLiteral(content, pat))
+      const matchesNeg = negFiles.some(content => matchesRuntimeLiteral(content, pat))
 
       if (matchesPos) positivePasses++
       if (!matchesNeg) negativePasses++
@@ -526,7 +539,9 @@ export function synthesizeMachineGate({ rule, incidentFixtures = [], dir = 'docs
         pattern: pat,
         sensitivity: 1.0,
         specificity: 1.0,
-        message: `Successfully synthesized machine gate "${gate.id}" with 100% sensitivity and 100% specificity`,
+        message: `Synthesized gate "${gate.id}" fits ${incidentFixtures.length} recorded snapshot pair(s); runtime certification required.`,
+        fixtureCount: incidentFixtures.length,
+        certified: false,
       }
     }
   }
@@ -536,4 +551,94 @@ export function synthesizeMachineGate({ rule, incidentFixtures = [], dir = 'docs
     reason: 'Ambiguous incident traces: no candidate pattern achieved 100% sensitivity and 100% specificity across all recorded incident fixtures.',
     candidatePatternsTested: candidatePatterns.size,
   }
+}
+
+/** Check the entire eventual gate scope before replaying any control. */
+function replaySnapshots(paths, incidents) {
+  if (!Array.isArray(paths) || !paths.length || paths.some(path => typeof path !== 'string' || /[*?{}]/.test(path))) {
+    throw new Error('Certification requires exact file paths, not broad globs or unknown scope. Re-capture incidents with explicit snapshots for the complete gate scope.')
+  }
+  validateSnapshotFiles(Object.fromEntries(paths.map(path => [path, null])))
+  return incidents.flatMap(inc => ['positiveControl', 'negativeControl'].map(control => {
+    const files = validateSnapshotFiles(inc[control]?.files)
+    if (!files) throw new Error('Complete snapshots required. Re-capture the incident from Git.')
+    for (const path of paths) {
+      if (!Object.hasOwn(files, path)) {
+        throw new Error(`${inc.id || 'fixture'} ${control} is missing snapshot path "${path}". Re-capture incidents with every path in the combined gate scope (null for absent files); changed-path-only captures cannot certify this gate.`)
+      }
+    }
+    return { inc, control, files }
+  }))
+}
+
+// Import only inside the child: the runtime captures its child-process environment
+// at module load. Never temporarily mutate process.env around concurrent replays.
+const REPLAY_SCRIPT = `
+import { readFileSync } from 'node:fs';
+const { runner, options } = JSON.parse(readFileSync(0, 'utf8'));
+const module = await import(runner);
+if (typeof module.evaluate !== 'function') throw new Error('Installed gate runtime must export evaluate()');
+process.stdout.write(JSON.stringify(await module.evaluate(options)));
+`
+
+/**
+ * Replay recorded, explicitly scoped controls through a particular runtime module.
+ * This verifies these snapshots only; it does not certify general gate behavior.
+ * @param {object} gate
+ * @param {object[]} incidents
+ * @param {URL|string} [runner] Module URL or absolute installed runtime path.
+ */
+export async function certifyMachineGate(gate, incidents, runner = new URL('../../runtime/gate.mjs', import.meta.url)) {
+  if (!incidents.length) return { ok: false, reason: 'No fixtures' }
+  if (gate.kind !== 'banned-content') return { ok: false, reason: 'Snapshot certification supports only banned-content gates.' }
+  let snapshots
+  try { snapshots = replaySnapshots(gate.paths, incidents) }
+  catch (error) { return { ok: false, reason: error.message } }
+  const runnerURL = runner instanceof URL ? runner.href : pathToFileURL(runner).href
+  for (const { inc, control, files } of snapshots) {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'caselaw-gate-certify-')))
+    try {
+      // An invalid, reserved .git directory stops discovery of an ancestor repo.
+      const hooks = join(root, '.git', 'hooks')
+      await mkdir(hooks, { recursive: true })
+      const emptyConfig = join(root, '.git', 'empty-config')
+      await writeFile(emptyConfig, '', 'utf8')
+      for (const [path, content] of Object.entries(files)) {
+        if (content === null) continue
+        const target = join(root, path)
+        await mkdir(dirname(target), { recursive: true })
+        await writeFile(target, content, 'utf8')
+      }
+      const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^GIT_/i.test(key) && !/^NODE_(OPTIONS|PATH)$/i.test(key)))
+      Object.assign(env, {
+        GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_SYSTEM: emptyConfig, GIT_CONFIG_GLOBAL: emptyConfig,
+        GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'core.hooksPath', GIT_CONFIG_VALUE_0: hooks,
+        GIT_CONFIG_KEY_1: 'core.fsmonitor', GIT_CONFIG_VALUE_1: 'false',
+        GIT_CEILING_DIRECTORIES: root, GIT_TERMINAL_PROMPT: '0',
+      })
+      const options = {
+        root, mode: 'all', config: { version: 1, gates: [gate] }, telemetry: false,
+        targets: Object.keys(files).filter(path => files[path] !== null),
+      }
+      const replay = spawnSync(process.execPath, ['--input-type=module', '--eval', REPLAY_SCRIPT], {
+        cwd: root, env, input: JSON.stringify({ runner: runnerURL, options }), encoding: 'utf8',
+        timeout: 30_000, maxBuffer: 10 * 1024 * 1024,
+      })
+      if (replay.error || replay.status !== 0) {
+        return { ok: false, reason: `Runtime replay failed for ${inc.id || 'fixture'} ${control}: ${replay.error?.message || replay.stderr.trim() || 'child exited unsuccessfully'}` }
+      }
+      let res
+      try { res = JSON.parse(replay.stdout) }
+      catch { return { ok: false, reason: 'Runtime replay returned an invalid result.' } }
+      // A single inline gate: fires must come from the expected, nondegraded result.
+      if (!res?.config || !Array.isArray(res.fires) || !Array.isArray(res.results) ||
+          res.config.degraded || res.config.gateCount !== 1 || res.results.length !== 1 ||
+          res.results.some(r => r.degraded || r.skipped) ||
+          res.fires.some(f => f.gate !== gate.id) ||
+          (res.fires.length > 0) !== (control === 'positiveControl')) {
+        return { ok: false, reason: `Runtime rejected ${inc.id || 'fixture'} ${control}` }
+      }
+    } finally { await rm(root, { recursive: true, force: true }) }
+  }
+  return { ok: true, fixtureCount: incidents.length }
 }

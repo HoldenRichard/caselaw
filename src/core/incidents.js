@@ -36,6 +36,27 @@ export class IncidentError extends Error {
   }
 }
 
+// Reject case-folded, HFS-ignorable and Windows/NTFS spellings of Git metadata.
+// Colons (including alternate data streams) are rejected by the path validator.
+function isGitMetadataComponent(component) {
+  const folded = component.replace(/[\u200c-\u200f\u202a-\u202e\u206a-\u206f\ufeff]/g, '').replace(/[ .]+$/, '').toLowerCase()
+  return folded === '.git' || /^git~[0-9]+$/.test(folded)
+}
+
+/** Complete file snapshots are optional for legacy fixtures, required for synthesis. */
+export function validateSnapshotFiles(files) {
+  if (files === undefined) return undefined
+  if (!files || typeof files !== 'object' || Array.isArray(files)) throw new IncidentError('Snapshot files must be a path-to-content object', { code: 'INVALID_SNAPSHOT' })
+  const out = Object.create(null)
+  for (const [path, content] of Object.entries(files)) {
+    if (!path || path.startsWith('/') || path.includes('\\') || path.includes('\0') || path.includes(':') || path.split('/').some(p => !p || p === '.' || p === '..' || isGitMetadataComponent(p)) || !(content === null || typeof content === 'string') || content?.includes('\0')) {
+      throw new IncidentError(`Unsafe or unsupported snapshot path/content: ${path}`, { code: 'INVALID_SNAPSHOT' })
+    }
+    out[path] = content
+  }
+  return out
+}
+
 /**
  * Validate the structure of a contrastive incident fixture.
  *
@@ -92,6 +113,7 @@ export function validateIncident(inc) {
       description: pos.description ? String(pos.description).trim() : '',
       expected: 'FAIL',
       task: pos.task ? String(pos.task).trim() : null,
+      ...(pos.files !== undefined ? { files: validateSnapshotFiles(pos.files) } : {}),
     },
     negativeControl: {
       commit: neg.commit ? String(neg.commit).trim() : null,
@@ -99,6 +121,7 @@ export function validateIncident(inc) {
       description: neg.description ? String(neg.description).trim() : '',
       expected: 'PASS',
       task: neg.task ? String(neg.task).trim() : null,
+      ...(neg.files !== undefined ? { files: validateSnapshotFiles(neg.files) } : {}),
     },
     metadata: {
       author: inc.metadata?.author ?? null,
@@ -215,8 +238,8 @@ export async function listIncidents(root, opts = {}) {
 export function gitDiffOfCommit(root, commitRef) {
   if (!commitRef || typeof commitRef !== 'string') return null
   const ref = commitRef.trim()
-  if (!/^[a-zA-Z0-9_./~^-]+$/.test(ref)) return null
-  let res = spawnSync('git', ['show', '--format=', '--unified=3', '-m', ref], {
+  if (!/^[a-zA-Z0-9_./~^-]+$/.test(ref) || ref.startsWith('-')) return null
+  let res = spawnSync('git', ['show', '--no-ext-diff', '--no-textconv', '--format=', '--unified=3', '-m', ref], {
     cwd: root,
     encoding: 'utf8',
     maxBuffer: 10 * 1024 * 1024,
@@ -225,7 +248,7 @@ export function gitDiffOfCommit(root, commitRef) {
     return res.stdout
   }
   // Fallback to git diff ref~1..ref
-  res = spawnSync('git', ['diff', `${ref}~1..${ref}`], {
+  res = spawnSync('git', ['diff', '--no-ext-diff', '--no-textconv', `${ref}~1..${ref}`], {
     cwd: root,
     encoding: 'utf8',
     maxBuffer: 10 * 1024 * 1024,
@@ -245,7 +268,30 @@ export function gitDiffOfCommit(root, commitRef) {
  * @returns {object}
  */
 export function createIncidentFromGit(root, opts) {
-  const { id, rule, positiveCommit, negativeCommit, positiveDesc, negativeDesc, metadata } = opts
+  const { id, rule, positiveDesc, negativeDesc, metadata } = opts
+  const pin = (ref) => {
+    if (typeof ref !== 'string' || !/^[a-zA-Z0-9_./~^-]+$/.test(ref) || ref.startsWith('-')) throw new IncidentError('Invalid commit reference', { code: 'GIT_DIFF_FAILED' })
+    const res = spawnSync('git', ['rev-parse', '--verify', `${ref}^{commit}`], { cwd: root, encoding: 'utf8' })
+    if (res.status !== 0) throw new IncidentError('Commit could not be resolved', { code: 'GIT_DIFF_FAILED' })
+    return res.stdout.trim()
+  }
+  const positiveCommit = pin(opts.positiveCommit)
+  const negativeCommit = pin(opts.negativeCommit)
+  const paths = new Set()
+  for (const ref of [positiveCommit, negativeCommit]) {
+    const names = spawnSync('git', ['diff-tree', '--root', '--no-commit-id', '--name-only', '-r', '-m', '-z', ref], { cwd: root, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 })
+    if (names.status !== 0) throw new IncidentError('Changed paths could not be read', { code: 'GIT_DIFF_FAILED' })
+    for (const path of names.stdout.split('\0').filter(Boolean)) paths.add(path)
+  }
+  const snapshot = (ref) => Object.fromEntries([...paths].map(path => {
+    const tree = spawnSync('git', ['ls-tree', '-z', ref, '--', path], { cwd: root, encoding: 'utf8' })
+    if (tree.status !== 0) throw new IncidentError('Snapshot tree could not be read', { code: 'GIT_DIFF_FAILED' })
+    if (!tree.stdout) return [path, null]
+    if (!/^100(?:644|755) blob /.test(tree.stdout)) throw new IncidentError('Only regular text files can be snapshot fixtures', { code: 'INVALID_SNAPSHOT' })
+    const blob = spawnSync('git', ['show', `${ref}:${path}`], { cwd: root, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 })
+    if (blob.status !== 0 || blob.stdout.includes('\0')) throw new IncidentError('Snapshot content could not be read as text', { code: 'INVALID_SNAPSHOT' })
+    return [path, blob.stdout]
+  }))
   const posDiff = gitDiffOfCommit(root, positiveCommit)
   if (!posDiff) {
     throw new IncidentError(`Could not extract git diff for positive control commit "${positiveCommit}"`, { code: 'GIT_DIFF_FAILED', field: 'positiveCommit' })
@@ -260,12 +306,14 @@ export function createIncidentFromGit(root, opts) {
     rule,
     positiveControl: {
       commit: positiveCommit,
+      files: snapshot(positiveCommit),
       diff: posDiff,
       description: positiveDesc || `Failure snapshot from commit ${positiveCommit}`,
       expected: 'FAIL',
     },
     negativeControl: {
       commit: negativeCommit,
+      files: snapshot(negativeCommit),
       diff: negDiff,
       description: negativeDesc || `Clean fix snapshot from commit ${negativeCommit}`,
       expected: 'PASS',

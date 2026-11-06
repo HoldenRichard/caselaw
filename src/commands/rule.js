@@ -15,12 +15,14 @@
  *   - `ratify` and `reject` refuse without one — only a human promotes or drops.
  */
 
-import { writeFile, stat, readFile, mkdir } from 'node:fs/promises'
+import { stat, readFile } from 'node:fs/promises'
 import { join, dirname } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import * as rules from '../core/rules.js'
+import { atomicWrite, withMutationLock } from '../core/safe-write.js'
+import { hash } from '../core/text.js'
 import { ruleDirsFor, doctrineDirAt } from '../core/doctrine.js'
 import * as gatesStore from '../core/gates.js'
 import { MECHANISABLE, suggestKinds, buildGate, baselineDisposition, enforcementLine } from '../core/promote.js'
@@ -183,11 +185,10 @@ async function ratify(args, { root, say, interactive, prompt }) {
     }
   }
 
-  const r = await rules.ratify(root, args.name, { interactive: true, ratifiedBy: by })
+  const r = await rules.ratify(root, args.name, { interactive: true, ratifiedBy: by, expectedHash: proposal.hash, onRetired: names => forgetGenerated(root, names, say) })
   say(`  ${r.from} -> ${r.to}  (ratified ${r.ratifiedAt} by ${r.ratifiedBy})`)
   if (r.merged.length) {
     say(`  Merged: ${r.merged.join(', ')} moved to ${ruleDirsFor(doctrineDirAt(root)).archive}/.`)
-    await forgetGenerated(root, r.merged, say)
   }
   for (const w of r.warnings) say(`  warn: ${w.message}`)
   say('')
@@ -217,7 +218,7 @@ async function reject(args, { root, say, interactive, prompt }) {
       await p.close()
     }
   }
-  const r = await rules.reject(root, args.name, { interactive: true, reason: args.opt.reason ?? null })
+  const r = await rules.reject(root, args.name, { interactive: true, expectedHash: proposal.hash, reason: args.opt.reason ?? null })
   say(`  Removed ${r.path}${r.reason ? ` (${r.reason})` : ''}.`)
   return 0
 }
@@ -242,7 +243,7 @@ async function adopt(args, { root, say }) {
  * it back in active/.
  */
 async function forgetGenerated(root, names, say) {
-  const doc = await answersStore.load(root).catch(() => null)
+  const doc = await answersStore.load(root)
   if (!doc) return
   let changed = false
   const drop = (key, id) => {
@@ -257,7 +258,7 @@ async function forgetGenerated(root, names, say) {
     if (t) drop('harness.triggers', t.id)
   }
   if (changed) {
-    await answersStore.save(root, doc)
+    await atomicWrite(join(root, answersStore.ANSWERS_PATH), JSON.stringify(doc, null, 2) + '\n')
     say('  Taken out of .caselaw/answers.json too, so an upgrade does not reinstall it.')
   }
 }
@@ -320,9 +321,8 @@ async function demote(args, { root, say, interactive, prompt }) {
       await p.close()
     }
   }
-  const r = await rules.demote(root, args.name, { interactive: true, reason: args.opt.reason ?? null })
+  const r = await rules.demote(root, args.name, { interactive: true, expectedHash: active.hash, reason: args.opt.reason ?? null, onRetired: names => forgetGenerated(root, names, say) })
   say(`  ${r.from} -> ${r.to}  (demoted ${r.at}: ${r.reason})`)
-  await forgetGenerated(root, [args.name], say)
   return 0
 }
 
@@ -456,20 +456,27 @@ async function promote(args, io) {
     }
   }
 
-  const config = (await gatesStore.load(root)) ?? gatesStore.emptyConfig()
-  if (config.gates.some((g) => g.id === gate.id)) {
-    say(`  A gate "${gate.id}" already exists in ${gatesStore.GATES_PATH}. Pass --id <other-id> or retire it first.`)
-    return 1
-  }
-  config.gates.push(gate)
-  await gatesStore.save(root, config)
-
-  const ruleText = rules.serializeRule({
-    ...parsed,
-    name: parsed.name || active.name,
-    enforcement: enforcementLine(gate.id),
+  const written = await withMutationLock(root, async () => {
+    const path = join(root, active.path)
+    if (hash(await readFile(path, 'utf8')) !== active.hash) {
+      throw new rules.RuleError('Rule changed during promotion; review it again.', { code: 'STALE_PROPOSAL', name: args.name })
+    }
+    const config = (await gatesStore.load(root)) ?? gatesStore.emptyConfig()
+    if (config.gates.some((g) => g.id === gate.id)) {
+      say(`  A gate "${gate.id}" already exists in ${gatesStore.GATES_PATH}. Pass --id <other-id> or retire it first.`)
+      return false
+    }
+    config.gates.push(gate)
+    await atomicWrite(join(root, gatesStore.GATES_PATH), JSON.stringify(config, null, 2) + '\n')
+    const ruleText = rules.serializeRule({
+      ...parsed,
+      name: parsed.name || active.name,
+      enforcement: enforcementLine(gate.id),
+    })
+    await atomicWrite(path, ruleText)
+    return true
   })
-  await writeFile(join(root, active.path), ruleText, 'utf8')
+  if (!written) return 1
 
   say('')
   say(`  Wrote ${gatesStore.GATES_PATH} (+${gate.id}) and set ${active.path} to ${enforcementLine(gate.id)}.`)
@@ -691,9 +698,7 @@ async function evolve(args, { root, say, interactive }) {
     // Structural A2 reconstitution: guarantees Origin and Catches remain intact
     // Axiom A1 structural enforcement: stages to proposed/ unless human ratifies
     const reconstituted = reconstituteRuleAST(ast, candidateAST.mutable)
-    const proposedPath = join(root, dirs.proposed, `${ruleName}.md`)
-    await mkdir(dirname(proposedPath), { recursive: true })
-    await writeFile(proposedPath, reconstituted, 'utf8')
+    await rules.stageEvolution(root, ruleName, reconstituted, text)
     say(`  Evolved candidate staged to ${dirs.proposed}/${ruleName}.md:`)
     say(`    ${pareto.reason}`)
     say(`  Run "caselaw rule ratify ${ruleName}" to ratify.`)
@@ -711,10 +716,15 @@ async function evolve(args, { root, say, interactive }) {
   } else if (typeof runnerOpt === 'string' && runnerOpt.trim()) {
     runnerFn = async ({ prompt }) => {
       const { spawnSync } = await import('node:child_process')
-      const res = spawnSync(runnerOpt, { shell: true, input: prompt, encoding: 'utf8' })
+      const res = spawnSync(runnerOpt, { shell: true, input: prompt, encoding: 'utf8', timeout: 120000, maxBuffer: 1024 * 1024 })
       if (res.status !== 0) throw new Error(`LLM runner command failed (${res.status}): ${res.stderr || res.stdout}`)
       return res.stdout
     }
+  }
+
+  if (useLLM && !runnerFn) {
+    say('  LLM evolution requires --runner <cmd>; no model was invoked.')
+    return 2
   }
 
   say(`SkillOpt Iterative Evolution Pass for "${ruleName}"`)
@@ -735,9 +745,7 @@ async function evolve(args, { root, say, interactive }) {
     for (const step of res.acceptedSteps) {
       say(`  Step ${step.step}: [${step.mode}] ${step.reason}`)
     }
-    const proposedPath = join(root, dirs.proposed, `${ruleName}.md`)
-    await mkdir(dirname(proposedPath), { recursive: true })
-    await writeFile(proposedPath, res.bestRuleText, 'utf8')
+    await rules.stageEvolution(root, ruleName, res.bestRuleText, text)
     say(`  Evolved candidate staged to ${dirs.proposed}/${ruleName}.md: ${res.savedWords} words saved (${res.stats.initialWords} -> ${res.stats.finalWords}) across ${res.acceptedSteps.length} accepted step(s).`)
     say(`  Run "caselaw rule ratify ${ruleName}" to ratify.`)
     return 0

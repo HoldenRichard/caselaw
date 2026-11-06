@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "templateVersion": "1.0",
+  "templateVersion": "1.2",
   "project": {
     "name": "caselaw"
   },
@@ -44,6 +44,10 @@
   },
   "generatedAt": "2026-08-13T22:37:42.126Z",
   "harness": {
-    "optimizedAt": "2026-11-05T18:52:26.050Z"
+    "optimizedAt": "2026-11-05T18:52:26.050Z",
+    "triggersOffered": [
+      "T3",
+      "T4"
+    ]
   }
 }

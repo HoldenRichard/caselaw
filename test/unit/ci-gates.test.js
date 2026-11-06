@@ -69,8 +69,8 @@ jobs:
 describe('the gates CI runs', () => {
   test('pyvisa: the format, type and test gates in order, with their steps; installs are setup, not gates', () => {
     assert.deepEqual(runSteps(PYVISA_CI).map(({ cmd, step }) => [cmd, step]), [
-      ['ruff format pyvisa --check', 'Formatting'],
-      ['mypy pyvisa', 'typing'],
+      ['ruff format pyvisa --check;', 'Formatting'],
+      ['mypy pyvisa;', 'typing'],
       ['python -X dev -m pytest --pyargs pyvisa --cov --cov-report xml -v', 'Test with pytest'],
     ])
   })
@@ -109,4 +109,27 @@ describe('the authority split lists the gates, not a guess', () => {
     const { content } = await generateAuthoritySplit({ answers: {}, detected: { ciGates: { gates: [], shared: [{ uses: 'org/.github/.github/workflows/test.yml@v1' }] } }, projectName: 'P', now: new Date('2026-10-30') })
     assert.match(content, /kept in another repository, whose steps are not visible here: `org\/\.github\/\.github\/workflows\/test\.yml@v1`/)
   })
+})
+
+
+test('POSITIVE CONTROL: continued shell commands remain one executable gate, with their first line', () => {
+  const workflow = ['jobs:', '  scan:', '    steps:', '      - name: Scan secrets', '        run: |', '          docker run --rm \\', '            scanner:1 \\', '            scan /repo', '          npm test'].join('\n')
+  assert.deepEqual(runSteps(workflow).map(({cmd, line}) => [cmd, line]), [
+    ['docker run --rm   scanner:1   scan /repo', 6], ['npm test', 9],
+  ])
+  assert.equal(runSteps(workflow.replace('run: |', 'run: >'))[0].cmd, ['docker run --rm \\', '  scanner:1 \\', '  scan /repo', 'npm test'].join(' '))
+})
+
+
+test('POSITIVE CONTROL: generated checklists preserve complete long commands and all gates', async () => {
+  const { buildModel } = await import('../../src/generate/close-out.js')
+  const { commandCode } = await import('../../src/generate/authority-split.js')
+  const cmd = 'docker run ' + 'x'.repeat(180) + ' --label "two  spaces" `printf token`'
+  const gates = Array.from({length: 10}, (_, i) => ({cmd: cmd + i, file: 'ci.yml'}))
+  const model = buildModel({detected: {ciGates: {gates}}})
+  assert.equal(model.gates.length, 10)
+  assert.equal(model.gates[9], commandCode(cmd + '9'))
+  assert.ok(model.gates[9].includes('"two  spaces"'))
+  const {content} = await generateAuthoritySplit({detected: {ciGates: {gates}}, answers: {}})
+  assert.ok(content.includes(commandCode(cmd + '9')))
 })

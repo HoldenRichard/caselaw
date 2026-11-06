@@ -33,10 +33,12 @@ const FIXTURES_CLEAN = [
     positiveControl: {
       diff: '--- a/src/index.js\n+++ b/src/index.js\n@@ -1 +1 @@\n+console.log("leak")\n',
       expected: 'FAIL',
+      files: { 'src/index.js': 'console.log("leak")\n' },
     },
     negativeControl: {
       diff: '--- a/src/index.js\n+++ b/src/index.js\n@@ -1 +1 @@\n+logger.info("clean")\n',
       expected: 'PASS',
+      files: { 'src/index.js': 'logger.info("clean")\n' },
     },
   },
 ]
@@ -48,10 +50,12 @@ const FIXTURES_AMBIGUOUS = [
     positiveControl: {
       diff: '--- a/src/index.js\n+++ b/src/index.js\n@@ -1 +1 @@\n+import { foo } from "./bar"\n',
       expected: 'FAIL',
+      files: { 'src/index.js': 'import { foo } from "./bar"\n' },
     },
     negativeControl: {
       diff: '--- a/src/index.js\n+++ b/src/index.js\n@@ -1 +1 @@\n+import { foo } from "./bar"\n',
       expected: 'PASS',
+      files: { 'src/index.js': 'import { foo } from "./bar"\n' },
     },
   },
 ]
@@ -101,6 +105,8 @@ describe('caselaw gate synthesize CLI', () => {
     const ruleContent = `# no-console-log\n\n**Trigger:** JavaScript files\n\n**Rule:** Never use \`console.log\` in production code.\n\n**Origin:** commit 1234\n\n**Enforcement:** memory\n\n**Ratified:** 2026-08-13\n`
     await writeFile(rulePath, ruleContent, 'utf8')
 
+    await mkdir(join(root, '.caselaw/bin'), { recursive: true })
+    await writeFile(join(root, '.caselaw/bin/gate.mjs'), await readFile(new URL('../../runtime/gate.mjs', import.meta.url)))
     await saveIncident(root, FIXTURES_CLEAN[0])
 
     const lines = []

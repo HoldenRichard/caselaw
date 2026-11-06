@@ -215,8 +215,8 @@ describe('Independent Positive Controls: repro.mjs cases 1 - 12', () => {
       rule: { name: 'no-debug', rule: 'Never include `CONSOLE.LOG`.', trigger: 'editing src files' },
       incidentFixtures: [{
         id: 'case-1',
-        positiveControl: { diff: '--- a/src/x.js\n+++ b/src/x.js\n+CONSOLE.LOG("leak")\n' },
-        negativeControl: { diff: '--- a/src/x.js\n+++ b/src/x.js\n+logger.info("ok")\n' },
+        positiveControl: { files: { 'src/x.js': 'CONSOLE.LOG("leak")\n' }, diff: '--- a/src/x.js\n+++ b/src/x.js\n+CONSOLE.LOG("leak")\n' },
+        negativeControl: { files: { 'src/x.js': 'logger.info("ok")\n' }, diff: '--- a/src/x.js\n+++ b/src/x.js\n+logger.info("ok")\n' },
       }],
     })
 

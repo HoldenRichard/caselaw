@@ -23,6 +23,18 @@
           }
         ]
       }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "auto",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -f \"$CLAUDE_PROJECT_DIR/.caselaw/bin/gate.mjs\" ]; then node \"$CLAUDE_PROJECT_DIR/.caselaw/bin/gate.mjs\" --mode compact --host claude; else echo \"{\\\"systemMessage\\\":\\\"caselaw: gate runner not found at $CLAUDE_PROJECT_DIR/.caselaw/bin/gate.mjs; nothing was checked. Run caselaw doctor.\\\"}\"; fi",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

@@ -84,8 +84,8 @@ export async function check({ root, detected, strict = false }) {
  * already exist, so no interview runs unless questions were ADDED since the
  * recorded template version.
  */
-export async function planUpgrade({ root, detected, force = false }) {
-  const doc = await answersStore.load(root)
+export async function planUpgrade({ root, detected, force = false, doc: pendingDoc = null }) {
+  const doc = pendingDoc ?? await answersStore.load(root)
   if (!doc) throw new LifecycleError('No .caselaw/answers.json here. Run `caselaw init` first.', { code: 'NOT_INSTALLED' })
 
   const artifacts = await buildArtifacts({ doc, detected })

@@ -1,20 +1,20 @@
 {
   "schemaVersion": 1,
   "cliVersion": "0.2.0",
-  "templateVersion": "1.0",
-  "generatedAt": "2026-09-06T15:47:27.889Z",
+  "templateVersion": "1.2",
+  "generatedAt": "2026-11-06T18:40:20.302Z",
   "entries": {
     "docs/authority-split.md": {
       "kind": "file",
-      "hash": "f4e9f1e002694986369dc5b2b0b0f601a46a7150e804fc824fe3d965ec4c4864"
+      "hash": "bd58f62871e1a01180eb4ff63271eac56aba8f6a38334148fc11412e08be12b6"
     },
     "docs/close-out.md": {
       "kind": "file",
-      "hash": "e80423773717443301591e414d5b0fec70be2e47e9df2b4ce1fb43b608925963"
+      "hash": "193f29c6ce5b7a5f06618e910c08edbe5798f94b0f03f3268531f2e753d85963"
     },
     "docs/rules/README.md": {
       "kind": "file",
-      "hash": "c5a675bdc4de16c61de11540a0561fa2d6e013345ba478af6815bb4097db9eaf"
+      "hash": "8127b8f4959b5035447d5e3716d57b81badc7f2b48df7be6d0c312e7b8866c67"
     },
     "docs/rules/_template.md": {
       "kind": "file",
@@ -22,7 +22,7 @@
     },
     "docs/rules/active/WHY-THIS-IS-EMPTY.md": {
       "kind": "file",
-      "hash": "097adc1eda0a49b0ebc399aecfe38fd5bf7de7f5ed89695462ab3a254ab1dea9"
+      "hash": "aff45b5f72190186d2d26165f5e55791ca073c8a9fa2c29bd5641fb054233a1d"
     },
     "docs/rules/candidates/assertion-before-replace.md": {
       "kind": "file",
@@ -51,11 +51,11 @@
     },
     ".caselaw/bin/gate.mjs": {
       "kind": "file",
-      "hash": "55bd10a9fa7d924fdd12a3d7b7662f621d07a65bf3074a0e9020008df11a01e4"
+      "hash": "05949fc8af73e7a35eb851fe8035ba9405f46a46a133c61bae411eb82887898c"
     },
     ".caselaw/schema/gates.schema.json": {
       "kind": "file",
-      "hash": "c443622f4263b9bca1aa322ef05a8b7a98898019f2e8ca5d947d43ab5a12e737"
+      "hash": "319ded43664985fbd64cd33fb06ff237fec8a6a2845e1b3234595923c7b186cc"
     },
     ".caselaw/gates.json": {
       "kind": "file",
@@ -63,7 +63,7 @@
     },
     ".claude/settings.json": {
       "kind": "json-merge",
-      "hash": "32e1fb79bb845498621c1e1b967d5c15f572b5ae53d1becf48ccfd6eb346d2e0",
+      "hash": "78cac7715096de85df0e96eabea90dbeb30c7b7639634f2ea1e6655af7b7852c",
       "blockId": "hooks"
     },
     ".claude/commands/close-out.md": {
@@ -72,8 +72,17 @@
     },
     ".gitignore": {
       "kind": "block",
-      "hash": "9c7b1845a86e3731e281f6d8b1ee6994e6fea968c181d455e794edaa9731148a",
+      "hash": "e6d365cb92cc9489164544ed18dbe6d718ddcc427cf9c9062cdedf8e29bbba3c",
       "blockId": "caselaw"
+    },
+    "docs/rules/proposed/README.md": {
+      "kind": "file",
+      "hash": "2cc0f7927b57fe7274e668d734f4b27bc3cb5f746e053990b1d57a0f0fe4c1f9"
+    },
+    "AGENTS.md": {
+      "kind": "block",
+      "hash": "3a37a3b7a13529f206a299960e8615764686817e25c473c5acbb7616f7b6d807",
+      "blockId": "pointer"
     }
   }
 }

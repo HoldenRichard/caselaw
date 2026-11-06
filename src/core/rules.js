@@ -26,10 +26,12 @@
  *      round-tripped, and it gets ignored.
  */
 
-import { readFile, writeFile, appendFile, mkdir, readdir, rm, lstat } from 'node:fs/promises'
+import { readFile, appendFile, mkdir, readdir, rm, lstat } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
 import { dirname, join, basename } from 'node:path'
 import { normalize, hash } from './text.js'
+import { matchGlob } from '../../runtime/gate.mjs'
+import { writeExclusive, atomicWrite, withMutationLock } from './safe-write.js'
 import { ruleDirsFor, doctrineDirAt } from './doctrine.js'
 
 /**
@@ -542,6 +544,11 @@ export const CATCHES_PATH = '.caselaw/catches.jsonl'
  * @param {{what: string, by?: string, now?: Date}} opts
  */
 export async function recordCatch(root, name, opts = {}) {
+  requireName(name)
+  return withMutationLock(root, () => recordCatchLocked(root, name, opts))
+}
+
+async function recordCatchLocked(root, name, opts) {
   const what = typeof opts.what === 'string' ? opts.what.replace(/\s+/g, ' ').trim() : ''
   if (!what) {
     throw new RuleError(`Say what "${name}" caught: --what "<what happened, with a commit, a date or an issue>".`, { code: 'NO_WHAT', name })
@@ -561,7 +568,7 @@ export async function recordCatch(root, name, opts = {}) {
   let firstLocal = false
   if (!str(parsed.origin)) {
     firstLocal = true
-    await writeFile(path, serializeRule({ ...parsed, name: parsed.name || name, origin: `${what} (first catch here, recorded ${at})` }), 'utf8')
+    await atomicWrite(path, serializeRule({ ...parsed, name: parsed.name || name, origin: `${what} (first catch here, recorded ${at})` }))
   }
   const log = join(root, CATCHES_PATH)
   await mkdir(dirname(log), { recursive: true })
@@ -592,6 +599,11 @@ export async function readCatches(root) {
  * @param {{interactive?: boolean, reason?: string, now?: Date}} [opts]
  */
 export async function demote(root, name, opts = {}) {
+  requireName(name)
+  return withMutationLock(root, () => demoteLocked(root, name, opts))
+}
+
+async function demoteLocked(root, name, opts) {
   if (opts.interactive !== true) {
     throw new RuleError(
       'Demoting a rule weakens enforcement, and that needs a human. Call with { interactive: true } from an interactive session.',
@@ -605,14 +617,19 @@ export async function demote(root, name, opts = {}) {
     throw new RuleError(`${relPath('candidates', name, root)} already exists.`, { code: 'EXISTS', name })
   }
   const text = await readRuleFile(from, name, 'active', root)
+  if (opts.expectedHash !== undefined && hash(text) !== opts.expectedHash) throw new RuleError('Active rule changed after review; review it again before demotion.', { code: 'STALE_PROPOSAL', name })
   const parsed = parseRule(text, { path: relPath('active', name, root) })
   const at = isoDate(opts.now ?? new Date())
   const footer = [parsed.footer, `_Demoted from active ${at}: ${reason}. To bring it back: \`caselaw rule adopt ${name} --origin "<your incident>"\`._`]
     .filter(Boolean).join('\n')
   const out = serializeRule({ ...parsed, name: parsed.name || name, footer: parsed.footer ? footer : `---\n${footer}` })
   await mkdir(dirname(to), { recursive: true })
-  await writeFile(to, out, 'utf8')
-  await rm(from, { force: true })
+  await writeExclusive(to, out)
+  if (await readRuleFile(from, name, 'active', root) !== text) {
+    throw new RuleError('Active rule changed during demotion; both versions were preserved.', { code: 'STALE_PROPOSAL', name })
+  }
+  if (opts.onRetired) await opts.onRetired([name])
+  await rm(from)
   return { name, from: relPath('active', name, root), to: relPath('candidates', name, root), at, reason }
 }
 
@@ -734,6 +751,11 @@ export async function listRules(root, opts = {}) {
  * @param {{overwrite?: boolean, resolveRef?: ((sha: string) => boolean|null)|false}} [opts]
  */
 export async function propose(root, fields, opts = {}) {
+  requireName(fields?.name)
+  return withMutationLock(root, () => proposeLocked(root, fields, opts))
+}
+
+async function proposeLocked(root, fields, opts) {
   const name = requireName(fields?.name)
   const path = ruleFile(root, 'proposed', name)
 
@@ -755,9 +777,32 @@ export async function propose(root, fields, opts = {}) {
   const parsed = parseRule(text, { path: relPath('proposed', name, root) })
   const validation = validateRule(parsed, { filename: `${name}.md`, root, resolveRef: opts.resolveRef })
 
-  await mkdir(dirname(path), { recursive: true })
-  await writeFile(path, text, 'utf8')
+  if (opts.overwrite && await exists(path)) {
+    const previous = await readRuleFile(path, name, 'proposed', root)
+    await preserveDraft(root, name, previous, 'Superseded by a new pending proposal')
+    await atomicWrite(path, text)
+  } else await writeExclusive(path, text)
   return { name, path: relPath('proposed', name, root), parsed, validation, wrote: true }
+}
+
+async function preserveDraft(root, name, text, reason) {
+  // Invalid drafts are evidence too: never parse/serialize away duplicate sections.
+  const archived = text + `\n\n---\n_Disposition: ${reason}_\n`
+  const stem = `${name.slice(0, 60)}-draft-${hash(text).slice(0, 16)}`
+  await writeExclusive(ruleFile(root, 'archive', stem), archived)
+}
+
+/** Stage an evolved version without mutating active law or replacing a pending proposal. */
+export async function stageEvolution(root, name, candidateText, originalText) {
+  requireName(name)
+  const parsed = parseRule(candidateText)
+  const extras = (parsed.extras || []).filter(x => !['replaces', 'base-hash'].includes(x.key))
+  extras.push({ label: 'Replaces', key: 'replaces', value: name },
+    { label: 'Base-Hash', key: 'base-hash', value: hash(originalText) })
+  const text = serializeRule({ ...parsed, name, ratified: null, extras })
+  const path = ruleFile(root, 'proposed', name)
+  await writeExclusive(path, text)
+  return { path, text }
 }
 
 /**
@@ -765,10 +810,15 @@ export async function propose(root, fields, opts = {}) {
  *
  * @param {string} root
  * @param {string} name
- * @param {{interactive?: boolean, ratifiedBy?: string, now?: Date|string,
+ * @param {{interactive?: boolean, ratifiedBy?: string, now?: Date|string, expectedHash?: string,
  *          resolveRef?: ((sha: string) => boolean|null)|false}} [opts]
  */
 export async function ratify(root, name, opts = {}) {
+  requireName(name)
+  return withMutationLock(root, () => ratifyLocked(root, name, opts))
+}
+
+async function ratifyLocked(root, name, opts = {}) {
   // Asserted by the caller, never inferred here. A module that decides for
   // itself whether a human is present will eventually decide wrong, silently,
   // in CI.
@@ -786,15 +836,31 @@ export async function ratify(root, name, opts = {}) {
   const from = ruleFile(root, 'proposed', name)
   const to = ruleFile(root, 'active', name)
 
-  if (await exists(to)) {
-    throw new RuleError(
-      `"${name}" already exists in ${dirsAt(root).active}. Refusing to overwrite active case law — retire it first, or ratify under a different name.`,
-      { code: 'ALREADY_ACTIVE', name, path: relPath('active', name, root) },
-    )
-  }
-
   const text = await readRuleFile(from, name, 'proposed', root)
+  if (opts.expectedHash !== undefined && hash(text) !== opts.expectedHash) {
+    throw new RuleError('The proposal changed after it was displayed; review it again before ratification.', { code: 'STALE_PROPOSAL', name })
+  }
   const parsed = parseRule(text, { path: relPath('proposed', name, root) })
+  const field = (key) => parsed.extras.filter(x => x.key === key)
+  let replacement = null
+  if (await exists(to)) {
+    if (field('replaces').length !== 1 || field('base-hash').length !== 1 || field('replaces')[0].value !== name) {
+      throw new RuleError(`"${name}" already exists in ${dirsAt(root).active}. A versioned evolution proposal is required.`, { code: 'ALREADY_ACTIVE', name })
+    }
+    const current = await readRuleFile(to, name, 'active', root)
+    if (field('base-hash')[0].value !== hash(current)) {
+      throw new RuleError('The active rule changed after this proposal was drafted; rebase it before ratification.', { code: 'STALE_PROPOSAL', name })
+    }
+    const before = parseRule(current)
+    const lost = ['origin', 'precedent'].filter(key => before[key] && parsed[key] !== before[key])
+    const evidence = before.extras.filter(x => !['replaces','base-hash'].includes(x.key))
+    if (lost.length || evidence.some(e => !parsed.extras.some(x => x.key === e.key && x.value === e.value))) {
+      throw new RuleError('Evolution changed immutable evidence.', { code: 'LOSSY_EVOLUTION', name })
+    }
+    replacement = { text: current, parsed: before, digest: hash(current) }
+  } else if (field('replaces').length) {
+    throw new RuleError('Evolution base rule no longer exists.', { code: 'STALE_PROPOSAL', name })
+  }
   const validation = validateRule(parsed, {
     filename: `${name}.md`,
     root,
@@ -812,20 +878,41 @@ export async function ratify(root, name, opts = {}) {
   // A merge (0.3's optimizer) keeps both rules' text and evidence word for
   // word; a merged rule that lost either is a paraphrase, and refused.
   const flat = (t) => String(t).replace(/\s+/g, ' ').trim()
-  const merges = (parsed.sections.find((x) => x.key === 'merges')?.value || '').split(',').map((x) => x.trim()).filter(Boolean)
+  // An evolution retains its base's merge provenance as immutable evidence.
+  // Those parents were already archived; they are not new merge instructions.
+  const mergeFields = parsed.extras.filter(x => x.key === 'merges')
+  if (!replacement && mergeFields.length > 1) throw new RuleError('Ambiguous merge parents; exactly one current Merges field is allowed.', { code: 'LOSSY_MERGE', name })
+  const merges = replacement ? [] : (mergeFields[0]?.value || '').split(',').map((x) => x.trim()).filter(Boolean)
+  let mergeBases = {}
+  if (merges.length) {
+    const bases = field('merge-base-hashes')
+    try {
+      if (bases.length !== 1) throw new Error('missing merge bases')
+      mergeBases = JSON.parse(bases[0].value)
+      if (!mergeBases || typeof mergeBases !== 'object' || Array.isArray(mergeBases) || Object.keys(mergeBases).length !== merges.length) throw new Error('invalid merge bases')
+    } catch { throw new RuleError('Merge requires current parent revision hashes; restage the proposal.', {code: 'STALE_PROPOSAL', name}) }
+  }
   const sources = []
   for (const m of merges) {
     const path = ruleFile(root, 'active', m)
     const text = await readRuleFile(path, m, 'active', root)
     const sp = parseRule(text)
-    const lost = ['rule', 'origin', 'precedent'].filter((k) => str(sp[k]) && !flat(parsed.raw).includes(flat(sp[k])))
+    if (mergeBases[m] !== hash(text)) throw new RuleError('A merge parent changed after staging; restage and review it.', {code: 'STALE_PROPOSAL', name})
+    if (String(sp.enforcement || '').startsWith('machine:') || sp.enforcement?.mode === 'machine') throw new RuleError('Machine-enforced parents require a separate gate migration; this merge cannot retire them.', {code: 'LOSSY_MERGE', name})
+    const lost = ['rule', 'origin', 'precedent'].filter((k) => str(sp[k]) && !flat(k === 'rule' ? parsed.rule : parsed[k]).includes(flat(sp[k])))
     if (lost.length) {
       throw new RuleError(
         `Cannot ratify "${name}": it merges "${m}" but no longer carries its ${lost.join(', ')} word for word. A merge keeps both rules' text and evidence; it is never a paraphrase.`,
         { code: 'LOSSY_MERGE', name },
       )
     }
-    sources.push({ name: m, path, parsed: sp })
+    if (m === name || sources.some(x => x.name === m)) throw new RuleError('Invalid self or duplicate merge source.', { code: 'LOSSY_MERGE' })
+    for (const evidence of sp.extras || []) {
+      if (!parsed.extras.some(x => (x.key === evidence.key || (['merges', 'replaces', 'base-hash', 'merge-base-hashes'].includes(evidence.key) && x.key === (evidence.key === 'merges' ? 'merge-history' : `${evidence.key}-history`))) && x.value === evidence.value)) {
+        throw new RuleError(`Merge lost ${m}'s ${evidence.label}.`, { code: 'LOSSY_MERGE', name })
+      }
+    }
+    sources.push({ name: m, path, parsed: sp, text })
   }
 
   // The stamp is built from the CALLER's identity and clock. Any `**Ratified:**`
@@ -836,19 +923,31 @@ export async function ratify(root, name, opts = {}) {
     ratified: `${ratifiedAt} by ${ratifiedBy}`,
   })
 
-  // Write the destination before removing the source: a crash between the two
-  // leaves a duplicate to reconcile, which is recoverable, rather than a rule
-  // that existed in neither directory.
-  await mkdir(dirname(to), { recursive: true })
-  await writeFile(to, stamped, 'utf8')
-  await rm(from, { force: true })
-  // The merged rules go to archive/, kept, with where they went.
+  // Preserve every previous artifact before activation. A conflicting archive
+  // fails before active state changes. Atomic switching leaves recoverable
+  // duplicates if interrupted, never a missing rule.
   for (const src of sources) {
-    const out = serializeRule({ ...src.parsed, name: src.parsed.name || src.name, footer: `---\n_Merged into \`${name}\` on ${ratifiedAt}._` })
-    const dest = ruleFile(root, 'archive', src.name)
-    await mkdir(dirname(dest), { recursive: true })
-    await writeFile(dest, out, 'utf8')
-    await rm(src.path, { force: true })
+    const archived = serializeRule({ ...src.parsed,
+      extras: [...src.parsed.extras, { label: 'Merged-Into', key: 'merged-into', value: name }],
+      footer: `${src.parsed.footer || '---'}\n_Merged into \`${name}\` on ${ratifiedAt}._` })
+    await writeExclusive(ruleFile(root, 'archive', src.name), archived)
+  }
+  if (opts.onRetired && sources.length) await opts.onRetired(sources.map(source => source.name))
+  if (replacement) {
+    const archived = serializeRule({ ...replacement.parsed,
+      extras: [...replacement.parsed.extras, { label: 'Superseded-By', key: 'superseded-by', value: `${name} (${hash(stamped)})` }] })
+    await writeExclusive(ruleFile(root, 'archive', `${name.slice(0, 80)}-${replacement.digest.slice(0, 16)}`), archived)
+    if (hash(await readRuleFile(to, name, 'active', root)) !== replacement.digest) {
+      throw new RuleError('Active rule changed during ratification.', { code: 'STALE_PROPOSAL' })
+    }
+    await atomicWrite(to, stamped)
+  } else {
+    await writeExclusive(to, stamped)
+  }
+  if (await readFile(from, 'utf8') === text) await rm(from)
+  for (const src of sources) {
+    if (await readFile(src.path, 'utf8') === src.text) await rm(src.path)
+    else throw new RuleError('A merge source changed during ratification; its archive and active copy were preserved.', { code: 'STALE_PROPOSAL' })
   }
 
   return {
@@ -873,6 +972,11 @@ export async function ratify(root, name, opts = {}) {
  * @param {{interactive?: boolean, reason?: string}} [opts]
  */
 export async function reject(root, name, opts = {}) {
+  requireName(name)
+  return withMutationLock(root, () => rejectLocked(root, name, opts))
+}
+
+async function rejectLocked(root, name, opts) {
   if (opts.interactive !== true) {
     throw new RuleError(
       'Rejecting a proposal requires a human. Call with { interactive: true }.',
@@ -881,7 +985,12 @@ export async function reject(root, name, opts = {}) {
   }
   const path = ruleFile(root, 'proposed', name)
   const text = await readRuleFile(path, name, 'proposed', root)
-  await rm(path, { force: true })
+  if (opts.expectedHash !== undefined && hash(text) !== opts.expectedHash) throw new RuleError('Proposal changed after review; review it again before rejection.', { code: 'STALE_PROPOSAL', name })
+  await preserveDraft(root, name, text, `Rejected by a human: ${String(opts.reason || 'no reason given').replace(/\s+/g, ' ')}`)
+  if (await readRuleFile(path, name, 'proposed', root) !== text) {
+    throw new RuleError('Proposal changed during rejection; the new draft and archived revision were preserved.', { code: 'STALE_PROPOSAL', name })
+  }
+  await rm(path)
   return {
     name,
     path: relPath('proposed', name, root),
@@ -904,6 +1013,11 @@ export async function reject(root, name, opts = {}) {
  * @param {{origin?: string, overwrite?: boolean, resolveRef?: ((sha: string) => boolean|null)|false}} [opts]
  */
 export async function adopt(root, name, opts = {}) {
+  requireName(name)
+  return withMutationLock(root, () => adoptLocked(root, name, opts))
+}
+
+async function adoptLocked(root, name, opts) {
   const origin = typeof opts.origin === 'string' ? opts.origin.trim() : ''
   if (!origin) {
     throw new RuleError(
@@ -941,8 +1055,10 @@ export async function adopt(root, name, opts = {}) {
   const upstreamIdx = parsed.sections.findIndex((s) => s.key === upstreamKey)
   const upstream = upstreamIdx !== -1 ? parsed.sections[upstreamIdx].value : parsed.origin
 
-  const sections = parsed.sections.filter((s) => s.key !== upstreamKey)
-  const extras = parsed.extras.filter((e) => e.key !== upstreamKey)
+  const history = item => ['merges', 'replaces', 'base-hash', 'merge-base-hashes'].includes(item.key)
+    ? { ...item, key: item.key === 'merges' ? 'merge-history' : `${item.key}-history`, label: item.key === 'merges' ? 'Merge-History' : `${item.label}-History` } : item
+  const sections = parsed.sections.filter((s) => s.key !== upstreamKey).map(history)
+  const extras = parsed.extras.filter((e) => e.key !== upstreamKey).map(history)
 
   let at = sections.findIndex((s) => s.key === 'origin')
   if (at === -1) {
@@ -971,8 +1087,10 @@ export async function adopt(root, name, opts = {}) {
     resolveRef: opts.resolveRef,
   })
 
-  await mkdir(dirname(to), { recursive: true })
-  await writeFile(to, out, 'utf8')
+  if (opts.overwrite && await exists(to)) {
+    await preserveDraft(root, name, await readRuleFile(to, name, 'proposed', root), 'Superseded by adoption')
+    await atomicWrite(to, out)
+  } else await writeExclusive(to, out)
   return {
     name,
     from: relPath('candidates', name, root),
@@ -1037,7 +1155,7 @@ function ruleFile(root, dir, name) {
   return join(root, dirsAt(root)[dir], `${requireName(name)}.md`)
 }
 
-function requireName(name) {
+export function requireName(name) {
   if (typeof name !== 'string' || !name.trim()) {
     throw new RuleError('A rule name is required', { code: 'BAD_NAME', name })
   }
@@ -1105,7 +1223,10 @@ async function readRuleFile(path, name, dir, root) {
     )
   }
   try {
-    return await readFile(path, 'utf8')
+    const bytes = await readFile(path)
+    const text = bytes.toString('utf8')
+    if (!Buffer.from(text, 'utf8').equals(bytes)) throw new Error('Rule is not valid UTF-8; preserve or convert the source explicitly before changing it.')
+    return text
   } catch (err) {
     throw new RuleError(`Cannot read ${relPath(dir, name, root)}: ${err.message}`, { code: 'UNREADABLE' })
   }
@@ -1173,13 +1294,7 @@ export function matchesTriggerPath(triggerText, filePath) {
 
     // A. Glob match (e.g. *.test.js or src/**/*.js)
     if (token.includes('*')) {
-      const escaped = token.replace(/[.+?^${}()|[\]\\]/g, '\\$&')
-      const globPattern = escaped
-        .replace(/\*\*/g, '§GLOBSTAR§')
-        .replace(/\*/g, '[^/]*')
-        .replace(/§GLOBSTAR§/g, '.*')
-      const globRegex = new RegExp('^' + globPattern + '$')
-      if (globRegex.test(p) || globRegex.test(base)) return true
+      if (matchGlob(token, p) || matchGlob(token, base)) return true
       continue
     }
 
@@ -1287,7 +1402,7 @@ export function selectTriggeredRules(activeRules = [], touchedFilePaths = [], op
       selected.push(processed)
       totalWords += w
     } else {
-      break
+      continue
     }
   }
 

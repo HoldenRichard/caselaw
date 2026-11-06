@@ -11,9 +11,10 @@ import { join } from 'node:path'
 import { stat, readFile, writeFile } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 import * as gatesStore from '../core/gates.js'
-import { parseRule, serializeRule } from '../core/rules.js'
+import { parseRule, serializeRule, requireName } from '../core/rules.js'
 import { ruleDirsFor, doctrineDirAt } from '../core/doctrine.js'
 import { listIncidents } from '../core/incidents.js'
+import { atomicWrite, withMutationLock } from '../core/safe-write.js'
 
 export const GATE_SUBCOMMANDS = ['test', 'baseline', 'promote', 'synthesize']
 
@@ -123,6 +124,12 @@ async function synthesize(args, { root, say }) {
     say('  caselaw gate synthesize needs a rule name.')
     return 2
   }
+  requireName(args.name)
+  const existingConfig = await gatesStore.load(root)
+  if (existingConfig?.gates.some(g => g.id === args.name)) {
+    say(`  Refusing to overwrite gate "${args.name}"; retire or migrate it through a human-reviewed change.`)
+    return 1
+  }
   const dir = doctrineDirAt(root)
   const dirs = ruleDirsFor(dir)
   const path = join(root, dirs.active, `${args.name}.md`)
@@ -150,33 +157,27 @@ async function synthesize(args, { root, say }) {
     return 1
   }
 
+  const vendored = join(root, '.caselaw/bin/gate.mjs')
+  try { await stat(vendored) }
+  catch (error) {
+    if (error.code !== 'ENOENT') throw error
+    throw new gatesStore.GateError('No vendored runner at .caselaw/bin/gate.mjs. Run `caselaw upgrade` to restore it before snapshot replay.', { code: 'NO_RUNNER' })
+  }
+  const certification = await gatesStore.certifyMachineGate(res.gate, incidents, vendored)
+  if (!certification.ok) { say(`  ${certification.reason}`); return 1 }
   say(`  Synthesized machine gate for "${args.name}":`)
-  say(`    Pattern: "${res.pattern}" (100% sensitivity, 100% specificity)`)
+  say(`    Pattern: "${res.pattern}" (installed runtime matched ${incidents.length} recorded snapshot pair(s) only)`)
   say(`    Gate ID: ${res.gate.id}`)
 
-  if (args.yes || args.opt.apply) {
-    let config = await gatesStore.load(root)
-    if (!config) config = gatesStore.emptyConfig()
-    const existingIdx = config.gates.findIndex((g) => g.id === res.gate.id)
-    if (existingIdx !== -1) {
-      const existing = config.gates[existingIdx]
-      const isForce = Boolean(args.force || args.opt?.force)
-      if (!isForce) {
-        say(`  Refusing to overwrite gate "${res.gate.id}": existing gate already registered. Overwriting an existing gate requires explicit human authorization with --force (Axiom A1).`)
-        return 1
-      }
-      if (existing.severity === 'block' && res.gate.severity !== 'block') {
-        say(`  Refusing to downgrade gate "${res.gate.id}": existing gate has severity "block". Synthesizing a warning gate cannot downgrade a blocking gate (Axiom A1).`)
-        return 1
-      }
-      config.gates[existingIdx] = res.gate
-    } else {
+  if (args.yes || args.opt?.apply) {
+    await withMutationLock(root, async () => {
+      const config = (await gatesStore.load(root)) || gatesStore.emptyConfig()
+      if (config.gates.some(g => g.id === res.gate.id)) throw new gatesStore.GateError('Gate already exists; nothing overwritten.', { code: 'GATE_EXISTS' })
+      if (await readFile(path, 'utf8') !== text) throw new gatesStore.GateError('Rule changed during certification.', { code: 'STALE_RULE' })
       config.gates.push(res.gate)
-    }
-    await gatesStore.save(root, config)
-
-    const updatedRule = serializeRule({ ...parsed, enforcement: `machine:${res.gate.id}` })
-    await writeFile(path, updatedRule, 'utf8')
+      await atomicWrite(join(root, gatesStore.GATES_PATH), JSON.stringify(config, null, 2) + '\n')
+      await atomicWrite(path, serializeRule({ ...parsed, enforcement: `machine:${res.gate.id}` }))
+    })
     say(`  Registered in ${gatesStore.GATES_PATH} and updated enforcement to machine:${res.gate.id}.`)
   } else {
     say('  Pass --yes or --apply to register this gate and compact rule enforcement.')

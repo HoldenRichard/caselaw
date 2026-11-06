@@ -17,15 +17,17 @@
  * go to candidates/, merged ones to archive/, precedent to precedent/.
  */
 
-import { readFile, writeFile, mkdir, access } from 'node:fs/promises'
+import { readFile, mkdir, access } from 'node:fs/promises'
 import { join, dirname } from 'node:path'
-import { listRules, readCatches, parseRule } from './rules.js'
+import { listRules, readCatches, parseRule, serializeRule, stageEvolution, requireName } from './rules.js'
 import { doctrineDirOf, ruleDirsFor } from './doctrine.js'
 import { DEFAULTS } from './defaults.js'
 import { TRIGGERS } from './triggers.js'
 import { archivePrecedent } from './precedent.js'
 import { consolidateRules, optimizeRuleIterative, evaluateStage2, defaultVerifier } from './skillopt.js'
 import { listIncidents } from './incidents.js'
+import { hash } from './text.js'
+import { writeExclusive, atomicWrite, withMutationLock } from './safe-write.js'
 
 /**
  * The session-start budget, in words: the pointer block, the authority split
@@ -182,8 +184,8 @@ export async function applyProposal({ root, doc, id, now = new Date(), name = nu
   const [action, rest = ''] = id.split(/:(.*)/s)
   const dir = doctrineDirOf(doc)
   const dirs = ruleDirsFor(dir)
-  if (action === 'archive-precedent') {
-    const rule = rest
+  if (action === 'archive-precedent') return withMutationLock(root, async () => {
+    const rule = requireName(rest)
     if (generatedNames(doc).has(rule)) {
       doc.harness = { ...(doc.harness || {}), precedentArchived: { ...(doc.harness?.precedentArchived || {}), [rule]: isoDay(now) } }
       return { ok: true, rerender: true, message: `${rule} is generated from your answers: its precedent is archived on the next render.` }
@@ -195,16 +197,19 @@ export async function applyProposal({ root, doc, id, now = new Date(), name = nu
     if (!moved) return { ok: false, message: `"${rule}" has no precedent to archive, or it is already archived.` }
     const archivePath = join(root, dirs.precedent, `${rule}.md`)
     await mkdir(dirname(archivePath), { recursive: true })
-    await writeFile(archivePath, moved.archive, 'utf8')
+    await writeExclusive(archivePath, moved.archive)
     // Re-derived, not trusted: read both back before the rule loses its paragraph.
     const precedent = parseRule(text).precedent
     if (!(await read(archivePath)).includes(precedent)) return { ok: false, message: `The archive for "${rule}" did not read back verbatim; the rule was not changed.` }
-    await writeFile(path, moved.rule, 'utf8')
+    if (await read(path) !== text) throw new Error('Active rule changed during precedent archival; both versions were preserved.')
+    await atomicWrite(path, moved.rule)
     return { ok: true, message: `${dirs.active}/${rule}.md now points at ${dirs.precedent}/${rule}.md (${moved.words} words moved).`, wrote: [`${dirs.active}/${rule}.md`, `${dirs.precedent}/${rule}.md`] }
-  }
+  })
   if (action === 'merge') {
-    const [a, b] = rest.split('+')
-    const into = name || `${a}-and-${b}`.slice(0, 100).replace(/-+$/, '')
+    const names = rest.split('+')
+    if (names.length !== 2) throw new Error('A merge requires exactly two rule names')
+    const [a, b] = names.map(requireName)
+    const into = requireName(name || `${a}-and-${b}`.slice(0, 100).replace(/-+$/, ''))
     const text = (n) => read(join(root, dirs.active, `${n}.md`))
     const [ta, tb] = [await text(a), await text(b)]
     if (ta === null || tb === null) return { ok: false, message: `Both rules must be active: ${ta === null ? a : b} is not.` }
@@ -235,12 +240,22 @@ export async function applyProposal({ root, doc, id, now = new Date(), name = nu
 
     await mkdir(dirname(path), { recursive: true })
     const consolidated = consolidateRules(ta, tb, candidateMutable, { originSep: ' And: ' })
-    const proposalBody = `${consolidated.mergedRuleText.trim()}\n\n**Merges:** ${a}, ${b}\n---\n_Proposed by \`caselaw optimize\` on ${isoDay(now)}: \`${a}\` and \`${b}\` as one rule, built from both files verbatim. You may reword the Trigger and add to the Rule. Ratifying checks that each one's Rule, Origin and Precedent is still here word for word, then moves them to archive/._\n`
-    await writeFile(path, proposalBody, 'utf8')
+    const combined = parseRule(consolidated.mergedRuleText)
+    const historicalExtras = combined.extras.map(extra => {
+      if (!['merges', 'replaces', 'base-hash', 'merge-base-hashes'].includes(extra.key)) return extra
+      return { ...extra,
+        key: extra.key === 'merges' ? 'merge-history' : `${extra.key}-history`,
+        label: extra.key === 'merges' ? 'Merge-History' : `${extra.label || extra.key}-History`,
+      }
+    })
+    const proposalBody = serializeRule({ ...combined, name: into, ratified: null,
+      extras: [...historicalExtras, { label: 'Merges', key: 'merges', value: `${a}, ${b}` },
+        { label: 'Merge-Base-Hashes', key: 'merge-base-hashes', value: JSON.stringify({ [a]: hash(ta), [b]: hash(tb) }) }] })
+    await writeExclusive(path, proposalBody)
     return { ok: true, message: `Wrote ${dirs.proposed}/${into}.md. Ratifying it moves ${a} and ${b} to ${dirs.archive}/.`, wrote: [`${dirs.proposed}/${into}.md`] }
   }
   if (action === 'compress') {
-    const rule = rest
+    const rule = requireName(rest)
     const path = join(root, dirs.active, `${rule}.md`)
     const text = await read(path)
     if (text === null) return { ok: false, message: `No active rule named "${rule}".` }
@@ -255,8 +270,7 @@ export async function applyProposal({ root, doc, id, now = new Date(), name = nu
     })
     if (res.success && res.savedWords > 0) {
       const propPath = join(root, dirs.proposed, `${rule}.md`)
-      await mkdir(dirname(propPath), { recursive: true })
-      await writeFile(propPath, res.bestRuleText, 'utf8')
+      await stageEvolution(root, rule, res.bestRuleText, text)
       return {
         ok: true,
         message: `Staged losslessly compressed candidate to ${dirs.proposed}/${rule}.md (${res.savedWords} words saved). Run "caselaw rule ratify ${rule}" to ratify.`,

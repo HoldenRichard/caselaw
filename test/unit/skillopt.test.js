@@ -70,13 +70,9 @@ describe('structural AST and Constitution A2 invariance', () => {
 
   test('POSITIVE CONTROL: modifying immutable Origin throws ConstitutionError A2', () => {
     const ast = splitRuleAST(RULE_SAMPLE)
-    // Tamper with immutable memory
     ast.immutable.origin = 'invented origin'
-    // Reconstitute should serialize it with the tampered origin, but our verification check catches it!
-    // Wait, in reconstituteRuleAST, if ast.immutable.origin was altered, let's verify what happens:
-    // It compares verify.origin with ast.immutable.origin.
-    // If someone passes an invalid AST or modifies fields, it enforces A2.
-    assert.ok(ast.immutable)
+    assert.throws(() => reconstituteRuleAST(ast, { rule: 'Never sweep.' }), /A2: Immutable AST/)
+
   })
 })
 
@@ -167,7 +163,7 @@ describe('lexicographic Pareto Gate', () => {
     const res = evaluatePareto(candidateCompressed, baseline100)
     assert.equal(res.accepted, true)
     assert.equal(res.mode, 'compression')
-    assert.match(res.reason, /Lossless compression/)
+    assert.match(res.reason, /Recorded-fixture compression/)
   })
 
   test('POSITIVE CONTROL: candidate with no improvement or compression is rejected', () => {
@@ -280,8 +276,10 @@ describe('pluggable LLM runner bridge', () => {
   })
 
   test('POSITIVE CONTROL: LLM verifier correctly parses verdict from role prompt response', async () => {
-    const mockRunner = async ({ control }) => {
-      if (control === 'positive') return 'VERDICT: FAIL\n\nSweeping flag detected in positive control'
+    const mockRunner = async ({ diff, control, fixture }) => {
+      assert.equal(control, undefined)
+      assert.equal(fixture, undefined)
+      if (/\+git add \./.test(diff)) return 'VERDICT: FAIL\n\nSweeping flag detected in positive control'
       return 'VERDICT: PASS\n\nExplicit staging is clean'
     }
 
@@ -296,13 +294,13 @@ describe('pluggable LLM runner bridge', () => {
 
   test('POSITIVE CONTROL: optimizeRuleIterative runs multi-step loop with mock LLM runner', async () => {
     let callCount = 0
-    const mockRunner = async ({ role, control }) => {
+    const mockRunner = async ({ role, diff }) => {
       if (role === 'proposer') {
         callCount++
         return 'TRIGGER: staging git paths\nRULE: Never use git add . or git add -A in shared trees.'
       }
       // verifier
-      return control === 'positive' ? 'VERDICT: FAIL\n\nCaught' : 'VERDICT: PASS\n\nClean'
+      return /\+git add \./.test(diff) ? 'VERDICT: FAIL\n\nCaught' : 'VERDICT: PASS\n\nClean'
     }
 
     const res = await optimizeRuleIterative({

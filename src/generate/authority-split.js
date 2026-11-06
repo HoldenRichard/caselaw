@@ -120,6 +120,14 @@ export function plain(s, max = 2000) {
     .replace(/^([#>]|[-*+]\s|\d+[.)]\s)/, '\\$1')
 }
 
+/** Render a complete command without clipping or collapsing shell-significant spaces. */
+export function commandCode(command) {
+  const text = String(command ?? '').replace(/[\r\n\u2028\u2029]/g, ' ')
+  const longest = Math.max(0, ...(text.match(/`+/g) || []).map(x => x.length))
+  const fence = '`'.repeat(longest + 1)
+  return longest ? `${fence} ${text} ${fence}` : `${fence}${text}${fence}`
+}
+
 /** A table cell: plain text with pipes escaped, so a value cannot add columns. */
 export function cell(s, max = 400) {
   return plain(s, max).replace(/\|/g, '\\|')
@@ -283,9 +291,9 @@ function buildCanList({ answers, detected, selected = [] }) {
   // sequence), and the setup CI runs first is named with the gates it precedes.
   const gates = detected.ciGates?.gates || []
   for (const { file, job, list, split } of gateGroups(gates)) {
-    const steps = list.map((g) => `\`${plain(g.cmd, 160)}\`${g.step ? ` (${plain(g.step, 80)})` : ''}`).join('; ')
+    const steps = list.map((g) => `${commandCode(g.cmd)}${g.step ? ` (${plain(g.step, 80)})` : ''}`).join('; ')
     const setup = (detected.ciGates?.setup || []).filter((s) => s.file === file && (!split || s.job === job))
-    const first = setup.length ? ` CI sets up first with ${setup.map((s) => `\`${plain(s.cmd, 160)}\` (line ${s.line})`).join(', ')}; a clean machine needs that too.` : ''
+    const first = setup.length ? ` CI sets up first with ${setup.map((s) => `${commandCode(s.cmd)} (line ${s.line})`).join(', ')}; a clean machine needs that too.` : ''
     const contexts = (detected.ciGates?.contexts || []).filter((c) => c.file === file && (!split || c.job === job)).map(ciContext).filter(Boolean)
     const where = split ? `\`${file}\`, job \`${plain(job, 60)}\`` : `\`${file}\``
     can.push(`Run what CI runs on a change, in its order (${where}): ${steps}.${first}${contexts.length ? ` ${contexts.join(' ')}` : ''}`)

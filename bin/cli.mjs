@@ -264,13 +264,12 @@ async function cmdUpgrade(args, root) {
       say(`\n  ${fresh.length} question(s) added since template ${doc.templateVersion}.`)
       const prompt = ttyPrompt()
       try {
-        await runInterview({ doc, detected, prompt, persist: (d) => answersStore.save(root, d) })
+        await runInterview({ doc, detected, prompt, persist: null })
       } finally {
         await prompt.close()
       }
       snapshotPersonal(doc, detected)
-      await answersStore.save(root, doc)
-      ;({ doc, manifest, plan } = await planUpgrade({ root, detected, force: args.force }))
+      ;({ doc, manifest, plan } = await planUpgrade({ root, detected, force: args.force, doc }))
     } else {
       say(`\n  ${fresh.length} question(s) added since template ${doc.templateVersion}; run \`caselaw init\` at a terminal to answer them. Until then they are marked as holes.`)
     }
@@ -278,13 +277,9 @@ async function cmdUpgrade(args, root) {
 
   // Triggers that fire now and were never offered: applied where the preset
   // allows, otherwise proposed once into proposed/ (0.3).
-  const fired = await applyTriggers({ root, doc, detected, dryRun: args.dryRun })
+  const fired = await applyTriggers({ root, doc, detected, dryRun: true })
   for (const a of fired.applied) say(`\n  Trigger ${a.id} fired (${a.fact}): ${a.rule} is in force, because the autonomy preset lets a rule that only adds enforcement apply on its own.`)
-  for (const pr of fired.proposed) say(`\n  Trigger ${pr.id} fired (${pr.fact}): ${args.dryRun ? 'would propose' : 'proposed'} ${pr.path}. Ratify it with \`caselaw rule ratify ${pr.rule}\`, or reject it.`)
-  if (!args.dryRun && (fired.applied.length || fired.proposed.length || fired.guard)) {
-    await answersStore.save(root, doc)
-    ;({ doc, manifest, plan } = await planUpgrade({ root, detected, force: args.force }))
-  }
+  for (const pr of fired.proposed) say(`\n  Trigger ${pr.id} fired (${pr.fact}): would propose ${pr.path}. Ratify it with \`caselaw rule ratify ${pr.rule}\`, or reject it.`)
 
   say('')
   say(formatPlan(plan, { root }))
@@ -292,7 +287,7 @@ async function cmdUpgrade(args, root) {
     say('\n  --dry-run: nothing written.')
     return 0
   }
-  if (plan.summary.willWrite === 0) {
+  if (plan.summary.willWrite === 0 && !fired.applied.length && !fired.proposed.length && !(fired.guard && !doc.harness?.writerGuard)) {
     say('\n  Already up to date.')
     return 0
   }
@@ -310,6 +305,9 @@ async function cmdUpgrade(args, root) {
     }
   }
 
+  // No proposals, answers or trigger state are persisted until confirmation.
+  await applyTriggers({ root, doc, detected, dryRun: false })
+  ;({ doc, manifest, plan } = await planUpgrade({ root, detected, force: args.force, doc }))
   await writePlan({ root, plan, manifest, doc })
   say(`\n  Updated ${plan.summary.willWrite} file(s).`)
   return 0

@@ -92,23 +92,22 @@ export function reconstituteRuleAST(ast, newMutable) {
     throw new ConstitutionError('Invalid rule AST provided', { article: 'A2' })
   }
 
+  const original = splitRuleAST(ast.raw)
+  if (JSON.stringify(original.immutable) !== JSON.stringify(ast.immutable)) {
+    throw new ConstitutionError('A2: Immutable AST differs from its original evidence', { article: 'A2' })
+  }
+
   const trigger = typeof newMutable.trigger === 'string' ? newMutable.trigger.trim() : ast.mutable.trigger
   const rule = typeof newMutable.rule === 'string' ? newMutable.rule.trim() : ast.mutable.rule
 
-  // Disallow injecting markdown section headers into mutable fields (F4)
-  const headerRegex = /\*\*(?:Enforcement|Origin|Precedent|Ratified|Merges|Default):\*\*/i
-  const cleanHomoglyphs = (s) =>
-    String(s ?? '')
-      .normalize('NFKC')
-      .replace(/[\u200B-\u200D\uFEFF]/g, '')
-      .replace(/[\u0415\u0435]/g, 'e')
-      .replace(/[\u041E\u043E]/g, 'o')
-      .replace(/[\u0420\u0440]/g, 'p')
-      .replace(/[\u0410\u0430]/g, 'a')
-  if (headerRegex.test(cleanHomoglyphs(trigger)) || headerRegex.test(cleanHomoglyphs(rule))) {
-    throw new ConstitutionError('A2: Section headers cannot be injected into mutable trigger or rule fields', {
-      article: 'A2',
-    })
+  // The parser's complete section grammar is the boundary, including unknown
+  // evidence labels. Check normalized text too, but serialize the original.
+  const structural = (value) => String(value).normalize('NFKC')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+  const header = /^\*\*[^*:\n]+:\*\*/m
+  const footer = /^(?:-{3,}|\*{3,}|_{3,})\s*$/m
+  if ([trigger, rule].some(v => header.test(structural(v)) || footer.test(structural(v)))) {
+    throw new ConstitutionError('A2: Section headers cannot be injected into mutable trigger or rule fields', { article: 'A2' })
   }
 
   // Assemble fields for serializeRule
@@ -144,6 +143,13 @@ export function reconstituteRuleAST(ast, newMutable) {
     throw new ConstitutionError('A2: Enforcement block was modified during reconstitution', { article: 'A2' })
   }
 
+  for (const key of ['name', 'default', 'triggered', 'preamble', 'footer', 'extras']) {
+    const actual = verify[key] ?? (key === 'extras' ? [] : '')
+    const expected = ast.immutable[key] ?? (key === 'extras' ? [] : '')
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+      throw new ConstitutionError(`A2: Immutable ${key} was modified during reconstitution`, { article: 'A2' })
+    }
+  }
   return serialized
 }
 
@@ -210,8 +216,8 @@ export function checkEditBudget(oldMutable, newMutable, opts = {}) {
   const budget = calculateEditBudget(oldWords)
 
   // Measure ordered word-level LCS diff distance (F8)
-  const oldTokens = oldText.trim().toLowerCase().split(/\s+/).filter(Boolean)
-  const newTokens = newText.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  const oldTokens = oldText.trim().split(/\s+/).filter(Boolean)
+  const newTokens = newText.trim().split(/\s+/).filter(Boolean)
   const lcs = wordLCSLength(oldTokens, newTokens)
   const delta = oldTokens.length + newTokens.length - (2 * lcs)
 
@@ -364,7 +370,7 @@ export function evaluatePareto(candidate, baseline, opts = {}) {
     return {
       accepted: true,
       mode: 'compression',
-      reason: `Lossless compression: 100% catch rate maintained, reduced by ${saved} words (${baseline.wordCount} -> ${candidate.wordCount})`,
+      reason: `Recorded-fixture compression: 100% catch rate maintained on recorded fixtures, reduced by ${saved} words (${baseline.wordCount} -> ${candidate.wordCount})`,
     }
   }
 
@@ -594,7 +600,7 @@ export function consolidateRules(ruleTextA, ruleTextB, mergedMutable, opts = {})
   const extrasB = astB.immutable.extras || []
   const combinedExtras = [...extrasA]
   for (const eb of extrasB) {
-    if (!combinedExtras.some((ea) => ea.name === eb.name && ea.body === eb.body)) {
+    if (!combinedExtras.some((ea) => ea.key === eb.key && ea.value === eb.value)) {
       combinedExtras.push(eb)
     }
   }
@@ -865,7 +871,7 @@ export function createLLMProposer(llmRunner) {
  * Create an LLM-backed verifier using caselaw review's role prompt contract.
  * Blind to control labels (positive vs negative) to prevent evaluation bias (F2).
  *
- * @param {function} llmRunner - async ({ prompt, role, fixture, diff }) => string
+ * @param {function} llmRunner - async ({ prompt, role, diff }) => string
  * @returns {function}
  */
 export function createLLMVerifier(llmRunner) {
@@ -881,7 +887,9 @@ export function createLLMVerifier(llmRunner) {
       diff,
     })
 
-    const response = await llmRunner({ prompt: rolePrompt, role: 'verifier', fixture, control, diff })
+    let response
+    try { response = await llmRunner({ prompt: rolePrompt, role: 'verifier', diff }) }
+    catch (error) { return { verdict: 'UNVERIFIED', reason: `Evaluator error: ${error.message}` } }
     const { verdict, body } = parseVerdict(response)
 
     return {
@@ -943,7 +951,8 @@ export async function optimizeRuleIterative({
   let currentAST = initialAST
   let currentRuleText = ruleText
 
-  const runner = llmRunner || (useLLM ? async ({ prompt }) => '' : null)
+  if (useLLM && typeof llmRunner !== 'function') throw new Error('LLM evolution requires an explicit runner')
+  const runner = llmRunner
   const activeVerifier = verifierFn || (runner ? createLLMVerifier(runner) : defaultVerifier)
   const activeProposer = proposerFn || (runner ? createLLMProposer(runner) : createDefaultProposer(isCompression))
 
@@ -988,7 +997,7 @@ export async function optimizeRuleIterative({
     }
 
     // 2. Stage 1: Deterministic Trigger, Glob, and Budget check
-    const stage1 = evaluateStage1({ ...candidateMutable, raw: candidateMutable.rule }, incidentFixtures, opts)
+    const stage1 = evaluateStage1({ ...candidateMutable, raw: `${candidateMutable.trigger} ${candidateMutable.rule}` }, incidentFixtures, opts)
     if (!stage1.pass) {
       buffer.record({ diff: diffRep, stage: 1, failureReason: stage1.reason })
       continue

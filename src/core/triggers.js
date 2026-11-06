@@ -12,6 +12,7 @@
  * ratified or rejected is never written again.
  */
 
+import { writeExclusive, withMutationLock } from './safe-write.js'
 import { readFile, writeFile, mkdir, access } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -230,7 +231,7 @@ export async function applyTriggers({ root, doc, detected, now = new Date(), dry
       // The same relocation every generated file gets (artifacts.js), imported
       // late because artifacts.js imports this module.
       const { relocate } = await import('../generate/artifacts.js')
-      await writeFile(join(root, path), dir === 'docs' ? body : relocate(body, dir), 'utf8')
+      await writeExclusive(join(root, path), dir === 'docs' ? body : relocate(body, dir))
     }
   }
 
@@ -242,11 +243,13 @@ export async function applyTriggers({ root, doc, detected, now = new Date(), dry
     // A gates.json the human has already filled is theirs, and the build
     // will not rewrite it: the guard is added to it directly.
     if (!dryRun) {
-      const config = await gatesStore.load(root).catch(() => null)
+      await withMutationLock(root, async () => {
+      const config = await gatesStore.load(root)
       if (config && config.gates.length && !config.gates.some((g) => g.id === 'stage-explicit-paths')) {
         config.gates.push(writerGuard(dir))
         await gatesStore.save(root, config)
       }
+      })
     }
   }
 

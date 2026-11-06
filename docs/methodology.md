@@ -148,7 +148,7 @@ required to have a **positive control** — a test where a known-bad input must
 actually fail.
 
 So: no check counts as existing until it has been watched failing. This
-repository's suite has 831 `test()` cases in source, 384 of them named POSITIVE
+repository's suite has 916 `test()` cases in source, 416 of them named POSITIVE
 CONTROL (`npm test` runs a few more, generated per adapter), a meta-test that
 fails the build if any gate kind lacks one — and another that fails if this
 sentence goes stale, because the previous version of it was wrong on both
@@ -177,14 +177,15 @@ is not a setting.
 
 Rules evolve over time as codebases change. Adopting Microsoft Research's SkillOpt
 (arXiv:2605.23904) within CaseLaw's zero-dependency architecture provides grounded
-rule optimization while eliminating drift:
+rule optimization measured against recorded failures:
 
 - **Contrastive Incident Fixtures**: Every incident is stored as a contrastive pair:
   a Positive Control (the failing diff/prompt that must be caught) and a Negative
   Control (the clean fix commit that must pass without false positives).
 - **Lexicographic Pareto Objective**: A candidate rule is accepted if and only if
-  it improves catch rate without introducing false positives, or achieves lossless
-  word compression while maintaining 100% sensitivity and 0% false positives.
+  it improves catch rate without introducing false positives on recorded fixtures, or
+  reduces words while maintaining their catch rate. Acceptance stages a proposal;
+  human ratification is required to change active case law.
 - **Bounded Edit Budget & AST Partitioning**: Rules are split into immutable provenance
   sections (`Origin:`, `Precedent:`, `Catches:`) and mutable governance sections
   (`Trigger:`, `Rule:`). Edits are strictly capped to prevent capability drift.
@@ -192,6 +193,8 @@ rule optimization while eliminating drift:
   directly into subsequent evolution steps.
 - **Prose-to-Machine Gate Synthesis**: Rules with high-confidence contrastive fixtures
   can be mechanically synthesized into deterministic, zero-dependency machine gates.
+  Certification uses complete file snapshots and the actual gate runtime; partial
+  diffs are insufficient evidence. Results describe the recorded fixtures only.
 
 **It will not block on its own failure.** A missing checker, malformed input, or
 an unparseable config reports loudly and exits zero — but "did not run" is never

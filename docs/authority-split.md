@@ -7,7 +7,9 @@ This file says who can verify what. It is the difference between "the agent said
 
 ## The agent can
 
-- Run: test (`npm run test`, unverified); typecheck (`npm run typecheck`, unverified).
+- Run what CI runs on a change, in its order (`.github/workflows/ci.yml`, job `test`): `node --test test/unit/*.test.js`; `node bin/cli.mjs audit .`. In its `test` job, CI runs across 2 node; a run here covers one combination.
+- Run what CI runs on a change, in its order (`.github/workflows/ci.yml`, job `gitleaks`): `docker run --rm -v "$PWD:/repo"   ghcr.io/gitleaks/gitleaks:v8.30.1   dir /repo --no-banner --no-color --redact` (gitleaks — working tree).
+- Run what CI runs on a change, in its order (`.github/workflows/ci.yml`, job `trufflehog`): `docker run --rm -v "$PWD:/repo"   -e GIT_CONFIG_COUNT=1   -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/repo   ghcr.io/trufflesecurity/trufflehog:3.96.0   git file:///repo --results=verified --fail --no-update --no-color` (trufflehog — verified secrets, full history).
 - It can run the full suite, the self-audit, gitleaks and trufflehog, and install itself into a scratch repo end to end.
 
 ## The agent cannot — physical
@@ -22,6 +24,14 @@ Technically reachable, deliberately withheld. If one of these ever needs to chan
 here first and say why — an undocumented loosening is how a boundary quietly stops existing.
 
 - **read production datastore state**
+
+## What a push can publish
+
+Each of these publishes outside the repository, and git starts it. Doing what starts one is an
+outward-facing action: the agent may prepare it, and a human does it, or asks for it by name, each
+time. Conditions this could not read are quoted, not interpreted.
+
+- **npm** (`.github/workflows/release.yml:60`): when pushing a tag matching `v*`, or running the workflow by hand.
 
 ## What a human still has to do
 

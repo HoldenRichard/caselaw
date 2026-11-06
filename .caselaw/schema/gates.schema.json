@@ -65,7 +65,7 @@
           "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
           "description": "kebab-case. This is the key in .caselaw/gate-fires.jsonl, so changing it resets the evidence behind a warn -> block promotion."
         },
-        "kind": { "enum": ["banned-content", "required-content", "cross-file", "file-invariant", "path-scope", "paired-edit", "shell"] },
+        "kind": { "enum": ["banned-content", "required-content", "cross-file", "file-invariant", "path-scope", "paired-edit", "shell", "command"] },
         "severity": {
           "enum": ["warn", "block"],
           "default": "warn",
@@ -95,8 +95,17 @@
         { "if": { "properties": { "kind": { "const": "file-invariant" } } }, "then": { "$ref": "#/$defs/fileInvariant" } },
         { "if": { "properties": { "kind": { "const": "path-scope" } } }, "then": { "$ref": "#/$defs/pathScope" } },
         { "if": { "properties": { "kind": { "const": "paired-edit" } } }, "then": { "$ref": "#/$defs/pairedEdit" } },
-        { "if": { "properties": { "kind": { "const": "shell" } } }, "then": { "$ref": "#/$defs/shell" } }
+        { "if": { "properties": { "kind": { "const": "shell" } } }, "then": { "$ref": "#/$defs/shell" } },
+        { "if": { "properties": { "kind": { "const": "command" } } }, "then": { "$ref": "#/$defs/command" } }
       ]
+    },
+
+    "command": {
+      "description": "A shell command the agent is about to run must not match. Runs only in `pre`, on the host's hook for its shell tool (Claude Code's Bash), because only that call carries a command; every other run skips it. Born for one-writer-per-tree: `git add -A` and `git commit -a` sweep another writer's work into your commit.",
+      "required": ["patterns"],
+      "properties": {
+        "patterns": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/pattern" } }
+      }
     },
 
     "bannedContent": {

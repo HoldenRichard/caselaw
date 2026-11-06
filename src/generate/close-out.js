@@ -14,7 +14,7 @@ import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { render } from '../render/engine.js'
-import { BOUNDARY_LABELS, plain, publishingRows } from './authority-split.js'
+import { BOUNDARY_LABELS, plain, commandCode, publishingRows } from './authority-split.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 export const TEMPLATE_PATH = join(HERE, '../../templates/docs/close-out.md.tmpl')
@@ -42,10 +42,10 @@ export function buildModel({ answers = {}, detected = {}, projectName }) {
   // The DEF-274 re-score found the close-out identical across three different
   // projects. These three carry the project into it: the gates its CI runs,
   // how a human proves a change here, and which pushes publish.
-  const gates = (detected.ciGates?.gates || []).slice(0, 8).map((g) => `\`${plain(g.cmd, 160)}\``)
+  const gates = (detected.ciGates?.gates || []).map((g) => commandCode(g.cmd))
   // CI's own setup, which its gates need on a clean machine (round 4 of the DEF-274 re-score).
-  const setup = [...new Set((detected.ciGates?.setup || []).map((s) => `\`${plain(s.cmd, 160)}\``))].join(', ')
-  const jobs = new Set((detected.ciGates?.gates || []).slice(0, 8).map((g) => `${g.file}#${g.job ?? ''}`))
+  const setup = [...new Set((detected.ciGates?.setup || []).map((s) => commandCode(s.cmd)))].join(', ')
+  const jobs = new Set((detected.ciGates?.gates || []).map((g) => `${g.file}#${g.job ?? ''}`))
   const anyCommand =
     detected.ciGates?.gates?.[0]?.cmd || detected.commands?.test?.cmd || detected.commands?.build?.cmd || 'npm test'
   // A checklist item is read at a glance; a condition too long for one is

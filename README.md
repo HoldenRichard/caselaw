@@ -111,6 +111,25 @@ file and no `.claude/` directory.
 | `caselaw personal list` · `caselaw personal export` | your rules that caught failures across your repositories, kept on your machine; two or more, and your next install offers them |
 | `caselaw eject` | remove the tooling, keep everything you wrote |
 
+Evolution stages a proposal; it does not replace active case law. A human ratifies the
+proposal, which checks the original version's hash and archives the superseded text.
+An existing pending proposal is preserved rather than overwritten. Merge proposals retain
+both parents' evidence and archive both parents when ratified.
+
+Gate synthesis requires complete positive and negative file snapshots. Newly captured Git
+incidents include these snapshots; older diff-only fixtures remain readable but cannot
+certify a gate. Every control must explicitly cover the complete combined target-path set (use null
+for absent files); incomplete cross-incident snapshots are refused. Repository Git metadata
+is not valid snapshot input. The candidate runs against both snapshots through the installed
+gate runtime before registration; a missing installed runner prevents certification. Existing gate IDs are never replaced by synthesis, including with `--force`.
+The reported accuracy applies to recorded fixtures; it is not a guarantee for unseen changes.
+Snapshots contain complete changed-file contents; inspect them before committing fixtures.
+
+Rule transitions coordinate through a repository mutation lock. Run install, upgrade,
+and eject with a single writer; generated harness lifecycle operations are not a
+repository-wide transactional system. An interrupted mutation lock requires inspection
+before retrying.
+
 Every command a file in this repository names is checked against the dispatcher by a test. The
 first public release advertised seven that did not exist.
 
@@ -123,9 +142,10 @@ hash; a hand-edited one is reported and skipped, not clobbered.
 
 **Re-runs are byte-identical.** Run `init` twice and the second is a no-op.
 
-**It degrades rather than blocking.** A missing tool, malformed input, or a
-broken config reports loudly and exits zero. A workflow gate that breaks the
-workflow gets deleted within a day.
+**Runtime checker failures report degraded coverage.** The hook runner avoids blocking
+the workflow on its own failure. Governance mutations and certification instead refuse
+missing evidence, conflicting artifacts, and unavailable evaluators. A degraded run
+does not establish that a check passed.
 
 **`eject` keeps your docs.** The doctrine is your own answers as prose and does
 not need this tool to be useful. Only the machinery goes.
