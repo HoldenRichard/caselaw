@@ -31,7 +31,8 @@ export const UNKNOWN = '?'
 
 /** What the agent is told, inside the file it fills in. */
 export const HOW_TO_FILL = [
-  'Run setup in chat. Read the repo instructions, README, manifests and CI. Fill in the answers those files establish. Detection already supplies build, test, CI and publishing facts; do not ask the user to repeat them. A declared command is not evidence that it ran.',
+  'Run setup in chat. Read the repo instructions, README, manifests and CI. Fill in the answers those files establish. Detection already supplies build, test, CI and publishing facts; do not ask the user to repeat them. A declared command is not evidence that it ran. Carry scan-limit and unread-CI warnings into the setup summary; review omitted areas directly when they matter.',
+  'Use the suggested answers as a starting point. Verify their sources, keep repository facts separate from local capabilities, and bundle the recommended rules and review cadence into the approval summary. Review triggered recommendations against the actual workflow. A changelog or a test credential fixture may not justify an extra operating rule. Do not ask separate questions about commands, defaults, or a review interval.',
   'Ask at most two short, project-specific questions in one chat message if needed. Lead with the boundary that matters here: name the actual device, service, data or release step and ask what only a human may do and how they verify it. Ask about an external decision-maker only if it changes the handoff and the repo does not settle it.',
   'Do not infer access or authorization from a dependency, language, README or CI workflow. Classify what is established as physical or chosen; mark assumptions untested and say why. Fold remaining low-impact choices into one short setup preview, using the ask-first preset unless the user requests otherwise. List any defaults or triggered rules you recommend enabling in that preview.',
   'For repo facts, set "answer" and list "evidence": a repo-relative path, a path and line, or "command: <what you ran>". For an answer the user actually gave in chat, set "source" to "human" and leave "evidence" empty. The user can approve preferences together in the preview.',
@@ -45,13 +46,58 @@ export const HOW_TO_FILL = [
 ]
 
 /** The draft for this repository, carrying any answers already on file. */
-export function buildDraft({ doc, detected }) {
-  const ctx = { detected, answers: doc.answers }
+export function buildDraft({ doc, detected, previous = null }) {
+  const suggested = {}
+  const commands = Object.entries(detected.commands || {})
+    .filter(([name, entry]) => name !== 'format' && entry?.cmd && entry.source && !entry.source.startsWith('xcodebuild'))
+    .map(([, entry]) => entry)
+  const gates = detected.ciGates?.gates || []
+  const checks = gates.length ? gates : commands
+  const evidence = [...new Set(gates.length ? gates.map((g) => g.file) : commands.map((c) => c.source.split(':')[0]))]
+  if (checks.length) {
+    const commandsText = [...new Set(checks.map((c) => c.cmd))].join('; ')
+    const hasContext = checks.some((c) => c.workingDirectory || c.shell || c.condition || c.jobCondition || c.continueOnError)
+    const description = commandsText.length <= 350 && !hasContext
+      ? `these verification commands: ${commandsText}`
+      : `${checks.length} verification steps in ${evidence.join(', ')}; consult those sources for the complete commands and job prerequisites`
+    suggested['authority.agent_reach'] = {
+      answer: `The repository declares ${description}. Their execution and coverage still need to be verified locally.`,
+      evidence,
+    }
+  }
+  const claims = detected.signals?.claims || []
+  if (claims.length) {
+    const available = new Set(optionsFor(QUESTIONS.find((q) => q.id === 'outside.claims'), { detected }).map((o) => o.value))
+    suggested['outside.claims'] = {
+      answer: [...new Set(claims.map((c) => c.kind).filter((kind) => available.has(kind)))],
+      evidence: [...new Set(claims.map((c) => c.source))],
+    }
+  }
+  const saved = new Map((previous?.questions || []).map((q) => [q.id, q]))
+  const answers = { ...doc.answers }
+  for (const q of QUESTIONS) {
+    const carried = saved.get(q.id)
+    const suggestion = suggested[q.id]
+    if (hasAnswer(doc, q.id)) continue
+    if (carried?.answer != null) answers[q.id] = carried.answer
+    else if (suggestion) answers[q.id] = suggestion.answer
+    else if (q.preference && q.default !== undefined) answers[q.id] = q.default
+    else if (q.id === 'harness.defaults') answers[q.id] = optionsFor(q, { detected, answers }).map((o) => o.value)
+    else if (q.id === 'authority.retest_days') answers[q.id] = q.default
+  }
+  const ctx = { detected, answers: Object.fromEntries(Object.entries(answers).filter(([, value]) => value !== UNKNOWN)) }
+  const triggers = QUESTIONS.find((q) => q.id === 'harness.triggers')
+  if (!hasAnswer(doc, triggers.id) && saved.get(triggers.id)?.answer == null) {
+    answers[triggers.id] = optionsFor(triggers, ctx).map((o) => o.value)
+  }
   return {
     draftVersion: DRAFT_VERSION,
     project: doc.project ?? {},
+    ...(previous?.doctrineDir ? { doctrineDir: previous.doctrineDir } : {}),
+    ...(previous?.modules ? { modules: previous.modules } : {}),
     howToFill: HOW_TO_FILL,
     detected: {
+      warnings: detected.warnings || [],
       languages: (detected.stack?.languages || []).slice(0, 5).map((l) => `${l.name} ${l.pct}%`),
       buildSystem: detected.stack?.buildSystem ?? null,
       commands: Object.fromEntries(Object.entries(detected.commands || {}).filter(([, v]) => v?.cmd).map(([k, v]) => [k, v.cmd])),
@@ -79,15 +125,16 @@ export function buildDraft({ doc, detected }) {
       ...(q.defaultAll ? { default: optionsFor(q, ctx).map((o) => o.value) } : {}),
       ...(q.type === 'number' ? { min: q.min, max: q.max, default: q.default } : {}),
       ...(hasAnswer(doc, q.id) ? { alreadyAnswered: true } : {}),
-      answer: doc.answers?.[q.id] ?? (q.id === 'harness.autonomy' ? q.default : null),
-      evidence: [],
+      answer: answers[q.id] ?? null,
+      evidence: saved.get(q.id)?.answer != null ? saved.get(q.id).evidence || [] : suggested[q.id]?.evidence || [],
+      ...(saved.get(q.id)?.source ? { source: saved.get(q.id).source } : {}),
     })),
     // Not a question: the claims themselves, which the register needs and a
     // short interview cannot ask for. Keyed by the surfaces in outside.claims.
-    declarations: doc.answers?.declarations ?? {},
+    declarations: previous?.declarations ?? doc.answers?.declarations ?? {},
     // Why each untested boundary is assumed. Nothing collected this before, and
     // the authority split printed "not recorded" in its place (DEF-274 re-score).
-    notes: {},
+    notes: previous?.notes ?? {},
   }
 }
 
@@ -221,7 +268,7 @@ export async function validateDraft(draft, { root, detected, doc = { answers: {}
     return [`${DRAFT_PATH}: expected draftVersion ${DRAFT_VERSION}; regenerate it with \`caselaw init --draft\`.`]
   }
   const known = new Map(QUESTIONS.map((q) => [q.id, q]))
-  const answers = Object.fromEntries((draft.questions || []).map((d) => [d.id, d.answer]))
+  const answers = Object.fromEntries((draft.questions || []).filter((d) => d.answer != null && d.answer !== UNKNOWN).map((d) => [d.id, d.answer]))
   for (const d of draft.questions || []) {
     const q = known.get(d.id)
     if (!q) { errors.push(`${d.id}: no such question in this version of caselaw.`); continue }

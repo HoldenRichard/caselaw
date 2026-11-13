@@ -223,6 +223,14 @@ describe('boundary options follow the signals', () => {
     assert.equal(owner.file, 'docs/source/conf.py')
   })
 
+  test('nested MkDocs and VitePress configurations reserve docs for their sites', async () => {
+    await put('docs/en/mkdocs.yml', 'site_name: Project\n')
+    assert.equal((await docsOwner(root))?.tool, 'mkdocs')
+    await rm(join(root, 'docs/en/mkdocs.yml'))
+    await put('docs/.vitepress/config.ts', 'export default {}\n')
+    assert.equal((await docsOwner(root))?.tool, 'vitepress')
+  })
+
   test('every boundary any signal can offer has a label to render', () => {
     const all = boundaryCandidates({
       stack: { languages: [{ name: 'Swift' }] },

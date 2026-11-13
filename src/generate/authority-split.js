@@ -128,6 +128,17 @@ export function commandCode(command) {
   return longest ? `${fence} ${text} ${fence}` : `${fence}${text}${fence}`
 }
 
+/** A CI command is a source excerpt with its execution context, not a root-shell promise. */
+export function ciCommand(step) {
+  const context = []
+  if (step.workingDirectory) context.push(`working directory ${commandCode(step.workingDirectory)}`)
+  if (step.shell) context.push(`shell ${commandCode(step.shell)}`)
+  if (step.jobCondition) context.push(`job only if ${commandCode(step.jobCondition)}`)
+  if (step.condition) context.push(`only if ${commandCode(step.condition)}`)
+  if (step.continueOnError) context.push(`CI permits failure when ${commandCode(step.continueOnError)}`)
+  return `${commandCode(step.cmd)}${context.length ? ` (${context.join('; ')})` : ''}`
+}
+
 /** A table cell: plain text with pipes escaped, so a value cannot add columns. */
 export function cell(s, max = 400) {
   return plain(s, max).replace(/\|/g, '\\|')
@@ -291,9 +302,9 @@ function buildCanList({ answers, detected, selected = [] }) {
   // sequence), and the setup CI runs first is named with the gates it precedes.
   const gates = detected.ciGates?.gates || []
   for (const { file, job, list, split } of gateGroups(gates)) {
-    const steps = list.map((g) => `${commandCode(g.cmd)}${g.step ? ` (${plain(g.step, 80)})` : ''}`).join('; ')
+    const steps = list.map((g) => `${ciCommand(g)}${g.step ? ` (${plain(g.step, 80)})` : ''}`).join('; ')
     const setup = (detected.ciGates?.setup || []).filter((s) => s.file === file && (!split || s.job === job))
-    const first = setup.length ? ` CI sets up first with ${setup.map((s) => `${commandCode(s.cmd)} (line ${s.line})`).join(', ')}; a clean machine needs that too.` : ''
+    const first = setup.length ? ` CI declares setup steps ${setup.map((s) => `${ciCommand(s)} (line ${s.line})`).join(', ')}; respect their conditions and review the job before adapting them locally.` : ''
     const contexts = (detected.ciGates?.contexts || []).filter((c) => c.file === file && (!split || c.job === job)).map(ciContext).filter(Boolean)
     const where = split ? `\`${file}\`, job \`${plain(job, 60)}\`` : `\`${file}\``
     can.push(`Run what CI runs on a change, in its order (${where}): ${steps}.${first}${contexts.length ? ` ${contexts.join(' ')}` : ''}`)

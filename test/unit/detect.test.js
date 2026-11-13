@@ -623,10 +623,11 @@ describe('detect/environment', () => {
     await put('k8s/deployment.yaml', 'apiVersion: apps/v1\n')
     await put('firebase.json', '{}')
     await put('Procfile', 'web: node .\n')
+    await put('svelte.config.js', "import adapter from '@sveltejs/adapter-vercel';\nexport default { kit: { adapter: adapter() } };\n")
 
     const { environment } = await detectEnvironment(root, OFFLINE, {})
     const kinds = environment.deploySurface.map((d) => d.kind)
-    assert.deepEqual(kinds, ['docker', 'docker-compose', 'firebase', 'fly', 'heroku', 'kubernetes', 'terraform'])
+    assert.deepEqual(kinds, ['docker', 'docker-compose', 'firebase', 'fly', 'heroku', 'kubernetes', 'terraform', 'vercel'])
     const tf = environment.deploySurface.find((d) => d.kind === 'terraform')
     assert.equal(tf.evidence, 'infra/main.tf')
     assert.equal(tf.files.length, 2, 'one entry per kind, but the evidence list keeps every file')
@@ -638,6 +639,8 @@ describe('detect/environment', () => {
     await put('.env', 'API_KEY=abc\n')
     await put('config/prod.pem', 'x\n')
     await put('.env.example', 'API_KEY=\n')
+    await put('.npmrc', 'engine-strict=true\npackage-lock=false\n# //registry.npmjs.org/:_authToken=example\n')
+    await put('auth/.npmrc', '//registry.npmjs.org/:_authToken=${NPM_TOKEN}\n')
     await put('committed.pem', 'x\n')
     gitInit()
     // Force-add one secret so it is TRACKED: git check-ignore must then call it
@@ -650,6 +653,8 @@ describe('detect/environment', () => {
     assert.equal(byPath.get('config/prod.pem'), true)
     assert.equal(byPath.get('committed.pem'), false, 'a tracked key is exposed, whatever .gitignore says')
     assert.equal(byPath.has('.env.example'), false, 'templates are meant to be committed; flagging them trains dismissal')
+    assert.equal(byPath.has('.npmrc'), false, 'package-manager preferences are not credential settings')
+    assert.equal(byPath.has('auth/.npmrc'), true, 'credential placeholders still identify a credential surface')
   })
 
   test('POSITIVE CONTROL: with git unavailable, secrets report gitignored:null and a warning — never a false "safe"', async () => {

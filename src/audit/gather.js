@@ -72,7 +72,7 @@ export async function gather(root, { now = new Date() } = {}) {
 
   let trackedFiles = []
   try {
-    const { stdout } = await pExecFile('git', ['ls-files'], { cwd: root, encoding: 'utf8' })
+    const { stdout } = await pExecFile('git', ['ls-files'], { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
     trackedFiles = stdout.split('\n').map((s) => s.trim()).filter(Boolean)
   } catch (err) {
     notes.push(`trackedFiles: ${err.message}`)
@@ -216,8 +216,16 @@ function allRuleFiles(rules) {
 /** Markdown links and backticked paths inside doctrine, and whether they exist. */
 async function gatherRefs(root, docTexts) {
   const refs = []
-  for (const [from, text] of Object.entries(docTexts)) {
+  for (const [from, original] of Object.entries(docTexts)) {
+    let text = original
+    if (from === 'AGENTS.md' || from === 'CLAUDE.md') {
+      try {
+        const pointer = locate(text, 'pointer')
+        if (pointer.present) text = pointer.interior
+      } catch { /* malformed managed blocks are reported by drift checks */ }
+    }
     const targets = new Set()
+    for (const match of text.matchAll(/^@([^\s]+)$/gm)) targets.add(match[1])
     for (const m of text.matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) targets.add(m[1])
     for (const m of text.matchAll(/`([^`\s]+\/[^`\s]*)`/g)) targets.add(m[1])
     for (const t of targets) {

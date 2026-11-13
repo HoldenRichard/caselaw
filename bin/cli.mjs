@@ -570,26 +570,29 @@ async function cmdInit(args, root) {
     say(`  ! ${w.message}${w.hint ? ` — ${w.hint}` : ''}`)
   }
 
-  // Writing the draft touches only .caselaw/draft.json, so neither a dirty tree
-  // nor a borrowed docs/ is a reason to refuse it; --from-draft meets both.
+  // Preparation leaves the working tree's source untouched.
   const existing = await answersStore.load(root)
-  if (args.draft || (!existing && !args.fromDraft && !args.interview && !args.yes && !args.reconfigure)) {
-    return writeInitDraft({ root, detected, args, existing })
-  }
-
-  // A flag that cannot be honoured is reported before anything else is checked.
-  const asked = args.opt['doctrine-dir']
+  const pending = args.fromDraft ? await loadDraft(root) : null
+  const asked = args.opt['doctrine-dir'] ?? pending?.doctrineDir
   let dir = asked === undefined ? null : cleanDoctrineDir(asked)
   if (asked !== undefined && !dir) {
     say(`\n  --doctrine-dir "${asked}" is not a directory inside this repository. Use a relative path like governance or docs/engineering.`)
     return 1
   }
+  if (pending?.modules !== undefined && (!Array.isArray(pending.modules) || pending.modules.some((value) => typeof value !== 'string'))) {
+    say(`\n  ${DRAFT_PATH}: modules must be a list of module names.`)
+    return 1
+  }
+  if (args.draft || (!existing && !args.fromDraft && !args.interview && !args.yes && !args.reconfigure)) {
+    return writeInitDraft({ root, detected, args, existing })
+  }
 
   // Refuse to work on a dirty tree unless told otherwise: the plan we show has
   // to be about our changes, not tangled with in-flight edits. Files this
   // tool wrote and has not yet seen committed are ours, not dirt — every
-  // second `init` used to refuse over the first one's own output.
-  if (detected.vcs?.dirty && !args.force && !args.dryRun) {
+  // second `init` used to refuse over the first one's own output. Chat setup
+  // uses the file ownership plan to preserve unrelated edits without --force.
+  if (detected.vcs?.dirty && !args.fromDraft && !args.force && !args.dryRun) {
     const foreign = await foreignDirt(root)
     if (foreign.length) {
       say(`\n  Working tree has uncommitted changes that are not caselaw's (${foreign.length} path${foreign.length === 1 ? '' : 's'}): ${foreign.slice(0, 5).join(', ')}${foreign.length > 5 ? ', …' : ''}`)
@@ -630,7 +633,8 @@ async function cmdInit(args, root) {
   doc.generatedAt ??= new Date().toISOString()
   // Recorded in answers so `check` and `upgrade` keep producing the same set;
   // a module chosen at install must not silently vanish on the next run.
-  if (args.with.length) doc.modules = [...new Set([...(doc.modules ?? []), ...args.with])]
+  const modules = [...(pending?.modules || []), ...args.with]
+  if (modules.length) doc.modules = [...new Set([...(doc.modules ?? []), ...modules])]
 
   if (args.fromDraft) return initFromDraft({ root, doc, detected, args })
 
@@ -658,15 +662,18 @@ async function writeInitDraft({ root, detected, args, existing }) {
     templateVersion: TEMPLATE_VERSION,
     project: { name: detected.stack?.projectName || basename(root) },
   })
-  const draft = buildDraft({ doc, detected })
+  const previous = args.force ? null : await loadDraft(root)
+  const draft = buildDraft({ doc, detected, previous })
+  if (args.opt['doctrine-dir'] !== undefined) draft.doctrineDir = cleanDoctrineDir(args.opt['doctrine-dir'])
+  if (args.with.length) draft.modules = [...new Set([...(draft.modules || []), ...args.with])]
   if (args.dryRun) {
     say(JSON.stringify(draft, null, 2))
     say('\n  --dry-run: nothing written.')
     return 0
   }
-  const previous = args.force ? null : await loadDraft(root)
   if (previous) {
-    say(`\n  Resuming ${DRAFT_PATH}.`)
+    await writeDraft(root, draft, { replace: true })
+    say(`\n  Resuming ${DRAFT_PATH}; answers are preserved and available options are refreshed.`)
   } else {
     await writeDraft(root, draft, { replace: args.force })
     say(`\n  Prepared ${DRAFT_PATH} with repository findings and instructions for your agent.`)
@@ -792,7 +799,7 @@ async function finishInit({ root, doc, detected, args, prompt }) {
     say(`  ! ${p} is ignored by .gitignore, so it cannot be committed or shared. Add \`!${p}\` to .gitignore if it should be.`)
   }
   say('  Commit these files: the audit reports doctrine outside version control as an error, and so will CI.')
-  say('  Read docs/authority-split.md. It is the one your agent should read first.\n')
+  say(`  Read ${doctrineDirOf(doc)}/authority-split.md. It is the one your agent should read first.\n`)
   return 0
 }
 

@@ -14,7 +14,7 @@
  * under-reporting costs a false promise in a governance document.
  */
 
-import { readdir, stat } from 'node:fs/promises'
+import { readFile, readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { run } from './exec.js'
 import { walk } from './stack.js'
@@ -185,6 +185,13 @@ export async function detectEnvironment(root, opts = {}, ctx = {}) {
       if (parts.length > 1 && K8S_DIRS.has(parts[parts.length - 2])) add('kubernetes', f)
     }
   }
+  for (const f of ['svelte.config.js', 'svelte.config.ts']) {
+    if (!fileSet.has(f)) continue
+    try {
+      const config = await readFile(join(root, f), 'utf8')
+      if (/^\s*import\s+\w+\s+from\s+['"]@sveltejs\/adapter-vercel['"]/m.test(config)) add('vercel', f)
+    } catch { /* unreadable config supplies no deployment evidence */ }
+  }
   env.deploySurface = [...byKind.entries()]
     .map(([kind, files]) => ({ kind, evidence: files[0], files }))
     .sort((a, b) => a.kind.localeCompare(b.kind))
@@ -201,7 +208,16 @@ export async function detectEnvironment(root, opts = {}, ctx = {}) {
   const secretPaths = []
   for (const f of w.files) {
     const base = f.slice(f.lastIndexOf('/') + 1)
-    if (SECRET_RULES.some((r) => r.test(base))) secretPaths.push(f)
+    if (!SECRET_RULES.some((r) => r.test(base))) continue
+    if (base === '.npmrc') {
+      try {
+        const lines = (await readFile(join(root, f), 'utf8')).split(/\r?\n/)
+        const credentials = lines.some((line) => !/^\s*[#;]/.test(line) &&
+          /(?:^|:)\s*(?:_authToken|_auth|_password|username|password|certfile|keyfile)\s*=/i.test(line))
+        if (!credentials) continue
+      } catch { /* unreadable credential config remains a candidate */ }
+    }
+    secretPaths.push(f)
   }
   const ignored = await checkIgnored(root, secretPaths, opts)
   if (ignored.degraded && secretPaths.length > 0) {

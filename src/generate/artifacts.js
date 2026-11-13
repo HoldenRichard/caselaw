@@ -229,7 +229,12 @@ export async function buildArtifacts({ doc, detected, adapterIds = null, modules
 
   out.push({
     path: '.gitignore', kind: 'block', blockId: 'caselaw', version: 1,
-    body: ['# Local gate telemetry and compaction counts — per-machine, never committed.', '.caselaw/gate-fires.jsonl', '.caselaw/compactions.jsonl'].join('\n'),
+    body: [
+      '# Local gate telemetry and compaction counts — per-machine, never committed.',
+      '.caselaw/gate-fires.jsonl', '.caselaw/compactions.jsonl',
+      '# Share only the generated runner when a project ignores bin/ globally.',
+      '!/.caselaw/bin/', '/.caselaw/bin/*', '!/.caselaw/bin/gate.mjs',
+    ].join('\n'),
   })
 
   // Doctrine paths named inside the files follow the doctrine to its directory.

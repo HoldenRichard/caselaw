@@ -8,7 +8,7 @@
  * and says why (src/core/doctrine.js).
  */
 
-import { readFile, stat } from 'node:fs/promises'
+import { readFile, readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
 const exists = async (p) => { try { await stat(p); return true } catch { return false } }
@@ -39,6 +39,21 @@ export async function docsOwner(root) {
     if (stripSlashes(dir) === 'docs') {
       return { tool: 'mkdocs', file: f, role: 'source', dir: 'docs', consequence: 'every markdown file caselaw writes there is published as part of the project documentation' }
     }
+  }
+  // Documentation sites also keep their configuration inside docs/ or a locale.
+  const docConfigs = ['docs/mkdocs.yml', 'docs/mkdocs.yaml']
+  try {
+    const children = await readdir(join(root, 'docs'), { withFileTypes: true })
+    for (const child of children.filter((entry) => entry.isDirectory()).sort((a, b) => a.name.localeCompare(b.name))) {
+      docConfigs.push(`docs/${child.name}/mkdocs.yml`, `docs/${child.name}/mkdocs.yaml`)
+    }
+  } catch { /* no readable docs directory */ }
+  for (const f of docConfigs) {
+    if (await exists(join(root, f))) return { tool: 'mkdocs', file: f, role: 'source', dir: 'docs', consequence: 'this directory contains the documentation site source' }
+  }
+  for (const name of ['config.js', 'config.ts', 'config.mjs', 'config.mts']) {
+    const f = `docs/.vitepress/${name}`
+    if (await exists(join(root, f))) return { tool: 'vitepress', file: f, role: 'source', dir: 'docs', consequence: 'this directory contains the documentation site source' }
   }
   // sphinx: a conf.py under docs/ makes docs/ the source tree, directly or in
   // docs/source/ (sphinx-quickstart's separate-source layout). pyvisa keeps its

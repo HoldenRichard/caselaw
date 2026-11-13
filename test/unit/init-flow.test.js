@@ -166,11 +166,18 @@ describe('where the doctrine may land', () => {
   })
 
   test('a generated file that .gitignore would keep out of the repo is called out', async () => {
-    await put('.gitignore', 'AGENTS.md\n')
+    await put('.gitignore', 'AGENTS.md\nbin\n')
+    await put('.caselaw/bin/private-tool', 'local helper\n')
     commit()
     const r = await cli(['init', '--yes'], { cwd: root, input: ANSWERS })
     assert.equal(r.code, 0, r.out + r.err)
     assert.match(r.out, /AGENTS\.md is ignored by \.gitignore/)
+    assert.doesNotMatch(r.out, /gate\.mjs is ignored/)
+    assert.throws(() => execFileSync('git', ['check-ignore', '--', '.caselaw/bin/gate.mjs'], { cwd: root, stdio: 'pipe' }), (err) => err.status === 1)
+    assert.match(execFileSync('git', ['check-ignore', '--', '.caselaw/bin/private-tool'], { cwd: root, encoding: 'utf8' }), /private-tool/)
+    await cli(['eject', '--yes'], { cwd: root })
+    assert.equal(await readFile(join(root, '.gitignore'), 'utf8'), 'AGENTS.md\nbin\n')
+    assert.equal(await readFile(join(root, '.caselaw/bin/private-tool'), 'utf8'), 'local helper\n')
   })
 })
 

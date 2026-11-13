@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "cliVersion": "0.3.0",
+  "cliVersion": "0.4.1",
   "templateVersion": "1.2",
-  "generatedAt": "2026-11-06T18:58:52.511Z",
+  "generatedAt": "2026-11-13T17:06:33.238Z",
   "entries": {
     "docs/authority-split.md": {
       "kind": "file",
@@ -72,7 +72,7 @@
     },
     ".gitignore": {
       "kind": "block",
-      "hash": "e6d365cb92cc9489164544ed18dbe6d718ddcc427cf9c9062cdedf8e29bbba3c",
+      "hash": "db0420897e6a0879471d303fc612034f306d8f9cbea89484eee59de462f9ef2c",
       "blockId": "caselaw"
     },
     "docs/rules/proposed/README.md": {

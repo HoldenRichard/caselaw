@@ -62,3 +62,23 @@ describe('the language census', () => {
     }
   })
 })
+
+
+test('large and compound workflows expose incomplete CI coverage', async () => {
+  const { detectCiGates } = await import('../../src/detect/ci-gates.js')
+  const file = '.github/workflows/check.yml'
+  const workflow = ['on: [push]', 'jobs:', '  test:', '    steps:',
+    '      - run: |', '          if true; then', '            npm test', '          fi',
+    ...Array.from({ length: 14 }, (_, i) => `      - run: npm run check${i}`)].join('\n')
+  const root = await repo({ [file]: workflow })
+  try {
+    const { ciGates, warnings } = await detectCiGates(root, { files: [file] })
+    assert.equal(ciGates.gates.length, 12)
+    assert.ok(ciGates.gates.every((gate) => !/^(if|fi)/.test(gate.cmd)))
+    assert.ok(warnings.some((warning) => warning.code === 'ci-gates-truncated'))
+    assert.ok(warnings.some((warning) => warning.code === 'ci-shell-unread'))
+    assert.ok(ciGates.unread.length >= 2)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

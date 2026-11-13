@@ -263,6 +263,19 @@ Generated 2026-08-13. Boundary re-check due **2026-09-12**.
     assert.ok(!runChecks(g).findings.some((f) => f.code === 'refs-resolve'))
   })
 
+  test('managed pointers are checked without treating existing agent examples as root-relative files', async () => {
+    const { upsert } = await import('../../src/core/blocks.js')
+    const original = 'Tests load an integration-local `translations/en.json`.\n'
+    const agents = upsert(original, { id: 'pointer', version: 1, filePath: 'AGENTS.md', body: 'Read `docs/authority-split.md`.' })
+    await put('AGENTS.md', agents.text)
+    await put('docs/authority-split.md', '# Authority split')
+    await put('CLAUDE.md', upsert('', { id: 'pointer', version: 1, filePath: 'CLAUDE.md', body: '@AGENTS.md' }).text)
+    const context = await gather(root)
+    assert.ok(!context.docRefs.some((ref) => ref.target === 'translations/en.json'))
+    assert.ok(context.docRefs.some((ref) => ref.target === 'AGENTS.md' && ref.exists))
+    assert.ok(context.docRefs.some((ref) => ref.target === 'docs/authority-split.md' && ref.exists))
+  })
+
   test('gather never throws on an empty or hostile repo', async () => {
     const g = await gather(root)
     assert.ok(g)

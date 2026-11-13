@@ -77,6 +77,8 @@ describe('the gates CI runs', () => {
 
   test('ntfy: a step named for installing is setup, whatever it runs', () => {
     assert.deepEqual(runSteps(NTFY_TEST).map((g) => g.cmd), ['make docs', 'make checkv'])
+    const checkout = 'jobs:\n  analyze:\n    steps:\n      - run: git checkout HEAD^2\n      - run: git diff --exit-code\n'
+    assert.deepEqual(runSteps(checkout).map((g) => g.cmd), ['git diff --exit-code'])
   })
 
   test('a workflow that runs only on tags is a release, not a gate; one on pull requests is', () => {
@@ -120,6 +122,61 @@ test('POSITIVE CONTROL: continued shell commands remain one executable gate, wit
   assert.equal(runSteps(workflow.replace('run: |', 'run: >'))[0].cmd, ['docker run --rm \\', '  scanner:1 \\', '  scan /repo', 'npm test'].join(' '))
 })
 
+
+test('commented YAML block headers and environment setup preserve executable verification commands', () => {
+  const workflow = [
+    'jobs:', '  test:', '    steps:',
+    '      - name: (non-windows) Set Playwright path',
+    '        run: PLAYWRIGHT_VERSION="1.2"',
+    '      - name: Set node version',
+    '        run: pnpm runtime set node 22 -g',
+    '      - name: Build docs',
+    '        run: | # scanner annotation',
+    '          uv run docs.py build',
+    '      - run: HEAD_SHA=$(gh pr view 123 --json headRefOid)',
+    '      - run: TEST_GROUPS="[1, 2]"',
+    '      - name: Test',
+    '        run: uv run pytest',
+    '      - run: PYTHONPATH=. pytest',
+  ].join('\n')
+  assert.deepEqual(runSteps(workflow).map((gate) => gate.cmd), ['uv run docs.py build', 'uv run pytest', 'PYTHONPATH=. pytest'])
+})
+
+test('CI commands retain directory, shell and conditional setup in both generated handoffs', async () => {
+  const { setupSteps } = await import('../../src/detect/ci-gates.js')
+  const { generate } = await import('../../src/generate/authority-split.js')
+  const { generate: closeout } = await import('../../src/generate/close-out.js')
+  const workflow = `on: push
+defaults:
+  run:
+    shell: bash
+    working-directory: ./default
+jobs:
+  test:
+    steps:
+      - name: Install special dependency
+        run: DISABLE_SQLALCHEMY_CEXT=1 uv pip install --force-reinstall sqlalchemy
+        if: matrix.python-version == '3.14t'
+      - name: Test core
+        run: pnpm build
+        working-directory: ./packages/core
+      - name: Test temporary directory
+        run: npm test
+        working-directory: \${{ runner.temp }}
+`
+  const gates = runSteps(workflow)
+  const setup = setupSteps(workflow)
+  const detected = { ciGates: { gates: gates.map((g) => ({ file: 'ci.yml', job: 'test', ...g })), setup: setup.map((g) => ({ file: 'ci.yml', job: 'test', ...g })) } }
+  for (const render of [generate, closeout]) {
+    const { content } = await render({ detected, answers: {}, projectName: 'Fixture' })
+    assert.match(content, /working directory `\.\/packages\/core`/)
+    assert.match(content, /shell `bash`/)
+    assert.match(content, /only if `matrix.python-version == '3.14t'`/)
+    assert.match(content, /working directory `\.\/default`/)
+    assert.match(content, /working directory `\$\{\{ runner.temp \}\}`/)
+    assert.doesNotMatch(content, /a clean machine needs/)
+  }
+})
 
 test('POSITIVE CONTROL: generated checklists preserve complete long commands and all gates', async () => {
   const { buildModel } = await import('../../src/generate/close-out.js')

@@ -58,13 +58,13 @@ describe('gates that run on a clean machine', () => {
     assert.deepEqual(ciGates.setup.map((s) => [s.cmd, s.job]), [['make build-deps-ubuntu', 'build']])
 
     const { content } = await generateAuthoritySplit({ answers: {}, detected: { ciGates }, projectName: 'P', now: NOW })
-    assert.match(content, /- Run what CI runs on a change, in its order \(`\.github\/workflows\/build\.yaml`, job `build`\): `make build` \(Build all the things\)\. CI sets up first with `make build-deps-ubuntu` \(line 9\); a clean machine needs that too\./)
+    assert.match(content, /- Run what CI runs on a change, in its order \(`\.github\/workflows\/build\.yaml`, job `build`\): `make build` \(Build all the things\)\. CI declares setup steps `make build-deps-ubuntu` \(line 9\); respect their conditions and review the job before adapting them locally\./)
     assert.match(content, /- Run what CI runs on a change, in its order \(`\.github\/workflows\/build\.yaml`, job `docker-build`\): `docker build/)
     assert.doesNotMatch(content, /job `docker-build`\):[^\n]*build-deps-ubuntu/, 'setup belongs to the job that runs it')
 
     const close = await generateCloseOut({ answers: {}, detected: { ciGates }, projectName: 'P' })
     assert.match(close.content, /The gates CI runs on a change, job by job, each job in its own order\./)
-    assert.match(close.content, /CI sets up first with `make build-deps-ubuntu`; a clean machine needs\nthat too\./)
+    assert.match(close.content, /CI declares setup steps `make build-deps-ubuntu`;\nrespect their conditions and review the job before adapting them locally\./)
   })
 
   test('one job keeps the plain wording', async () => {

@@ -19,8 +19,8 @@ Keep it short. A close-out nobody writes is worth less than a rough one they do.
 {{# if gates }}
 
 The gates CI runs on a change, {{ gateOrder }}. Run the ones your change touches before calling the
-work done; CI will run the rest.{{# if setup }} CI sets up first with {{ setup }}; a clean machine needs
-that too.{{/ if }}
+work done; CI will run the rest.{{# if setup }} CI declares setup steps {{ setup }};
+respect their conditions and review the job before adapting them locally.{{/ if }}
 
 {{# each gates }}- [ ] {{ . }}
 {{/ each }}

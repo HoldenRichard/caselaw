@@ -14,8 +14,12 @@ caselaw-preview/
 .agents/
 .codex/
 
-# caselaw:begin id=caselaw v=1 hash=e6d365cb92cc9489164544ed18dbe6d718ddcc427cf9c9062cdedf8e29bbba3c
+# caselaw:begin id=caselaw v=1 hash=db0420897e6a0879471d303fc612034f306d8f9cbea89484eee59de462f9ef2c
 # Local gate telemetry and compaction counts — per-machine, never committed.
 .caselaw/gate-fires.jsonl
 .caselaw/compactions.jsonl
+# Share only the generated runner when a project ignores bin/ globally.
+!/.caselaw/bin/
+/.caselaw/bin/*
+!/.caselaw/bin/gate.mjs
 # caselaw:end id=caselaw

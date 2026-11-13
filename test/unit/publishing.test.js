@@ -128,3 +128,41 @@ describe('the authority split says what a push publishes', () => {
     assert.doesNotMatch(content, /What a push can publish/)
   })
 })
+
+test('publishing keeps step conditions separate from a following commented job', async () => {
+  const text = `on: push
+jobs:
+  format:
+    steps:
+      - name: Push fixes
+        if: env.CAN_PUSH == 'true'
+        run: git push
+  summary: # branch protection only
+    if: always()
+    steps: []
+`
+  const root = await mkdtemp(join(tmpdir(), 'caselaw-publish-context-'))
+  try {
+    await mkdir(join(root, '.github/workflows'), { recursive: true })
+    await writeFile(join(root, '.github/workflows/format.yml'), text)
+    const result = await detectPublishing(root, { files: ['.github/workflows/format.yml'] })
+    const conditions = result.publishing[0].publishes[0].conditions.join(' ')
+    assert.match(conditions, /CAN_PUSH/)
+    assert.doesNotMatch(conditions, /always/)
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test('package release wrappers are visible unknowns and preview publishers are not CI checks', async () => {
+  const { detectCiGates } = await import('../../src/detect/ci-gates.js')
+  const root = await mkdtemp(join(tmpdir(), 'caselaw-publish-wrapper-'))
+  const file = '.github/workflows/release.yml'
+  try {
+    await mkdir(join(root, '.github/workflows'), { recursive: true })
+    await writeFile(join(root, file), 'on: push\njobs:\n  preview:\n    steps:\n      - run: pnpm run ci-publish "$TAG"\n      - run: pnpm dlx pkg-pr-new@0.0 publish --pnpm ./packages/core\n')
+    const { publishing, warnings } = await detectPublishing(root, { files: [file] })
+    assert.ok(publishing[0].publishes.some((p) => /pkg-pr-new/.test(p.what)))
+    assert.ok(warnings.some((w) => w.code === 'publishing-wrapper-unread'))
+    assert.ok(publishing[0].publishes.some((p) => /destination unverified/.test(p.what)))
+    assert.deepEqual((await detectCiGates(root, { files: [file] })).ciGates.gates, [])
+  } finally { await rm(root, { recursive: true, force: true }) }
+})

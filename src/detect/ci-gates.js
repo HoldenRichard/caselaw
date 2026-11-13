@@ -16,13 +16,15 @@
 
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { workflowEvents, publishSteps, jobsOf } from './publishing.js'
+import { workflowEvents, publishSteps, jobsOf, stepContext } from './publishing.js'
 
 const MAX_GATES = 12
 
-const SETUP = /^(cd|echo|export|set|exit|true|sudo\b|apt(-get)?\b|brew\b|choco\b|python3? -m pip\b|pip3? install\b|npm (ci|install|i)\b|yarn( install)?$|pnpm (install|i)\b|corepack\b|go mod (download|tidy)\b|git (config|fetch|submodule)\b|mkdir\b|cp\b|mv\b|rm\b|curl\b|wget\b|source\b|\.\s|touch\b|chmod\b|ls\b|cat\b|env\b|printenv\b|codecov\b|bash -c "\$\(curl)/
+const SETUP = /^(cd|echo|export|set|exit|true|sudo\b|apt(-get)?\b|brew\b|choco\b|python3? -m pip\b|pip3? install\b|npm (ci|install|i)\b|yarn( install)?$|pnpm (install|i)\b|corepack\b|go mod (download|tidy)\b|uv (sync|pip (install|uninstall))\b|pnpm runtime set\b|tar\b|git (config|fetch|submodule|checkout|switch)\b|mkdir\b|cp\b|mv\b|rm\b|curl\b|wget\b|source\b|\.\s|touch\b|chmod\b|ls\b|cat\b|env\b|printenv\b|codecov\b|bash -c "\$\(curl)/
 
-const SETUP_STEP = /^(install|set ?up|setup|cache|checkout|print|configure|prepare|download)\b/i
+const ASSIGNMENT_ONLY = /^(?:[A-Za-z_]\w*|\$env:\w+)\s*=\s*(?:"(?:[^"\\]|\\.)*"|'[^']*'|\$\([^\n]*\)|[^\s]+)\s*$/
+
+const SETUP_STEP = /^(?:\([^)]*\)\s*)?(install|set|setup|cache|checkout|print|configure|prepare|download|update|uninstall|reinstall|collect|create)\b/i
 
 /** A shared workflow counts as a gate only when its name says it builds, tests, lints or checks. */
 const GATE_NAME = /(build|test|lint|check|typecheck|ci)[^/]*\.ya?ml/i
@@ -55,6 +57,7 @@ const OTHER_CI = [
  */
 export async function detectCiGates(root, walked) {
   const ciGates = emptyCiGates()
+  const warnings = []
   const workflows = walked.files.filter((f) => /^\.github\/workflows\/[^/]+\.ya?ml$/.test(f)).sort()
   for (const file of workflows) {
     let text
@@ -67,7 +70,17 @@ export async function detectCiGates(root, walked) {
     const lines = text.split(/\r?\n/)
     const jobOf = (line) => jobs.find((j) => line - 1 > j.start && line - 1 < j.end)
     const gates = runSteps(text).map((g) => ({ ...g, job: jobOf(g.line)?.name ?? null }))
-    for (const g of gates) if (ciGates.gates.length < MAX_GATES) ciGates.gates.push({ file, ...g })
+    const available = Math.max(0, MAX_GATES - ciGates.gates.length)
+    ciGates.gates.push(...gates.slice(0, available).map((g) => ({ file, ...g })))
+    if (gates.length > available) {
+      ciGates.unread.push({ file, system: `additional GitHub Actions commands beyond the ${MAX_GATES}-command reporting limit` })
+      warnings.push({ code: 'ci-gates-truncated', message: `Only the first ${MAX_GATES} CI commands are reported; additional commands in ${file} need source review.` })
+    }
+    const unread = scanSteps(text).filter((step) => step.unread)
+    if (unread.length) {
+      for (const step of unread) ciGates.unread.push({ file, system: `shell control flow in ${step.step || 'a run step'} at line ${step.line}` })
+      warnings.push({ code: 'ci-shell-unread', message: `Shell control flow in ${file} needs source review; its fragments are not standalone checks.` })
+    }
     // The project's own setup, which CI runs before its gates: ntfy's gates do
     // not run on a clean machine without `make build-deps-ubuntu` (round 4).
     // Only what runs before the job's first gate: ntfy's "Print build results"
@@ -87,7 +100,7 @@ export async function detectCiGates(root, walked) {
     const file = walked.files.filter((f) => re.test(f)).sort()[0]
     if (file) ciGates.unread.push({ file, system })
   }
-  return { ciGates, warnings: [] }
+  return { ciGates, warnings }
 }
 
 /**
@@ -139,7 +152,7 @@ export function runsOnChange(text) {
 
 /** Each gate command with the line it is on and the name of its step, in file order. */
 export function runSteps(text) {
-  return scanSteps(text).filter((c) => !c.setup && !SETUP.test(c.cmd)).map(({ cmd, line, step }) => ({ cmd, line, step }))
+  return scanSteps(text).filter((c) => !c.setup && !c.unread && !SETUP.test(c.cmd) && !ASSIGNMENT_ONLY.test(c.cmd)).map(({ cmd, line, step, context }) => ({ cmd, line, step, ...context }))
 }
 
 /**
@@ -148,7 +161,7 @@ export function runSteps(text) {
  * housekeeping are not listed; a reader knows to install dependencies.
  */
 export function setupSteps(text) {
-  return scanSteps(text).filter((c) => c.setup && !SETUP.test(c.cmd)).map(({ cmd, line, step }) => ({ cmd, line, step }))
+  return scanSteps(text).filter((c) => c.setup && !c.unread && !SETUP.test(c.cmd) && !ASSIGNMENT_ONLY.test(c.cmd)).map(({ cmd, line, step, context }) => ({ cmd, line, step, ...context }))
 }
 
 // A shell comment ends at the physical newline; its trailing slash does not continue it.
@@ -177,7 +190,8 @@ function scanSteps(text) {
     if (/^\s*-\s+(uses|run):/.test(l) && !name) stepName = /^\s*-\s+run:/.test(l) ? null : stepName
     const run = /^(\s*)(?:-\s+)?run:\s*(.*)$/.exec(l)
     if (!run) continue
-    const value = run[2].trim()
+    const value = run[2].trim().replace(/^([|>][-+]?)\s+#.*$/, '$1')
+    const context = stepContext(text, i + 1)
     const commands = []
     if (/^[|>][-+]?$/.test(value)) {
       const base = indent(l)
@@ -194,14 +208,19 @@ function scanSteps(text) {
         } else commands.push({ cmd: fragment, line: j + 1 })
       }
     } else if (value) {
-      commands.push({ cmd: value, line: i + 1 })
+      commands.push({ cmd: unquote(value), line: i + 1 })
     }
     // A step named for setup is setup, whatever it runs: ntfy's "Install dependencies" is `make build-deps-ubuntu`.
     const setup = SETUP_STEP.test(stepName || '')
+    const controlFlow = commands.some((c) => /^\s*(?:if\s|elif\s|else(?:\s|$)|fi(?:\s|$)|for\s|while\s|until\s|case\s|esac(?:\s|$)|[A-Za-z_]\w*\s*\(\)\s*\{|\S+\s*<<-?\s*['"]?\w+)/.test(c.cmd))
+    if (controlFlow && !setup) {
+      out.push({ cmd: '', line: i + 1, step: stepName, setup, unread: true })
+      continue
+    }
     for (const c of commands) {
       const cmd = c.cmd.trim()
       if (!cmd || cmd.startsWith('#')) continue
-      out.push({ cmd, line: c.line, step: stepName, setup })
+      out.push({ cmd, line: c.line, step: stepName, setup, context })
     }
   }
   return out
@@ -218,5 +237,7 @@ export function sharedWorkflows(text) {
 }
 
 function unquote(s) {
-  return String(s).trim().replace(/^["']|["']$/g, '')
+  const value = String(s).trim()
+  const quoted = (value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))
+  return quoted ? value.slice(1, -1) : value
 }

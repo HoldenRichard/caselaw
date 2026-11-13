@@ -110,6 +110,33 @@ describe('validating a filled draft', () => {
   })
 })
 
+test('unknown optional answers remain gaps while inferred setup recommendations survive chat approval', async () => {
+  const detected = {
+    ...DETECTED,
+    commands: { test: { cmd: 'pytest', source: 'pyproject.toml:tool.pytest.ini_options' }, format: { cmd: 'ruff format .', source: 'pyproject.toml:tool.ruff' } },
+    signals: { ...DETECTED.signals, claims: [{ kind: 'readme', source: 'README.md' }] },
+  }
+  const draft = buildDraft({ doc: emptyAnswers(), detected })
+  const byId = new Map(draft.questions.map((q) => [q.id, q]))
+  assert.match(byId.get('authority.agent_reach').answer, /pytest/)
+  assert.match(byId.get('authority.agent_reach').answer, /still need to be verified/)
+  assert.doesNotMatch(byId.get('authority.agent_reach').answer, /ruff format/)
+  assert.deepEqual(byId.get('outside.claims').answer, ['readme'])
+  assert.ok(byId.get('harness.triggers').answer.includes('T2'))
+  assert.equal(byId.get('authority.cannot').answer, null)
+  assert.equal(byId.get('authority.retest_days').answer, 30)
+  byId.get('outside.authority').answer = UNKNOWN
+  byId.get('authority.cannot').answer = UNKNOWN
+  byId.get('outside.claims').answer = UNKNOWN
+  byId.get('harness.triggers').answer = []
+  assert.deepEqual(await validateDraft(draft, { root, detected }), [])
+  const doc = emptyAnswers()
+  await runInterview({ doc, detected, prompt: draftPrompt(draft, { accept: true }) })
+  assert.ok(doc.unanswered.some((q) => q.id === 'outside.authority'))
+  assert.ok(doc.unanswered.some((q) => q.id === 'authority.cannot'))
+  assert.ok(doc.unanswered.some((q) => q.id === 'outside.claims'))
+})
+
 describe('answering from the draft', () => {
   const filled = () => fill(buildDraft({ doc: emptyAnswers(), detected: DETECTED }), GOOD)
 
@@ -179,13 +206,22 @@ describe('init --draft, then --from-draft', () => {
     await writeFile(path, filled, 'utf8')
     const resumed = await cli(['init'], { cwd: root })
     assert.equal(resumed.code, 0, resumed.out)
-    assert.equal(await readFile(path, 'utf8'), filled)
+    const refreshed = JSON.parse(await readFile(path, 'utf8'))
+    for (const q of JSON.parse(filled).questions) {
+      const current = refreshed.questions.find((entry) => entry.id === q.id)
+      assert.deepEqual(current.answer, q.answer)
+      assert.deepEqual(current.evidence, q.evidence)
+      assert.equal(current.source, q.source)
+    }
     const preview = await cli(['init', '--from-draft', '--dry-run'], { cwd: root })
     assert.equal(preview.code, 0, preview.out)
     assert.match(preview.out, /Answer supplied in chat/)
     assert.equal(await exists('.caselaw/answers.json'), false)
+    const editedReadme = (await readFile(join(root, 'README.md'), 'utf8')) + '\nUncommitted work must survive setup.\n'
+    await writeFile(join(root, 'README.md'), editedReadme)
     const r = await cli(['init', '--from-draft', '--yes'], { cwd: root })
     assert.equal(r.code, 0, r.out)
+    assert.equal(await readFile(join(root, 'README.md'), 'utf8'), editedReadme)
     const split = await readFile(join(root, 'docs/authority-split.md'), 'utf8')
     assert.match(split, /# Authority split — benchrig/)
     assert.match(split, /drive or observe the real hardware it talks to/)
@@ -195,6 +231,21 @@ describe('init --draft, then --from-draft', () => {
     assert.equal(answers.provenance['authority.human_proof'].by, 'human')
     assert.equal(answers.answers['harness.autonomy'], 'ask-first')
     assert.equal(await exists(DRAFT_PATH), false)
+  })
+
+  test('chat setup retains a custom directory and modules through resume and apply', async () => {
+    assert.equal((await cli(['init', '--draft', '--doctrine-dir', 'engineering', '--with', 'glossary'], { cwd: root })).code, 0)
+    const path = join(root, DRAFT_PATH)
+    const draft = fill(JSON.parse(await readFile(path, 'utf8')), GOOD)
+    await writeFile(path, JSON.stringify(draft))
+    assert.equal((await cli(['init', '--draft'], { cwd: root })).code, 0)
+    const result = await cli(['init', '--from-draft', '--yes'], { cwd: root })
+    assert.equal(result.code, 0, result.out)
+    assert.equal(await exists('engineering/authority-split.md'), true)
+    assert.equal(await exists('engineering/glossary.md'), true)
+    assert.equal(await exists('docs/authority-split.md'), false)
+    const invalid = await cli(['init', '--draft', '--doctrine-dir', '../outside'], { cwd: root })
+    assert.equal(invalid.code, 1)
   })
 
   test('drafted declarations reach the register, each claim with where its truth lives', async () => {

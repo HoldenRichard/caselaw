@@ -219,6 +219,7 @@ export const QUESTIONS = [
   },
   {
     id: 'authority.retest_days',
+    preference: true,
     session: 1,
     since: '1.0',
     type: 'number',

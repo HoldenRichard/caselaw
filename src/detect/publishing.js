@@ -21,6 +21,7 @@ import { join } from 'node:path'
 /** Steps that publish, and what they publish to. First match per line wins. */
 const PUBLISHERS = [
   [/\bnpm publish\b|\b(pnpm|yarn)( npm)? publish\b|JS-DevTools\/npm-publish/, 'npm'],
+  [/\bpkg-pr-new(?:@[\w.*+-]+)?\s+publish\b/, 'a package preview (pkg-pr-new)'],
   [/pypa\/gh-action-pypi-publish|\btwine upload\b|\bpoetry publish\b|\buv publish\b/, 'PyPI'],
   [/\bcargo publish\b/, 'crates.io'],
   [/goreleaser\/goreleaser-action|\bgoreleaser release\b/, 'GoReleaser (a GitHub release and its configured targets)'],
@@ -54,6 +55,7 @@ export function emptyPublishing() {
  */
 export async function detectPublishing(root, walked) {
   const out = []
+  const warnings = []
   const workflows = walked.files.filter((f) => /^\.github\/workflows\/[^/]+\.ya?ml$/.test(f)).sort()
   const goreleaser = await goreleaserTargets(root, walked.files)
   const makeRelease = await makeReleaseRuns(root)
@@ -69,11 +71,12 @@ export async function detectPublishing(root, walked) {
       // job's `if:` and by every job it needs (round 2 of the DEF-274 re-score:
       // pyvisa's workflow starts by hand and on a schedule, but publishes only
       // on a push).
-      const { when, conditions, branches } = whenStepRuns(events, jobs, s.line)
+      const { when, conditions, branches } = whenStepRuns(events, jobs, s.line, stepContext(text, s.line))
       s.when = when
       s.conditions = conditions
       s.branches = branches
       s.what = name(s, { text, jobs, goreleaser, makeRelease })
+      if (s.unread) warnings.push({ code: 'publishing-wrapper-unread', message: `${file}:${s.line} invokes a publishing wrapper whose destination and additional conditions need source review.` })
     }
     out.push({ file, triggers: workflowTriggers(text), publishes: steps })
   }
@@ -83,7 +86,7 @@ export async function detectPublishing(root, walked) {
     const file = walked.files.find((f) => re.test(f))
     if (file) out.push({ file, triggers: [when], publishes: [{ what, line: 1, when: [when], conditions: [], branches: [] }] })
   }
-  return { publishing: out, warnings: [] }
+  return { publishing: out, warnings }
 }
 
 /** A destination named by where it actually goes, where the files say. */
@@ -134,12 +137,12 @@ async function makeReleaseRuns(root) {
 /** The jobs of a workflow: where each starts and ends, its `if:` and its `needs:`. */
 export function jobsOf(text) {
   const lines = text.split(/\r?\n/)
-  const top = lines.findIndex((l) => /^jobs:\s*$/.test(l))
+  const top = lines.findIndex((l) => /^jobs:\s*(?:#.*)?$/.test(l))
   if (top === -1) return []
   const jobs = []
   for (let i = top + 1; i < lines.length; i++) {
     if (/^\S/.test(lines[i])) break
-    const m = /^ {2}([\w-]+):\s*$/.exec(lines[i])
+    const m = /^ {2}([\w-]+):\s*(?:#.*)?$/.exec(lines[i])
     if (m) jobs.push({ name: m[1], start: i, end: lines.length, if: null, ifLine: null, needs: [] })
   }
   for (const [k, job] of jobs.entries()) {
@@ -171,14 +174,62 @@ function jobAt(jobs, line) {
   return jobs.find((j) => line - 1 > j.start && line - 1 < j.end) || null
 }
 
+/** Literal execution context for a step, including workflow/job run defaults. */
+export function stepContext(text, line) {
+  const lines = text.split(/\r?\n/)
+  const job = jobAt(jobsOf(text), line)
+  if (!job) return {}
+  const steps = lines.findIndex((value, i) => i > job.start && i < job.end && /^ {4}steps:\s*(?:#.*)?$/.test(value))
+  if (steps < 0) return {}
+  const starts = []
+  for (let i = steps + 1; i < job.end; i++) if (/^ {6}-\s+[\w-]+:/.test(lines[i])) starts.push(i)
+  const start = starts.filter((i) => i <= line - 1).at(-1)
+  if (start === undefined) return {}
+  const end = starts.find((i) => i > start) ?? job.end
+  const context = {}
+  const defaults = (from, to, indent) => {
+    const prefix = ' '.repeat(indent)
+    for (let i = from; i < to; i++) {
+      if (!new RegExp(`^${prefix}defaults:\\s*(?:#.*)?$`).test(lines[i])) continue
+      let run = false
+      for (let j = i + 1; j < to; j++) {
+        if (lines[j].trim() && !/^\s*#/.test(lines[j]) && lines[j].search(/\S/) <= indent) break
+        if (new RegExp(`^${prefix}  run:\\s*(?:#.*)?$`).test(lines[j])) run = true
+        const field = new RegExp(`^${prefix}    (working-directory|shell):\\s*(.+)$`).exec(lines[j])
+        if (run && field) context[field[1] === 'shell' ? 'shell' : 'workingDirectory'] = unquote(field[2])
+      }
+    }
+  }
+  defaults(0, job.start, 0)
+  defaults(job.start + 1, steps, 4)
+  for (let i = start; i < end; i++) {
+    const field = /^ {6}(?:- |  )(if|working-directory|shell|continue-on-error):\s*(.*)$/.exec(lines[i])
+    if (!field) continue
+    let value = field[2].trim()
+    if (/^[|>][-+]?\s*(?:#.*)?$/.test(value)) {
+      const parts = []
+      for (let j = i + 1; j < end && /^ {10,}\S/.test(lines[j]); j++) parts.push(lines[j].trim())
+      value = parts.join(' ')
+    }
+    value = unquote(value)
+    if (field[1] === 'if') { context.condition = value.replace(/^\$\{\{\s*|\s*\}\}$/g, ''); context.conditionLine = i + 1 }
+    else if (field[1] === 'working-directory') context.workingDirectory = value
+    else if (field[1] === 'shell') context.shell = value
+    else if (value !== 'false') context.continueOnError = value
+  }
+  if (job.if) context.jobCondition = job.if
+  return context
+}
+
 /**
  * The events on which a step's job can run, as phrases, and any condition that
  * could not be read as an event. Only plain comparisons are understood
  * (`github.event_name == 'push'`, `startsWith(github.ref, 'refs/tags/')`);
  * anything else is quoted back, never interpreted.
  */
-export function whenStepRuns(events, jobs, line) {
-  if (!events) return { when: null, conditions: [], branches: [] }
+export function whenStepRuns(events, jobs, line, context = {}) {
+  const stepConditions = context.condition ? [`\`${context.condition}\` (line ${context.conditionLine})`] : []
+  if (!events) return { when: null, conditions: stepConditions, branches: [] }
   let allowed = events.map((e) => ({ event: e.event, filters: { ...e.filters } }))
   const conditions = []
   const seen = new Set()
@@ -197,6 +248,7 @@ export function whenStepRuns(events, jobs, line) {
     for (const n of job.needs) visit(jobs.find((j) => j.name === n), false)
   }
   visit(jobAt(jobs, line), true)
+  conditions.push(...stepConditions)
   const branches = allowed.filter((e) => e.event === 'push').flatMap((e) => e.filters.branches || [])
   return { when: allowed.flatMap(({ event, filters }) => phrase(event, filters)), conditions, branches }
 }
@@ -226,8 +278,13 @@ export function publishSteps(text) {
     for (const [re, what, opts] of PUBLISHERS) {
       if (re.test(line)) { if (!seen.has(what)) seen.set(what, { line: i + 1, ...opts }); break }
     }
+    const wrapper = /\b(?:npm|pnpm|yarn)(?:\s+run)?\s+([\w:.-]*(?:publish|release|deploy)[\w:.-]*)\b/.exec(line)
+    if (wrapper && !PUBLISHERS.some(([re]) => re.test(line))) {
+      const what = `publishing wrapper ${wrapper[1]} (destination unverified; review source)`
+      if (!seen.has(what)) seen.set(what, { line: i + 1, unread: true })
+    }
   })
-  return [...seen.entries()].map(([what, { line, announce }]) => (announce ? { what, line, announce } : { what, line }))
+  return [...seen.entries()].map(([what, { line, announce, unread }]) => ({ what, line, ...(announce ? { announce } : {}), ...(unread ? { unread } : {}) }))
 }
 
 /**
@@ -308,5 +365,7 @@ function list(s) {
 }
 
 function unquote(s) {
-  return String(s).trim().replace(/\s+#.*$/, '').replace(/^["']|["']$/g, '')
+  const value = String(s).trim().replace(/\s+#.*$/, '')
+  const quoted = (value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))
+  return quoted ? value.slice(1, -1) : value
 }
