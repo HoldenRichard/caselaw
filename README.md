@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/caselaw.svg?color=24292e&label=npm)](https://www.npmjs.com/package/caselaw)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**Using the current npm release?** See the [caselaw 0.4.1 documentation](https://github.com/HoldenRichard/caselaw/tree/v0.4.1#readme). This branch also includes unreleased audit fixes.
+**Using the current npm release?** See the [caselaw 0.4.2 documentation](https://github.com/HoldenRichard/caselaw/tree/v0.4.2#readme).
 
 **Case law for your codebase.** Set up project rules with your coding agent,
 turn proven rules into gates, and audit both as the project changes.

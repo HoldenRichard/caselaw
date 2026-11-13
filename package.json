@@ -1,6 +1,6 @@
 {
   "name": "caselaw",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Case law for your codebase: agent-led setup, project rules, gates that earn their teeth, and an audit that keeps them honest.",
   "type": "module",
   "engines": {
