@@ -173,7 +173,7 @@ jobs:
     assert.match(content, /shell `bash`/)
     assert.match(content, /only if `matrix.python-version == '3.14t'`/)
     assert.match(content, /working directory `\.\/default`/)
-    assert.match(content, /working directory `\$\{\{ runner.temp \}\}`/)
+    assert.match(content, /working directory expression `\$\{\{ runner.temp \}\}` \(resolved by CI runner\)/)
     assert.doesNotMatch(content, /a clean machine needs/)
   }
 })

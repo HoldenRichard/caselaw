@@ -51,3 +51,27 @@ export function hasBom(text) {
 }
 
 export { BOM }
+
+/** Decode a whole YAML string scalar without corrupting shell quotes or quoted hashes. */
+export function unquoteYamlScalar(input) {
+  let value = String(input).trim()
+  let quote = null
+  let outerEnd = -1
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i]
+    if (quote) {
+      if (quote === '"' && ch === '\\') { i++; continue }
+      if (ch !== quote) continue
+      if (quote === "'" && value[i + 1] === "'") { i++; continue }
+      quote = null
+      if (outerEnd === -1 && (value[0] === '"' || value[0] === "'")) outerEnd = i
+    } else if (ch === '"' || ch === "'") quote = ch
+    else if (ch === '#' && (i === 0 || /\s/.test(value[i - 1]))) { value = value.slice(0, i).trimEnd(); break }
+  }
+  if (outerEnd !== value.length - 1) return value
+  if (value[0] === "'") return value.slice(1, -1).replace(/''/g, "'")
+  if (value[0] === '"') {
+    try { return JSON.parse(value) } catch { return value.slice(1, -1).replace(/\\(["\\])/g, '$1') }
+  }
+  return value
+}

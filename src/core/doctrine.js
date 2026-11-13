@@ -35,10 +35,14 @@ export function doctrineDirOf(doc) {
 /** The doctrine directory of the install at `root`, read from its answers.json. */
 export function doctrineDirAt(root) {
   try {
-    return doctrineDirOf(JSON.parse(readFileSync(join(root, '.caselaw/answers.json'), 'utf8').replace(/^﻿/, '')))
-  } catch {
-    return DEFAULT_DOCTRINE_DIR
-  }
+    const dir = cleanDoctrineDir(JSON.parse(readFileSync(join(root, '.caselaw/answers.json'), 'utf8').replace(/^﻿/, '')).doctrineDir)
+    if (dir) return dir
+  } catch { /* a damaged/partial install can still have its manifest */ }
+  try {
+    const manifest = JSON.parse(readFileSync(join(root, '.caselaw/manifest.json'), 'utf8').replace(/^﻿/, ''))
+    const authority = Object.keys(manifest.entries || {}).find((path) => path.endsWith('/authority-split.md'))
+    return cleanDoctrineDir(manifest.doctrineDir) || cleanDoctrineDir(authority?.slice(0, -'/authority-split.md'.length)) || DEFAULT_DOCTRINE_DIR
+  } catch { return DEFAULT_DOCTRINE_DIR }
 }
 
 export function ruleDirsFor(dir = DEFAULT_DOCTRINE_DIR) {

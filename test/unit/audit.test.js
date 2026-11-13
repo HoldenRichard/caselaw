@@ -276,6 +276,23 @@ Generated 2026-08-13. Boundary re-check due **2026-09-12**.
     assert.ok(context.docRefs.some((ref) => ref.target === 'docs/authority-split.md' && ref.exists))
   })
 
+  test('POSITIVE CONTROL: F8 every managed adapter isolates project prose and parses Markdown links once', async () => {
+    const { upsert } = await import('../../src/core/blocks.js')
+    const files = ['.claude/CLAUDE.md', '.github/copilot-instructions.md', '.cursor/rules/caselaw.mdc']
+    await put('bin/cli.mjs', '// fixture')
+    for (const path of files) {
+      const body = 'Read [`cli.mjs`](bin/cli.mjs) and `[CLI](bin/cli.mjs)`. Missing: `docs/real-missing.md`.'
+      await put(path, upsert('Unmanaged example `translations/en.json`.\n', { id: path.includes('copilot') ? 'caselaw' : 'pointer', version: 1, filePath: path, body }).text)
+    }
+    const context = await gather(root)
+    for (const from of files) {
+      const refs = context.docRefs.filter((ref) => ref.from === from)
+      assert.ok(refs.some((ref) => ref.target === 'bin/cli.mjs' && ref.exists), from)
+      assert.ok(refs.some((ref) => ref.target === 'docs/real-missing.md' && !ref.exists), from)
+      assert.equal(refs.length, 2, JSON.stringify(refs))
+    }
+  })
+
   test('gather never throws on an empty or hostile repo', async () => {
     const g = await gather(root)
     assert.ok(g)

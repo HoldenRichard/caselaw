@@ -54,6 +54,42 @@ const payload = (filePath, content, extra = {}) =>
   JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: filePath, content }, ...extra })
 const hookJson = (out) => (out.trim() ? JSON.parse(out.trim().split('\n').pop()) : null)
 
+test('POSITIVE CONTROL: F11 scoped hooks normalize paths and enforce every file in batch edits', async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'caselaw-hook-batch-')))
+  try {
+    await install(root, [gate({ paths: ['src/**/*.js'] })])
+    const invoke = (host, data, mode = 'pre') => run([process.execPath, RUNNER, '--host', host, '--mode', mode, '--no-telemetry'], { cwd: root, input: JSON.stringify({ cwd: root, ...data }) })
+    const events = [
+      ['claude', { tool_name: 'Write', tool_input: { file_path: './src/a.js', content: 'FORBIDDEN_BLOCK' } }],
+      ['claude', { tool_name: 'Write', tool_input: { file_path: join(root, 'src/a.js'), content: 'FORBIDDEN_BLOCK' } }],
+      ['claude', { tool_name: 'Write', tool_input: { file_path: 'src\\a.js', content: 'FORBIDDEN_BLOCK' } }],
+      ['claude', { tool_name: 'MultiEdit', tool_input: { file_path: 'notes.md', edits: [{ new_string: 'clean' }, { file_path: './src/a.js', new_string: 'FORBIDDEN_BLOCK' }] } }],
+      ['claude', { tool_calls: [{ tool_name: 'Write', tool_input: { file_path: 'notes.md', content: 'clean' } }, { tool_name: 'Write', tool_input: { file_path: 'src/a.js', content: 'FORBIDDEN_BLOCK' } }] }],
+      ['generic', { writes: [{ path: '../outside.js', content: 'clean' }, { path: 'src/a.js', content: 'FORBIDDEN_BLOCK' }] }],
+    ]
+    const failures = []
+    for (let i = 0; i < events.length; i++) {
+      const [host, data] = events[i]
+      const result = await invoke(host, data)
+      if (result.code !== EXIT.PRE_BLOCK) failures.push(i)
+    }
+    assert.deepEqual(failures, [], 'every spelling/secondary scoped write must enforce')
+    assert.equal((await invoke('generic', { writes: [{ path: 'src/a.js', content: 'clean' }, { path: 'notes.md', content: 'FORBIDDEN_BLOCK' }] })).code, EXIT.OK)
+    const other = join(root, 'subproject')
+    await install(other, [gate({ paths: ['src/**/*.js'] })])
+    const crossRoot = await invoke('generic', { writes: [{ path: 'src/a.js', content: 'clean' }, { path: 'subproject/src/a.js', content: 'FORBIDDEN_BLOCK' }] })
+    assert.equal(crossRoot.code, EXIT.PRE_BLOCK)
+    assert.equal(hookJson(crossRoot.out).result.roots.length, 2)
+    await mkdir(join(root, 'src'))
+    await writeFile(join(root, 'src/a.js'), 'FORBIDDEN_BLOCK')
+    const post = await invoke('generic', { writes: [{ path: 'notes.md' }, { path: 'src/a.js' }] }, 'post')
+    assert.equal(hookJson(post.out).decision, 'block')
+    const outside = await invoke('claude', { tool_name: 'Write', tool_input: { file_path: 'sub/../../outside.js', content: 'FORBIDDEN_BLOCK' } })
+    assert.equal(outside.code, EXIT.OK)
+    assert.match(outside.err, /outside/)
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
 test('portable hooks evaluate whole writes, fragments, commands, and completed writes', async () => {
   const root = await mkdtemp(join(tmpdir(), 'caselaw-portable-hook-'))
   try {
@@ -323,8 +359,8 @@ describe('hook mode on a shell call (0.3), spawned', () => {
 
   test('POSITIVE CONTROL: the Bash hook entry is installed only with the writer guard', () => {
     const matchers = (o) => o.hooks.PreToolUse.map((e) => e.matcher)
-    assert.deepEqual(matchers(claudeHookSettings()), ['Edit|Write|NotebookEdit'])
-    assert.deepEqual(matchers(claudeHookSettings({ commands: true })), ['Edit|Write|NotebookEdit', 'Bash'])
+    assert.deepEqual(matchers(claudeHookSettings()), ['Edit|Write|NotebookEdit|MultiEdit'])
+    assert.deepEqual(matchers(claudeHookSettings({ commands: true })), ['Edit|Write|NotebookEdit|MultiEdit', 'Bash'])
   })
 })
 
@@ -333,7 +369,7 @@ describe('the installed hook command', () => {
 
   test('matches the write tools that exist, and passes no --root', () => {
     const entry = claudeHookSettings().hooks.PreToolUse[0]
-    assert.equal(entry.matcher, 'Edit|Write|NotebookEdit')
+    assert.equal(entry.matcher, 'Edit|Write|NotebookEdit|MultiEdit')
     assert.ok(!entry.hooks[0].command.includes('--root'), 'the root is the install that owns the file, never the directory the session started in')
   })
 

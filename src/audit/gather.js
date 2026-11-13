@@ -16,7 +16,7 @@ import * as manifestStore from '../core/manifest.js'
 import * as gatesStore from '../core/gates.js'
 import { locate } from '../core/blocks.js'
 import { daysBetween } from '../core/dates.js'
-import { doctrineDirOf } from '../core/doctrine.js'
+import { doctrineDirOf, cleanDoctrineDir } from '../core/doctrine.js'
 import { DEMOTION_DAYS } from '../core/defaults.js'
 
 const pExecFile = promisify(execFile)
@@ -28,6 +28,9 @@ const docFiles = (dir) => [
   `${dir}/rules/README.md`,
   'CLAUDE.md',
   'AGENTS.md',
+  '.claude/CLAUDE.md',
+  '.github/copilot-instructions.md',
+  '.cursor/rules/caselaw.mdc',
 ]
 
 export async function gather(root, { now = new Date() } = {}) {
@@ -41,7 +44,8 @@ export async function gather(root, { now = new Date() } = {}) {
 
   const dir = doctrineDirOf(answers)
   const docTexts = {}
-  for (const rel of docFiles(dir)) {
+  const managedPointers = Object.entries(manifest?.entries || {}).filter(([path, entry]) => entry.blockId === 'pointer' && cleanDoctrineDir(path) === path).map(([path]) => path)
+  for (const rel of new Set([...docFiles(dir), ...managedPointers])) {
     const text = await readIfExists(join(root, rel))
     if (text !== null) docTexts[rel] = text
   }
@@ -169,7 +173,7 @@ async function gatherBorrowed(root, rules, answers, { now, notes }) {
     let commits = null
     if (since) {
       try {
-        const { stdout } = await pExecFile('git', ['rev-list', '--count', `--since=${since}`, 'HEAD'], { cwd: root })
+        const { stdout } = await pExecFile('git', ['rev-list', '--count', `--since=${since}`, 'HEAD'], { cwd: root, maxBuffer: 16 * 1024 * 1024 })
         commits = Number(stdout.trim())
       } catch { commits = null }
     }
@@ -218,15 +222,13 @@ async function gatherRefs(root, docTexts) {
   const refs = []
   for (const [from, original] of Object.entries(docTexts)) {
     let text = original
-    if (from === 'AGENTS.md' || from === 'CLAUDE.md') {
-      try {
-        const pointer = locate(text, 'pointer')
-        if (pointer.present) text = pointer.interior
-      } catch { /* malformed managed blocks are reported by drift checks */ }
-    }
+    try {
+      const blocks = ['pointer', 'caselaw'].map((id) => locate(text, id)).filter((block) => block.present)
+      if (blocks.length) text = blocks.map((block) => block.interior).join('\n')
+    } catch { /* malformed managed blocks are reported by drift checks */ }
     const targets = new Set()
     for (const match of text.matchAll(/^@([^\s]+)$/gm)) targets.add(match[1])
-    for (const m of text.matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) targets.add(m[1])
+    text = text.replace(/\[[^\]]*\]\(([^)]+)\)/g, (_, target) => { targets.add(target); return '' })
     for (const m of text.matchAll(/`([^`\s]+\/[^`\s]*)`/g)) targets.add(m[1])
     for (const t of targets) {
       if (/^[a-z]+:\/\//i.test(t) || t.startsWith('#')) continue
@@ -272,7 +274,7 @@ async function gatherUntracked(root, paths, notes) {
   if (unique.length === 0) return []
   try {
     const { stdout } = await pExecFile('git', ['ls-files', '--error-unmatch', '--', ...unique], {
-      cwd: root, encoding: 'utf8',
+      cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024,
     })
     const tracked = new Set(stdout.split('\n').map((s) => s.trim()).filter(Boolean))
     return unique.filter((p) => !tracked.has(p))
@@ -442,7 +444,7 @@ async function gatherGitignoreClaims(root, docTexts) {
     seen.add(key)
     if (!(await exists(join(root, c.path)))) continue
     try {
-      await pExecFile('git', ['check-ignore', '-q', '--', c.path], { cwd: root })
+      await pExecFile('git', ['check-ignore', '-q', '--', c.path], { cwd: root, maxBuffer: 16 * 1024 * 1024 })
       checked.push({ ...c, actuallyIgnored: true })
     } catch (err) {
       // exit 1 = a real "no, it is tracked"; anything else = git could not say

@@ -51,7 +51,7 @@ export async function docsOwner(root) {
   for (const f of docConfigs) {
     if (await exists(join(root, f))) return { tool: 'mkdocs', file: f, role: 'source', dir: 'docs', consequence: 'this directory contains the documentation site source' }
   }
-  for (const name of ['config.js', 'config.ts', 'config.mjs', 'config.mts']) {
+  for (const name of ['config.js', 'config.ts', 'config.mjs', 'config.mts', 'config.cjs']) {
     const f = `docs/.vitepress/${name}`
     if (await exists(join(root, f))) return { tool: 'vitepress', file: f, role: 'source', dir: 'docs', consequence: 'this directory contains the documentation site source' }
   }
@@ -65,10 +65,17 @@ export async function docsOwner(root) {
     }
   }
   // docusaurus: docs/ is the default docs plugin source.
-  for (const f of ['docusaurus.config.js', 'docusaurus.config.ts', 'docusaurus.config.mjs']) {
+  for (const f of ['docusaurus.config.js', 'docusaurus.config.ts', 'docusaurus.config.mjs', 'docusaurus.config.cjs',
+    'docs/docusaurus.config.js', 'docs/docusaurus.config.ts', 'docs/docusaurus.config.mjs', 'docs/docusaurus.config.cjs']) {
     if (await exists(join(root, f))) {
       return { tool: 'docusaurus', file: f, role: 'source', dir: 'docs', consequence: 'every markdown file caselaw writes there is published as part of the project documentation' }
     }
+  }
+  for (const f of ['docs/astro.config.mjs', 'docs/astro.config.ts', 'docs/astro.config.js']) {
+    if (await exists(join(root, f))) return { tool: 'astro', file: f, role: 'source', dir: 'docs', consequence: 'this directory contains the documentation site source' }
+  }
+  for (const f of ['docs/mint.json', 'docs/docs.json']) {
+    if (await exists(join(root, f))) return { tool: 'mintlify', file: f, role: 'source', dir: 'docs', consequence: 'this directory contains the documentation site source' }
   }
   return null
 }

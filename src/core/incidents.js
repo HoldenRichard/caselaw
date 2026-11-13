@@ -242,8 +242,9 @@ export function gitDiffOfCommit(root, commitRef) {
   let res = spawnSync('git', ['show', '--no-ext-diff', '--no-textconv', '--format=', '--unified=3', '-m', ref], {
     cwd: root,
     encoding: 'utf8',
-    maxBuffer: 10 * 1024 * 1024,
+    maxBuffer: 16 * 1024 * 1024,
   })
+  if (res.error) throw res.error
   if (res.status === 0 && res.stdout && res.stdout.trim().length > 0) {
     return res.stdout
   }
@@ -251,8 +252,9 @@ export function gitDiffOfCommit(root, commitRef) {
   res = spawnSync('git', ['diff', '--no-ext-diff', '--no-textconv', `${ref}~1..${ref}`], {
     cwd: root,
     encoding: 'utf8',
-    maxBuffer: 10 * 1024 * 1024,
+    maxBuffer: 16 * 1024 * 1024,
   })
+  if (res.error) throw res.error
   if (res.status === 0 && res.stdout && res.stdout.trim().length > 0) {
     return res.stdout
   }
@@ -271,7 +273,8 @@ export function createIncidentFromGit(root, opts) {
   const { id, rule, positiveDesc, negativeDesc, metadata } = opts
   const pin = (ref) => {
     if (typeof ref !== 'string' || !/^[a-zA-Z0-9_./~^-]+$/.test(ref) || ref.startsWith('-')) throw new IncidentError('Invalid commit reference', { code: 'GIT_DIFF_FAILED' })
-    const res = spawnSync('git', ['rev-parse', '--verify', `${ref}^{commit}`], { cwd: root, encoding: 'utf8' })
+    const res = spawnSync('git', ['rev-parse', '--verify', `${ref}^{commit}`], { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
+    if (res.error) throw res.error
     if (res.status !== 0) throw new IncidentError('Commit could not be resolved', { code: 'GIT_DIFF_FAILED' })
     return res.stdout.trim()
   }
@@ -279,16 +282,19 @@ export function createIncidentFromGit(root, opts) {
   const negativeCommit = pin(opts.negativeCommit)
   const paths = new Set()
   for (const ref of [positiveCommit, negativeCommit]) {
-    const names = spawnSync('git', ['diff-tree', '--root', '--no-commit-id', '--name-only', '-r', '-m', '-z', ref], { cwd: root, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 })
+    const names = spawnSync('git', ['diff-tree', '--root', '--no-commit-id', '--name-only', '-r', '-m', '-z', ref], { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
+    if (names.error) throw names.error
     if (names.status !== 0) throw new IncidentError('Changed paths could not be read', { code: 'GIT_DIFF_FAILED' })
     for (const path of names.stdout.split('\0').filter(Boolean)) paths.add(path)
   }
   const snapshot = (ref) => Object.fromEntries([...paths].map(path => {
-    const tree = spawnSync('git', ['ls-tree', '-z', ref, '--', path], { cwd: root, encoding: 'utf8' })
+    const tree = spawnSync('git', ['ls-tree', '-z', ref, '--', path], { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
+    if (tree.error) throw tree.error
     if (tree.status !== 0) throw new IncidentError('Snapshot tree could not be read', { code: 'GIT_DIFF_FAILED' })
     if (!tree.stdout) return [path, null]
     if (!/^100(?:644|755) blob /.test(tree.stdout)) throw new IncidentError('Only regular text files can be snapshot fixtures', { code: 'INVALID_SNAPSHOT' })
-    const blob = spawnSync('git', ['show', `${ref}:${path}`], { cwd: root, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 })
+    const blob = spawnSync('git', ['show', `${ref}:${path}`], { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
+    if (blob.error) throw blob.error
     if (blob.status !== 0 || blob.stdout.includes('\0')) throw new IncidentError('Snapshot content could not be read as text', { code: 'INVALID_SNAPSHOT' })
     return [path, blob.stdout]
   }))

@@ -17,6 +17,7 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { workflowEvents, publishSteps, jobsOf, stepContext } from './publishing.js'
+import { unquoteYamlScalar as unquote } from '../core/text.js'
 
 const MAX_GATES = 12
 
@@ -177,6 +178,27 @@ function hasShellComment(text) {
   return false
 }
 
+/** Ignore quoted command arguments when recognizing shell structure/redirections. */
+function shellStructure(command) {
+  let quote = null
+  let code = ''
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i]
+    if (quote) {
+      if (ch === '\\' && quote === '"') i++
+      else if (ch === quote) quote = null
+      code += ' '
+    } else if (ch === '\\') { i++; code += ' ' }
+    else if (ch === '"' || ch === "'") { quote = ch; code += ' ' }
+    else {
+      // A quoted delimiter is still a heredoc; numeric shifts and here-strings are not.
+      if (ch === '<' && command[i - 1] !== '<' && /^<<-?\s*(['"]?)[A-Za-z_]\w*\1(?=\s|$|[;|&])/.test(command.slice(i))) return true
+      code += ch
+    }
+  }
+  return /(?:^|;|&&|\|\||\|)\s*(?:[A-Za-z_]\w*=\S*\s+)*(?:if\s|elif\s|else(?:\s|$)|fi(?:\s|$)|for\s|while\s|until\s|case\s|esac(?:\s|$)|[A-Za-z_]\w*\s*\(\)\s*\{)/.test(code)
+}
+
 function scanSteps(text) {
   const lines = text.split(/\r?\n/)
   const out = []
@@ -192,12 +214,14 @@ function scanSteps(text) {
     if (!run) continue
     const value = run[2].trim().replace(/^([|>][-+]?)\s+#.*$/, '$1')
     const context = stepContext(text, i + 1)
+    const runLine = i + 1
     const commands = []
     if (/^[|>][-+]?$/.test(value)) {
-      const base = indent(l)
+      const base = indent(l) + (/^\s*-\s+run:/.test(l) ? 2 : 0)
       const first = lines.slice(i + 1).find(line => line.trim())
       const contentIndent = first ? indent(first) : base + 2
-      for (let j = i + 1; j < lines.length && (!lines[j].trim() || indent(lines[j]) > base); j++) {
+      let j = i + 1
+      for (; j < lines.length && (!lines[j].trim() || indent(lines[j]) > base); j++) {
         const fragment = lines[j].slice(contentIndent)
         if (!fragment.trim()) continue
         const previous = commands.at(-1)
@@ -207,14 +231,15 @@ function scanSteps(text) {
           previous.cmd = value.startsWith('>') ? previous.cmd + ' ' + fragment : previous.cmd.slice(0, -1) + fragment
         } else commands.push({ cmd: fragment, line: j + 1 })
       }
+      i = j - 1 // literal shell/YAML inside a run block is not another workflow step
     } else if (value) {
       commands.push({ cmd: unquote(value), line: i + 1 })
     }
     // A step named for setup is setup, whatever it runs: ntfy's "Install dependencies" is `make build-deps-ubuntu`.
     const setup = SETUP_STEP.test(stepName || '')
-    const controlFlow = commands.some((c) => /^\s*(?:if\s|elif\s|else(?:\s|$)|fi(?:\s|$)|for\s|while\s|until\s|case\s|esac(?:\s|$)|[A-Za-z_]\w*\s*\(\)\s*\{|\S+\s*<<-?\s*['"]?\w+)/.test(c.cmd))
-    if (controlFlow && !setup) {
-      out.push({ cmd: '', line: i + 1, step: stepName, setup, unread: true })
+    const controlFlow = commands.some((c) => shellStructure(c.cmd))
+    if (controlFlow) {
+      out.push({ cmd: '', line: runLine, step: stepName, setup, unread: true })
       continue
     }
     for (const c of commands) {
@@ -234,10 +259,4 @@ export function sharedWorkflows(text) {
     if (m && GATE_NAME.test(m[1])) out.push({ uses: m[1], line: i + 1 })
   })
   return out
-}
-
-function unquote(s) {
-  const value = String(s).trim()
-  const quoted = (value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))
-  return quoted ? value.slice(1, -1) : value
 }

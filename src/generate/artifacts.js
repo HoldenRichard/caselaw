@@ -65,8 +65,8 @@ export function claudeHookSettings({ commands = false } = {}) {
     `else echo "{\\"systemMessage\\":\\"caselaw: gate runner not found at $CLAUDE_PROJECT_DIR/.caselaw/bin/gate.mjs; nothing was checked. Run caselaw doctor.\\"}"; fi`
   const entry = (mode) => ({
     // Exact-string list, not a regex (hooks reference): the write tools today
-    // are Write, Edit and NotebookEdit. MultiEdit no longer exists.
-    matcher: 'Edit|Write|NotebookEdit',
+    // include legacy MultiEdit clients as well as single-file write tools.
+    matcher: 'Edit|Write|NotebookEdit|MultiEdit',
     hooks: [{ type: 'command', command: cmd(mode), timeout: 30 }],
   })
   // A command gate (0.3's writer guard) needs the shell tool too, pre only:

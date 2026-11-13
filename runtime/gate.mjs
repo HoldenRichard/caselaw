@@ -2031,34 +2031,47 @@ export function extractHookInput(payload) {
     return { ok: false, reason: 'hook payload is not an object', path: null, texts: [], whole: false, toolName: null }
   }
   const toolName = str(payload.tool_name) || null
-  const input = payload.tool_input
-  if (!input || typeof input !== 'object') {
-    return { ok: false, reason: 'hook payload has no tool_input object', path: null, texts: [], whole: false, toolName }
+  const files = []
+  const events = [payload]
+  while (events.length) {
+    const event = events.pop()
+    if (!event || typeof event !== 'object') continue
+    if (Array.isArray(event.tool_calls)) for (const call of event.tool_calls) events.push(call)
+    const inputs = [{ value: event.tool_input, inherited: null }]
+    while (inputs.length) {
+      const { value, inherited } = inputs.pop()
+      if (!value || typeof value !== 'object') continue
+      const path = str(value.file_path) || str(value.notebook_path) || inherited
+      const texts = ['content', 'new_string', 'new_source'].filter((key) => typeof value[key] === 'string').map((key) => value[key])
+      if (path && (texts.length || !Array.isArray(value.edits))) files.push({ path, texts, whole: typeof value.content === 'string' && texts.length === 1 })
+      if (Array.isArray(value.edits)) for (let i = value.edits.length - 1; i >= 0; i--) inputs.push({ value: value.edits[i], inherited: path })
+    }
   }
-  // NotebookEdit carries `notebook_path` and `new_source`; MultiEdit no longer exists.
-  const path = str(input.file_path) || str(input.notebook_path) || null
-  const texts = []
-  let whole = false
-  if (typeof input.content === 'string') {
-    texts.push(input.content)
-    whole = true
-  }
-  if (typeof input.new_string === 'string') texts.push(input.new_string)
-  if (typeof input.new_source === 'string') texts.push(input.new_source)
-  if (Array.isArray(input.edits)) {
-    for (const e of input.edits) if (e && typeof e.new_string === 'string') texts.push(e.new_string)
-  }
-  if (!path) {
-    return { ok: false, reason: `tool "${toolName ?? 'unknown'}" has no file_path; nothing to check`, path: null, texts: [], whole: false, toolName }
-  }
-  return { ok: true, reason: null, path, texts, whole: whole && texts.length === 1, toolName }
+  return hookFiles(files, toolName)
 }
 
-// Portable callers describe a write directly, without tool names or host event fields.
+function hookFiles(files, toolName = null) {
+  const grouped = new Map()
+  for (const file of files) {
+    const previous = grouped.get(file.path)
+    grouped.set(file.path, previous ? { path: file.path, texts: [...previous.texts, ...file.texts], whole: false } : file)
+  }
+  const all = [...grouped.values()]
+  if (!all.length) return { ok: false, reason: 'hook payload has no file path; nothing to check', path: null, texts: [], whole: false, toolName }
+  return { ok: true, reason: null, ...all[0], files: all, toolName }
+}
+
+// Portable callers describe one write or a batch of writes, without host-specific event fields.
 function extractGenericHookInput(mode, payload) {
+  if (Array.isArray(payload.writes)) {
+    const parts = payload.writes.map((write) => Array.isArray(write?.writes) ? { ok: false, reason: 'nested write batches are unsupported; this entry was not checked' } : extractGenericHookInput(mode, write || {}))
+    const result = hookFiles(parts.filter((part) => part.ok).flatMap((part) => part.files || [part]))
+    result.notes = parts.filter((part) => !part.ok).map((part) => part.reason)
+    return result
+  }
   const path = str(payload.path) || null
   if (!path) return { ok: false, reason: 'hook payload has no path; nothing was checked', path, texts: [], whole: false }
-  if (mode === 'post') return { ok: true, reason: null, path, texts: [], whole: false }
+  if (mode === 'post') return hookFiles([{ path, texts: [], whole: false }])
 
   const whole = typeof payload.content === 'string' && payload.fragments === undefined
   const fragments = payload.content === undefined && Array.isArray(payload.fragments) &&
@@ -2066,7 +2079,7 @@ function extractGenericHookInput(mode, payload) {
   if (!whole && !fragments) {
     return { ok: false, reason: 'pre hook requires content or non-empty string fragments; nothing was checked', path, texts: [], whole: false }
   }
-  return { ok: true, reason: null, path, texts: whole ? [payload.content] : payload.fragments, whole }
+  return hookFiles([{ path, texts: whole ? [payload.content] : payload.fragments, whole }])
 }
 
 /** The command-gate half of a hook: pre only, and never a reason to stop a command when nothing applies. */
@@ -2364,6 +2377,7 @@ export async function main(argv = process.argv.slice(2), io = {}) {
  * (DOCS/ vs docs/) is the same directory here, as it is on disk.
  */
 async function locateRoot({ hint, cwd, filePath }) {
+  filePath = toPosix(filePath)
   const abs = isAbsolute(filePath) ? filePath : resolve(cwd || process.cwd(), filePath)
   const real = realpathLenient(abs)
   let dir = posixDirname(real)
@@ -2490,7 +2504,7 @@ async function runHookMode(mode, common, args, stdout, stderr) {
   const command = generic ? payload.command : str(payload.tool_name) === 'Bash' ? payload.tool_input?.command : undefined
   if (generic && payload.command !== undefined &&
       (mode !== 'pre' || typeof command !== 'string' || !command.trim() ||
-        payload.path !== undefined || payload.content !== undefined || payload.fragments !== undefined)) {
+        payload.path !== undefined || payload.content !== undefined || payload.fragments !== undefined || payload.writes !== undefined)) {
     stderr('caselaw gate: expected a pre hook with a command alone; nothing was checked\n')
     return EXIT.OK
   }
@@ -2504,35 +2518,50 @@ async function runHookMode(mode, common, args, stdout, stderr) {
     return EXIT.OK
   }
 
-  const located = await locateRoot({ hint: args.root, cwd: str(payload.cwd) || null, filePath: hook.path })
-  if (!located.ok) {
-    stderr(`caselaw gate: ${located.reason}; nothing was checked\n`)
-    if (!generic) emitAsides(stdout, mode, [`${located.reason}; nothing was checked`])
+  const groups = new Map()
+  const notices = hook.notes || []
+  for (const file of hook.files || [hook]) {
+    const located = await locateRoot({ hint: args.root, cwd: str(payload.cwd) || null, filePath: file.path })
+    if (!located.ok) { notices.push(`${located.reason}; this path was not checked`); continue }
+    if (!groups.has(located.root)) groups.set(located.root, [])
+    groups.get(located.root).push({ ...file, path: located.rel })
+  }
+  if (notices.length) stderr(`caselaw gate: ${notices.join('; ')}\n`)
+  if (!groups.size) {
+    if (!generic) emitAsides(stdout, mode, notices)
     return EXIT.OK
   }
-  const root = located.root
-  const rel = located.rel
-
-  /** @type {any} */
-  const opts = { ...common, root, writes: [rel] }
-  if (mode === 'pre') {
-    opts.proposed = hook.texts.map((t) => ({ path: rel, text: t, whole: hook.whole }))
-    opts.targets = hook.texts.length ? [rel] : []
-    opts.changeSet = null
-    opts.changeSetReason = 'pre mode sees only the proposed write'
-    // Several fragments for one path collapse in the overrides map, so join
-    // them: a banned string split across two edits still has to be caught.
-    if (hook.texts.length > 1) {
-      opts.proposed = [{ path: rel, text: hook.texts.join('\n'), whole: false }]
+  const evaluated = []
+  for (const [root, files] of groups) {
+    const writes = uniq(files.map((file) => file.path))
+    const opts = { ...common, root, writes }
+    if (mode === 'pre') {
+      const byPath = new Map()
+      for (const file of files) {
+        const previous = byPath.get(file.path)
+        byPath.set(file.path, previous ? { ...file, texts: [...previous.texts, ...file.texts], whole: false } : file)
+      }
+      opts.proposed = [...byPath.values()].filter((file) => file.texts.length).map((file) => ({ path: file.path, text: file.texts.join('\n'), whole: file.whole && file.texts.length === 1 }))
+      opts.targets = opts.proposed.map((file) => file.path)
+      opts.changeSet = null
+      opts.changeSetReason = 'pre mode sees only the proposed writes'
+    } else {
+      opts.targets = writes
+      const ws = await workingChangeSet(root)
+      opts.changeSet = ws.names === null ? null : uniq([...ws.names, ...writes])
+      opts.changeSetReason = ws.names === null ? `git could not describe the change set (${ws.reason})` : null
     }
-  } else {
-    opts.targets = [rel]
-    const ws = await workingChangeSet(root)
-    opts.changeSet = ws.names === null ? null : uniq([...ws.names, rel])
-    opts.changeSetReason = ws.names === null ? `git could not describe the change set (${ws.reason})` : null
+    evaluated.push(await evaluate(opts))
   }
-
-  const result = await evaluate(opts)
+  const result = evaluated.length === 1 ? evaluated[0] : {
+    ...evaluated[0],
+    root: null, roots: [...groups.keys()],
+    config: { ...evaluated[0].config, gateCount: evaluated.reduce((n, r) => n + r.config.gateCount, 0), degraded: evaluated.some((r) => r.config.degraded), reason: evaluated.map((r) => r.config.reason).filter(Boolean).join('; ') },
+    ...Object.fromEntries(['results', 'fires', 'blocking', 'warnings', 'degraded', 'skipped', 'notes'].map((key) => [key, evaluated.flatMap((r) => r[key])])),
+    telemetry: { written: evaluated.reduce((n, r) => n + (r.telemetry?.written || 0), 0), error: evaluated.map((r) => r.telemetry?.error).filter(Boolean).join('; ') || null },
+    ok: evaluated.every((r) => r.ok),
+  }
+  result.notes.push(...notices)
   if (generic) return reportGenericHook(mode, result, stdout)
 
   const asides = []

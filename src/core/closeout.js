@@ -14,7 +14,8 @@
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { doctrineDirAt } from './doctrine.js'
-import { join } from 'node:path'
+import { join, relative, isAbsolute, posix } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const HOMOGLYPH_MAP = {
   '\u0430': 'a', '\u0410': 'A',
@@ -114,13 +115,18 @@ export function parseCloseout(text) {
  * Paths that must be accounted for in ## What Changed:
  * Code (src, bin), tests, active governance doctrine (docs/rules), and gate configs (.caselaw).
  */
-export function isScopeTrackedPath(p) {
-  const clean = String(p ?? '').replace(/^\.\//, '')
+export function isScopeTrackedPath(p, { doctrineDir = 'docs' } = {}) {
+  const clean = String(p ?? '').replace(/\\/g, '/').replace(/^(?:\.\/)+/, '')
   return (
     clean.startsWith('src/') ||
     clean.startsWith('bin/') ||
     clean.startsWith('test/') ||
+    clean.startsWith('runtime/') ||
+    clean.startsWith('templates/') ||
+    clean === 'package.json' ||
     clean.startsWith('docs/rules/') ||
+    clean.startsWith('governance/rules/') ||
+    clean.startsWith(`${doctrineDir}/rules/`) ||
     clean.startsWith('.caselaw/')
   )
 }
@@ -135,7 +141,8 @@ export function isScopeTrackedPath(p) {
  * @returns {string[]}
  */
 export function gitChangedFiles(root) {
-  const status = spawnSync('git', ['status', '--porcelain=v1', '-z', '-uall'], { cwd: root, encoding: 'utf8' })
+  const status = spawnSync('git', ['status', '--porcelain=v1', '-z', '-uall'], { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
+  if (status.error) throw status.error
   if (status.status !== 0) throw new Error(status.stderr || 'git status failed')
   const entries = status.stdout.split('\0').filter(Boolean)
   const files = []
@@ -147,10 +154,43 @@ export function gitChangedFiles(root) {
       if (entries[i + 1]) files.push(entries[++i])
     }
   }
-  if (files.some(isScopeTrackedPath)) return [...new Set(files)]
-  const head = spawnSync('git', ['diff-tree', '--root', '--no-commit-id', '--name-only', '-r', '-z', 'HEAD'], { cwd: root, encoding: 'utf8' })
+  const doctrineDir = doctrineDirAt(root)
+  if (files.some((path) => isScopeTrackedPath(path, { doctrineDir }))) return [...new Set(files)]
+  const revision = spawnSync('git', ['rev-list', '--parents', '-n', '1', 'HEAD'], { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
+  if (revision.error) throw revision.error
+  if (revision.status !== 0) throw new Error(revision.stderr || 'HEAD could not be read')
+  const [commit, firstParent] = revision.stdout.trim().split(/\s+/)
+  const compare = firstParent ? [firstParent, commit] : [commit]
+  const head = spawnSync('git', ['diff-tree', '--root', '--no-commit-id', '--name-only', '-r', '-z', ...compare], { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
+  if (head.error) throw head.error
   if (head.status !== 0) throw new Error(head.stderr || 'HEAD could not be read')
-  return head.stdout.split('\0').filter(Boolean)
+  return [...new Set(head.stdout.split('\0').filter(Boolean))]
+}
+
+function canonicalClaim(value, root) {
+  let path = value.trim().replace(/^[`*]+|[`*]+$/g, '')
+  if (path.startsWith('file://')) {
+    try { path = relative(root, fileURLToPath(path)) } catch { return null }
+  }
+  if (/^[a-z]+:\/\//i.test(path) || isAbsolute(path)) return null
+  path = posix.normalize(path.replace(/\\/g, '/'))
+  return path === '..' || path.startsWith('../') ? null : path
+}
+
+/** Use the same candidate set for omissions and fabricated modification claims. */
+function claimedPaths(text, root, inScope) {
+  const paths = new Set()
+  const add = (value) => {
+    const path = canonicalClaim(value, root)
+    if (path && inScope(path)) paths.add(path)
+  }
+  let prose = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label, target) => {
+    add(label); add(target.replace(/#.*$/, ''))
+    return ' '
+  })
+  prose = prose.replace(/`([^`]+)`/g, (_, code) => { add(code); return ' ' })
+  for (const match of prose.matchAll(/[^\s`*\[\]()<>,";:]+/g)) add(match[0].replace(/[.!?]+$/, ''))
+  return paths
 }
 
 /**
@@ -180,23 +220,21 @@ export function verifyCloseout({ text, root = process.cwd(), gitFiles = null, ob
   const whatChangedText = parsed.whatChanged.join('\n')
 
   // Check: Every modified file in scope must be mentioned in What Changed by full relative path
-  const trackedFiles = actualChanged.filter(isScopeTrackedPath)
+  const doctrineDir = doctrineDirAt(root)
+  const inScope = (path) => isScopeTrackedPath(path, { doctrineDir })
+  actualChanged = actualChanged.map((path) => posix.normalize(path.replace(/\\/g, '/')))
+  const claims = claimedPaths(whatChangedText, root, inScope)
+  const changed = new Set(actualChanged)
+  const trackedFiles = actualChanged.filter(inScope)
   for (const cf of trackedFiles) {
-    if (!whatChangedText.split(/[`\s,;:()]+/).includes(cf)) {
+    if (!claims.has(cf)) {
       errors.push(`Modified file "${cf}" is omitted from ## What Changed (Silent Scope Drop)`)
     }
   }
 
   // Check: Claiming a file was modified when it has no git changes
-  const cleanWhatChanged = whatChangedText.replace(/[`*]/g, '')
-  const claimedFileMatches =
-    cleanWhatChanged.match(/(?:(?:\.caselaw|src|bin|docs\/rules|test)\/[a-zA-Z0-9_./-]+\.[a-zA-Z0-9]+)/g) || []
-  for (const claimed of claimedFileMatches) {
-    if (isScopeTrackedPath(claimed)) {
-      if (!actualChanged.includes(claimed)) {
-        errors.push(`Claimed modification to "${claimed}" in ## What Changed, but file has zero git changes`)
-      }
-    }
+  for (const claimed of claims) {
+    if (!changed.has(claimed)) errors.push(`Claimed modification to "${claimed}" in ## What Changed, but file has zero git changes`)
   }
 
   // 2. Verification Exit Code Honesty

@@ -131,8 +131,10 @@ export function commandCode(command) {
 /** A CI command is a source excerpt with its execution context, not a root-shell promise. */
 export function ciCommand(step) {
   const context = []
-  if (step.workingDirectory) context.push(`working directory ${commandCode(step.workingDirectory)}`)
-  if (step.shell) context.push(`shell ${commandCode(step.shell)}`)
+  const resolved = (label, value) => /\$\{\{[\s\S]*?\}\}/.test(value)
+    ? `${label} expression ${commandCode(value)} (resolved by CI runner)` : `${label} ${commandCode(value)}`
+  if (step.workingDirectory) context.push(resolved('working directory', step.workingDirectory))
+  if (step.shell) context.push(resolved('shell', step.shell))
   if (step.jobCondition) context.push(`job only if ${commandCode(step.jobCondition)}`)
   if (step.condition) context.push(`only if ${commandCode(step.condition)}`)
   if (step.continueOnError) context.push(`CI permits failure when ${commandCode(step.continueOnError)}`)

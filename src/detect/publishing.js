@@ -17,12 +17,16 @@
 
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { unquoteYamlScalar as unquote } from '../core/text.js'
 
 /** Steps that publish, and what they publish to. First match per line wins. */
 const PUBLISHERS = [
+  [/(?:\bchangeset|@changesets\/cli)\s+publish\b/, 'the package registries configured for Changesets'],
+  [/(?:^|[;&|])\s*(?:(?:npx|npm exec|(?:pnpm|yarn|bun)(?:\s+(?:dlx|exec|run))?)\s+)?semantic-release(?:@[\w.*+-]+)?(?=\s|$)/, 'semantic-release and its configured release targets'],
+  [/\bbun publish\b/, 'the package registry configured for Bun'],
   [/\bnpm publish\b|\b(pnpm|yarn)( npm)? publish\b|JS-DevTools\/npm-publish/, 'npm'],
   [/\bpkg-pr-new(?:@[\w.*+-]+)?\s+publish\b/, 'a package preview (pkg-pr-new)'],
-  [/pypa\/gh-action-pypi-publish|\btwine upload\b|\bpoetry publish\b|\buv publish\b/, 'PyPI'],
+  [/pypa\/gh-action-pypi-publish|\btwine upload\b|\b(?:poetry|uv|hatch|flit|maturin) publish\b/, 'PyPI'],
   [/\bcargo publish\b/, 'crates.io'],
   [/goreleaser\/goreleaser-action|\bgoreleaser release\b/, 'GoReleaser (a GitHub release and its configured targets)'],
   [/\bmake release\b/, 'the Makefile\'s release target'],
@@ -134,84 +138,107 @@ async function makeReleaseRuns(root) {
   return {}
 }
 
-/** The jobs of a workflow: where each starts and ends, its `if:` and its `needs:`. */
+const lineIndent = (line) => line.search(/\S/)
+const contentLine = (line) => line.trim() && !/^\s*#/.test(line)
+
+function blockEnd(lines, start, end = lines.length) {
+  const base = lineIndent(lines[start])
+  let at = start + 1
+  while (at < end && (!contentLine(lines[at]) || lineIndent(lines[at]) > base)) at++
+  return at
+}
+
+/** Mapping children at their measured indentation, excluding nested descendants. */
+function fields(lines, start, end) {
+  const indexes = []
+  for (let i = start + 1; i < end; i++) {
+    if (contentLine(lines[i]) && /^\s*[\w-]+:/.test(lines[i])) indexes.push(i)
+  }
+  const indent = Math.min(...indexes.map((i) => lineIndent(lines[i])))
+  return indexes.filter((i) => lineIndent(lines[i]) === indent)
+}
+
+function fieldValue(lines, at, end) {
+  const value = lines[at].replace(/^\s*(?:-\s+)?[\w-]+:\s*/, '')
+  if (!/^[|>][-+]?\s*(?:#.*)?$/.test(value)) return unquote(value)
+  const parts = []
+  const fieldIndent = lineIndent(lines[at]) + (/^\s*-\s+/.test(lines[at]) ? 2 : 0)
+  for (let i = at + 1; i < end; i++) {
+    if (!lines[i].trim()) continue
+    if (lineIndent(lines[i]) <= fieldIndent) break
+    parts.push(lines[i].trim())
+  }
+  return parts.join(' ')
+}
+
+/** The jobs of a workflow: where each starts and ends, its if and needs. */
 export function jobsOf(text) {
   const lines = text.split(/\r?\n/)
   const top = lines.findIndex((l) => /^jobs:\s*(?:#.*)?$/.test(l))
   if (top === -1) return []
-  const jobs = []
-  for (let i = top + 1; i < lines.length; i++) {
-    if (/^\S/.test(lines[i])) break
-    const m = /^ {2}([\w-]+):\s*(?:#.*)?$/.exec(lines[i])
-    if (m) jobs.push({ name: m[1], start: i, end: lines.length, if: null, ifLine: null, needs: [] })
-  }
-  for (const [k, job] of jobs.entries()) {
-    job.end = jobs[k + 1]?.start ?? job.end
-    for (let i = job.start + 1; i < job.end; i++) {
-      const cond = /^ {4}if:\s*(.*)$/.exec(lines[i])
-      if (cond) {
-        let expr = cond[1].trim()
-        if (/^[|>][-+]?$/.test(expr)) {
-          const parts = []
-          for (let j = i + 1; j < job.end && /^ {6,}\S/.test(lines[j]); j++) parts.push(lines[j].trim())
-          expr = parts.join(' ')
+  const end = blockEnd(lines, top)
+  const starts = fields(lines, top, end).filter((i) => /^\s*[\w-]+:\s*(?:#.*)?$/.test(lines[i]))
+  return starts.map((start, k) => {
+    const job = { name: lines[start].trim().split(':')[0], start, end: starts[k + 1] ?? end, if: null, ifLine: null, needs: [] }
+    for (const at of fields(lines, start, job.end)) {
+      const key = lines[at].trim().split(':')[0]
+      if (key === 'if') {
+        job.if = fieldValue(lines, at, job.end).replace(/^\$\{\{\s*|\s*\}\}$/g, '')
+        job.ifLine = at + 1
+      } else if (key === 'needs') {
+        const value = fieldValue(lines, at, job.end)
+        if (value) job.needs = list(value)
+        else for (let i = at + 1; i < job.end; i++) {
+          if (!contentLine(lines[i])) continue
+          if (lineIndent(lines[i]) < lineIndent(lines[at]) || !/^\s*-\s+/.test(lines[i])) break
+          job.needs.push(unquote(lines[i].replace(/^\s*-\s+/, '')))
         }
-        job.if = expr.replace(/^\$\{\{\s*|\s*\}\}$/g, '')
-        job.ifLine = i + 1
-      }
-      const needs = /^ {4}needs:\s*(.*)$/.exec(lines[i])
-      if (needs) {
-        const v = needs[1].trim()
-        if (v) job.needs = v.replace(/^\[|\]$/g, '').split(',').map((s) => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean)
-        else for (let j = i + 1; j < job.end && /^ {6}-\s/.test(lines[j]); j++) job.needs.push(lines[j].replace(/^ {6}-\s*/, '').trim())
       }
     }
-  }
-  return jobs
+    return job
+  })
 }
 
 function jobAt(jobs, line) {
   return jobs.find((j) => line - 1 > j.start && line - 1 < j.end) || null
 }
 
-/** Literal execution context for a step, including workflow/job run defaults. */
+/** Literal execution context, with relative YAML indentation and run-default precedence. */
 export function stepContext(text, line) {
   const lines = text.split(/\r?\n/)
   const job = jobAt(jobsOf(text), line)
   if (!job) return {}
-  const steps = lines.findIndex((value, i) => i > job.start && i < job.end && /^ {4}steps:\s*(?:#.*)?$/.test(value))
-  if (steps < 0) return {}
+  const steps = fields(lines, job.start, job.end).find((i) => /^\s*steps:/.test(lines[i]))
+  if (steps === undefined) return {}
   const starts = []
-  for (let i = steps + 1; i < job.end; i++) if (/^ {6}-\s+[\w-]+:/.test(lines[i])) starts.push(i)
+  for (let i = steps + 1; i < job.end; i++) {
+    if (!contentLine(lines[i])) continue
+    const indent = lineIndent(lines[i])
+    if (indent < lineIndent(lines[steps]) || (indent === lineIndent(lines[steps]) && !/^\s*-\s+/.test(lines[i]))) break
+    if (/^\s*-\s+[\w-]+:/.test(lines[i]) && (!starts.length || indent === lineIndent(lines[starts[0]]))) starts.push(i)
+  }
   const start = starts.filter((i) => i <= line - 1).at(-1)
   if (start === undefined) return {}
   const end = starts.find((i) => i > start) ?? job.end
   const context = {}
-  const defaults = (from, to, indent) => {
-    const prefix = ' '.repeat(indent)
-    for (let i = from; i < to; i++) {
-      if (!new RegExp(`^${prefix}defaults:\\s*(?:#.*)?$`).test(lines[i])) continue
-      let run = false
-      for (let j = i + 1; j < to; j++) {
-        if (lines[j].trim() && !/^\s*#/.test(lines[j]) && lines[j].search(/\S/) <= indent) break
-        if (new RegExp(`^${prefix}  run:\\s*(?:#.*)?$`).test(lines[j])) run = true
-        const field = new RegExp(`^${prefix}    (working-directory|shell):\\s*(.+)$`).exec(lines[j])
-        if (run && field) context[field[1] === 'shell' ? 'shell' : 'workingDirectory'] = unquote(field[2])
-      }
+  const defaults = (from, to) => {
+    const at = fields(lines, from, to).find((i) => /^\s*defaults:/.test(lines[i]))
+    if (at === undefined) return
+    const limit = blockEnd(lines, at, to)
+    const run = fields(lines, at, limit).find((i) => /^\s*run:/.test(lines[i]))
+    if (run === undefined) return
+    for (const i of fields(lines, run, blockEnd(lines, run, limit))) {
+      const field = /^\s*(working-directory|shell):/.exec(lines[i])
+      if (field) context[field[1] === 'shell' ? 'shell' : 'workingDirectory'] = fieldValue(lines, i, limit)
     }
   }
-  defaults(0, job.start, 0)
-  defaults(job.start + 1, steps, 4)
+  defaults(-1, lines.findIndex((l) => /^jobs:/.test(l)))
+  defaults(job.start, steps)
+  const fieldIndent = lineIndent(lines[start]) + 2
   for (let i = start; i < end; i++) {
-    const field = /^ {6}(?:- |  )(if|working-directory|shell|continue-on-error):\s*(.*)$/.exec(lines[i])
-    if (!field) continue
-    let value = field[2].trim()
-    if (/^[|>][-+]?\s*(?:#.*)?$/.test(value)) {
-      const parts = []
-      for (let j = i + 1; j < end && /^ {10,}\S/.test(lines[j]); j++) parts.push(lines[j].trim())
-      value = parts.join(' ')
-    }
-    value = unquote(value)
+    const field = /^\s*(?:-\s+)?(if|working-directory|shell|continue-on-error):/.exec(lines[i])
+    if (!field || (i !== start && lineIndent(lines[i]) !== fieldIndent)) continue
+    const value = fieldValue(lines, i, end)
     if (field[1] === 'if') { context.condition = value.replace(/^\$\{\{\s*|\s*\}\}$/g, ''); context.conditionLine = i + 1 }
     else if (field[1] === 'working-directory') context.workingDirectory = value
     else if (field[1] === 'shell') context.shell = value
@@ -274,11 +301,16 @@ function narrow(events, expr) {
 export function publishSteps(text) {
   const seen = new Map()
   text.split(/\r?\n/).forEach((line, i) => {
-    if (/^\s*#/.test(line)) return
+    if (/^\s*#|^\s*(?:-\s+)?(?:name|if|working-directory|shell):/.test(line)) return
+    const run = /^\s*(?:-\s+)?run:\s*(.+)$/.exec(line)
+    if (run) line = unquote(run[1])
+    // Script names describe their verb; a test about releases is still a test.
+    line = line.replace(/\b(?:npm|pnpm|yarn|bun)(?:\s+run)?\s+([\w:.-]+)/g, (invocation, script) =>
+      /^(?:test|lint|check|verify|build|typecheck|format|dry-run)[:_-]|[:_-](?:test|lint|check|verify|dry-run)$/.test(script) ? 'nonpublishing-check' : invocation)
     for (const [re, what, opts] of PUBLISHERS) {
       if (re.test(line)) { if (!seen.has(what)) seen.set(what, { line: i + 1, ...opts }); break }
     }
-    const wrapper = /\b(?:npm|pnpm|yarn)(?:\s+run)?\s+([\w:.-]*(?:publish|release|deploy)[\w:.-]*)\b/.exec(line)
+    const wrapper = /\b(?:npm|pnpm|yarn|bun)(?:\s+run)?\s+([\w:.-]*(?:publish|release|deploy)[\w:.-]*)\b/.exec(line)
     if (wrapper && !PUBLISHERS.some(([re]) => re.test(line))) {
       const what = `publishing wrapper ${wrapper[1]} (destination unverified; review source)`
       if (!seen.has(what)) seen.set(what, { line: i + 1, unread: true })
@@ -362,10 +394,4 @@ function list(s) {
   const t = s.trim()
   if (t.startsWith('[')) return t.replace(/^\[|\]$/g, '').split(',').map(unquote).filter(Boolean)
   return [unquote(t)]
-}
-
-function unquote(s) {
-  const value = String(s).trim().replace(/\s+#.*$/, '')
-  const quoted = (value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))
-  return quoted ? value.slice(1, -1) : value
 }
