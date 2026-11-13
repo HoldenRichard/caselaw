@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/caselaw.svg?color=24292e&label=npm)](https://www.npmjs.com/package/caselaw)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**Using the current npm release?** See the [caselaw 0.3.0 documentation](https://github.com/HoldenRichard/caselaw/tree/v0.3.0#readme). This branch documents 0.2.0.
+**Using the current npm release?** See the [caselaw 0.4.1 documentation](https://github.com/HoldenRichard/caselaw/tree/v0.4.1#readme). This branch documents 0.2.0.
 
 **Case law for your codebase.** An interview that generates your project's own
 rules, gates that earn their teeth, and an audit that keeps both honest.
