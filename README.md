@@ -3,15 +3,23 @@
 [![npm version](https://img.shields.io/npm/v/caselaw.svg?color=24292e&label=npm)](https://www.npmjs.com/package/caselaw)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**Case law for your codebase.** An interview that generates your project's own
-rules, gates that earn their teeth, and an audit that keeps both honest.
+**Case law for your codebase.** Set up project rules with your coding agent,
+turn proven rules into gates, and audit both as the project changes.
 
-```
-npx caselaw init
-```
+In your coding agent's chat, say:
 
-About six minutes. It reads your repo first, asks only what it cannot detect, and
-shows you every file before it writes anything.
+> Set up CaseLaw for this repo. Read the repo and ask me only what you can't
+> infer, then show me the proposed setup.
+
+The agent runs `npx caselaw init --draft` to prepare or resume the draft. It reads your repo for
+build and test commands, CI, and publishing. If a decision remains, it asks a
+short question in chat about the actual project. You approve one setup summary,
+and the agent installs and checks the result.
+
+The agent can resume a draft with `caselaw init --draft`, preview it with
+`caselaw init --from-draft --dry-run`, then apply it with
+`caselaw init --from-draft --yes` after chat approval. To answer the
+questionnaire directly, use `npx caselaw init --interview`. About six minutes.
 
 ---
 
@@ -42,14 +50,11 @@ If you cannot name a time it bit you, you do not need the rule yet.
 
 ## Define the agent's boundaries
 
-The interview's first real question is:
-
-> **What can your agent NOT do or observe in this project without you?**
-
-And then, for each thing you name:
-
-> Is that boundary **physical** (no process could), **chosen** (possible, but it
-> must not), or **untested** (you assume so, and never checked)?
+Your agent should ask about the handoff the repo can't establish. For a mobile
+app, that might be “CI runs the simulator tests. What still needs a real
+iPhone, and what should you check on it?” It records whether each boundary is
+**physical** (unreachable from here), **chosen** (reserved for a human), or
+**untested** (still uncertain).
 
 That third option is the one that matters. A silent misconfiguration reads
 exactly like a permanent boundary, and boundaries do not get re-tested. Anything
@@ -85,17 +90,55 @@ docs/
   answers.json            your answers: edit this, not the docs
   gates.json              empty until a rule earns one
   bin/gate.mjs            vendored, zero-dependency
-CLAUDE.md / AGENTS.md     a pointer block, not a copy of the doctrine
+AGENTS.md                the shared entry point for any agent
 ```
 
-Only for the agent tools you already use. A Cursor project gets a `.mdc` rule
-file and no `.claude/` directory.
+Point any agent at the repository-root `AGENTS.md` if it doesn't load that file
+automatically. It leads to the authority split, active rules, and session
+close-out. If CaseLaw detects a tool with a built-in adapter, it also installs
+a bridge to those same instructions. `caselaw upgrade` adds the shared entry
+point to existing installs and updates unmodified bridges in place.
+
+### Running gates from any agent
+
+Run these commands from the repository root. They require Node.js and the
+vendored runner installed by CaseLaw.
+
+```sh
+node .caselaw/bin/gate.mjs --mode staged  # check staged changes before committing
+node .caselaw/bin/gate.mjs --mode all     # check the working tree, including in CI
+```
+
+To connect a tool's live hooks, invoke
+`node .caselaw/bin/gate.mjs --host generic --mode pre` or `--mode post` and send
+one JSON object on stdin. The caller can set `cwd` to the absolute working
+directory of the operation. Relative paths resolve from that directory.
+
+| When | Example stdin |
+|---|---|
+| Before a whole-file write | `{"path":"notes.md","content":"new file contents"}` |
+| Before a partial edit | `{"path":"notes.md","fragments":["replacement text"]}` |
+| Before a shell command | `{"command":"npm test"}` |
+| After a write | `{"path":"notes.md"}` |
+
+The runner evaluates the command string without executing it. A completed
+evaluation returns JSON with `decision` (`allow` or `block`), a `reason` for
+blocks, and `result` with findings and coverage. A pre-hook block exits 2.
+A post-hook block exits 0 and reports a finding after the write has happened.
+If the runner cannot evaluate the event, it may exit 0 without a JSON report.
+Treat missing reports and degraded coverage as unchecked. Live hooks need
+wiring in the calling tool. Staged and whole-tree checks run independently.
+
+A tool that emits automatic context compaction events can call the same
+runner with `--host generic --mode compact` and send
+`{"trigger":"auto"}` (with an optional `cwd`). This records local optimizer
+telemetry and makes no gate decision.
 
 ## Commands
 
 | | |
 |---|---|
-| `caselaw init` | interview and generate |
+| `caselaw init` | prepare setup for your coding agent |
 | `caselaw check` | CI: are the committed docs still what the answers produce? |
 | `caselaw upgrade` | re-render; never touches what you edited |
 | `caselaw audit` | is the governance still true? |
@@ -143,7 +186,7 @@ first public release advertised seven that did not exist.
 **It never overwrites what you edited.** Every generated file carries a content
 hash; a hand-edited one is reported and skipped, not clobbered.
 
-**Re-runs are byte-identical.** Run `init` twice and the second is a no-op.
+**Setup can resume.** Re-running draft setup keeps your answers in progress.
 
 **Runtime checker failures report degraded coverage.** The hook runner avoids blocking
 the workflow on its own failure. Governance mutations and certification instead refuse
@@ -153,9 +196,10 @@ does not establish that a check passed.
 **`eject` keeps your docs.** The doctrine is your own answers as prose and does
 not need this tool to be useful. Only the machinery goes.
 
-**It is not Claude-only.** Claude Code, AGENTS.md, Cursor and Copilot, each with
-a golden-render test. A tool counts as supported when a test renders it. This
-list is generated from the test suite, not from optimism.
+**One entry point and one gate runner.** The shared instructions and portable
+hook interface work independently of editor or model. CaseLaw tests instruction
+bridges for Claude Code, Cursor, and GitHub Copilot. Claude Code also has
+built-in live hook wiring.
 
 ## Where it came from
 

@@ -2012,7 +2012,7 @@ function normalizeInline(config, loaded) {
 }
 
 // ===========================================================================
-// Hook input (Claude Code)
+// Hook input adapters
 // ===========================================================================
 
 /**
@@ -2054,12 +2054,28 @@ export function extractHookInput(payload) {
   return { ok: true, reason: null, path, texts, whole: whole && texts.length === 1, toolName }
 }
 
+// Portable callers describe a write directly, without tool names or host event fields.
+function extractGenericHookInput(mode, payload) {
+  const path = str(payload.path) || null
+  if (!path) return { ok: false, reason: 'hook payload has no path; nothing was checked', path, texts: [], whole: false }
+  if (mode === 'post') return { ok: true, reason: null, path, texts: [], whole: false }
+
+  const whole = typeof payload.content === 'string' && payload.fragments === undefined
+  const fragments = payload.content === undefined && Array.isArray(payload.fragments) &&
+    payload.fragments.length > 0 && payload.fragments.every((fragment) => typeof fragment === 'string')
+  if (!whole && !fragments) {
+    return { ok: false, reason: 'pre hook requires content or non-empty string fragments; nothing was checked', path, texts: [], whole: false }
+  }
+  return { ok: true, reason: null, path, texts: whole ? [payload.content] : payload.fragments, whole }
+}
+
 /** The command-gate half of a hook: pre only, and never a reason to stop a command when nothing applies. */
-async function runCommandHook(mode, common, args, payload, stdout, stderr) {
+async function runCommandHook(mode, common, args, payload, command, stdout, stderr) {
   if (mode !== 'pre') return EXIT.OK
   const root = await installAbove(str(payload.cwd) || process.cwd()) ?? (args.root ? resolve(args.root) : null)
   if (!root) return EXIT.OK // a command outside any install has nothing here to answer to
-  const result = await evaluate({ ...common, root, mode: 'pre', command: payload.tool_input.command, onlyKinds: ['command'], writes: [], targets: [], proposed: [], changeSet: null, changeSetReason: 'a shell command, not a write' })
+  const result = await evaluate({ ...common, root, mode: 'pre', command, onlyKinds: ['command'], writes: [], targets: [], proposed: [], changeSet: null, changeSetReason: 'a shell command, not a write' })
+  if (args.host === 'generic') return reportGenericHook(mode, result, stdout)
   const asides = []
   if (result.config.degraded) asides.push(`config not usable: ${oneLine(result.config.reason, 300)}`)
   for (const f of result.warnings) asides.push(oneLine(`warn ${f.gate}: ${f.detail}${f.message ? ` — ${f.message}` : ''}`, 400))
@@ -2083,9 +2099,10 @@ async function recordCompaction(args) {
   const raw = await readStdin()
   let payload = {}
   try { payload = raw.ok && raw.text.trim() ? JSON.parse(raw.text) : {} } catch { /* counted anyway */ }
-  const root = (await installAbove(str(payload.cwd) || process.env.CLAUDE_PROJECT_DIR || process.cwd())) ?? (args.root ? resolve(args.root) : null)
+  const hostDir = args.host === 'generic' ? null : process.env.CLAUDE_PROJECT_DIR
+  const root = (await installAbove(str(payload?.cwd) || hostDir || process.cwd())) ?? (args.root ? resolve(args.root) : null)
   if (!root) return EXIT.OK
-  const line = JSON.stringify({ at: new Date().toISOString(), trigger: str(payload.trigger) || null }) + '\n'
+  const line = JSON.stringify({ at: new Date().toISOString(), trigger: str(payload?.trigger) || null }) + '\n'
   try { await appendFile(join(root, '.caselaw/compactions.jsonl'), line, 'utf8') } catch { /* never block a compaction */ }
   return EXIT.OK
 }
@@ -2277,8 +2294,9 @@ function parseArgs(argv) {
 
 const USAGE = `caselaw gate runner
 
-  node gate.mjs --mode pre    --host claude   PreToolUse: hook JSON on stdin, exit 2 to block
-  node gate.mjs --mode post   --host claude   PostToolUse: re-read from disk, {"decision":"block"} on stdout
+  node gate.mjs --mode pre    --host generic  JSON write or command on stdin, exit 2 to block
+  node gate.mjs --mode post   --host generic  JSON path on stdin, re-read from disk
+  node gate.mjs --mode compact --host generic  record a context compaction for the optimizer
   node gate.mjs --mode staged                 git diff --cached, exit 1 if a block-severity gate fires
   node gate.mjs --mode all                    whole tree (CI), exit 1 if a block-severity gate fires
 
@@ -2307,15 +2325,16 @@ export async function main(argv = process.argv.slice(2), io = {}) {
   try {
     const root = resolve(args.root ?? process.cwd())
     const mode = args.mode
-    // Not a gate mode: Claude Code's PreCompact hook, counted for the optimizer (0.3).
+    // A telemetry event for the optimizer, separate from gate evaluation.
     if (mode === 'compact') return await recordCompaction(args)
     if (!MODES.includes(mode)) {
       // Bad invocation is OUR failure, and our failures never block.
       stderr(`caselaw gate: --mode must be one of ${MODES.join(', ')} (got ${JSON.stringify(mode ?? null)})\n`)
       return EXIT.OK
     }
-    if (args.host && args.host !== 'claude') {
-      stderr(`caselaw gate: unknown --host ${JSON.stringify(args.host)}; reading Claude Code hook JSON\n`)
+    if (args.host && !['claude', 'generic'].includes(args.host)) {
+      stderr(`caselaw gate: unknown --host ${JSON.stringify(args.host)}; nothing was checked\n`)
+      return EXIT.OK
     }
 
     const common = { root, mode, configPath: args.config ?? undefined, telemetry: args.telemetry }
@@ -2433,6 +2452,16 @@ function emitAsides(stdout, mode, lines, extra = {}) {
   stdout(JSON.stringify(payload) + '\n')
 }
 
+function reportGenericHook(mode, result, stdout) {
+  const blocked = result.blocking.length > 0
+  stdout(JSON.stringify({
+    decision: blocked ? 'block' : 'allow',
+    ...(blocked ? { reason: blockReason(result) } : {}),
+    result,
+  }) + '\n')
+  return blocked && mode === 'pre' ? EXIT.PRE_BLOCK : EXIT.OK
+}
+
 async function runHookMode(mode, common, args, stdout, stderr) {
   const raw = await readStdin()
   if (!raw.ok) {
@@ -2452,13 +2481,24 @@ async function runHookMode(mode, common, args, stdout, stderr) {
     return EXIT.OK
   }
 
-  // A shell call (0.3): only command gates apply, and the root is found from
-  // the directory the command runs in.
-  if (str(payload.tool_name) === 'Bash' && payload.tool_input && typeof payload.tool_input.command === 'string') {
-    return await runCommandHook(mode, common, args, payload, stdout, stderr)
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    stderr('caselaw gate: hook payload is not an object; nothing was checked\n')
+    return EXIT.OK
   }
 
-  const hook = extractHookInput(payload)
+  const generic = args.host === 'generic'
+  const command = generic ? payload.command : str(payload.tool_name) === 'Bash' ? payload.tool_input?.command : undefined
+  if (generic && payload.command !== undefined &&
+      (mode !== 'pre' || typeof command !== 'string' || !command.trim() ||
+        payload.path !== undefined || payload.content !== undefined || payload.fragments !== undefined)) {
+    stderr('caselaw gate: expected a pre hook with a command alone; nothing was checked\n')
+    return EXIT.OK
+  }
+  if (typeof command === 'string') {
+    return await runCommandHook(mode, common, args, payload, command, stdout, stderr)
+  }
+
+  const hook = generic ? extractGenericHookInput(mode, payload) : extractHookInput(payload)
   if (!hook.ok) {
     stderr(`caselaw gate: ${hook.reason}\n`)
     return EXIT.OK
@@ -2467,7 +2507,7 @@ async function runHookMode(mode, common, args, stdout, stderr) {
   const located = await locateRoot({ hint: args.root, cwd: str(payload.cwd) || null, filePath: hook.path })
   if (!located.ok) {
     stderr(`caselaw gate: ${located.reason}; nothing was checked\n`)
-    emitAsides(stdout, mode, [`${located.reason}; nothing was checked`])
+    if (!generic) emitAsides(stdout, mode, [`${located.reason}; nothing was checked`])
     return EXIT.OK
   }
   const root = located.root
@@ -2493,6 +2533,7 @@ async function runHookMode(mode, common, args, stdout, stderr) {
   }
 
   const result = await evaluate(opts)
+  if (generic) return reportGenericHook(mode, result, stdout)
 
   const asides = []
   if (result.config.degraded) asides.push(`config not usable: ${oneLine(result.config.reason, 300)}`)

@@ -163,11 +163,27 @@ describe('init --draft, then --from-draft', () => {
   })
 
   test('confirmed with --yes: the docs are generated, say where each answer came from, and the draft is removed', async () => {
-    await cli(['init', '--draft'], { cwd: root })
+    const prepared = await cli(['init'], { cwd: root })
+    assert.equal(prepared.code, 0, prepared.out)
+    assert.match(prepared.out, /ask me only what you cannot infer/)
+    assert.doesNotMatch(prepared.out, /Session 1\//)
+    assert.equal(await exists('.caselaw/answers.json'), false)
     const path = join(root, DRAFT_PATH)
     const draft = JSON.parse(await readFile(path, 'utf8'))
     assert.ok(draft.questions.find((q) => q.id === 'authority.cannot').options.some((o) => o.value === 'hardware'))
-    await writeFile(path, JSON.stringify(fill(draft, GOOD)), 'utf8')
+    assert.equal(draft.questions.find((q) => q.id === 'harness.autonomy').answer, 'ask-first')
+    const filled = JSON.stringify(fill(draft, {
+      ...GOOD,
+      'authority.human_proof': { answer: 'Check the bench trace against the reference.', source: 'human', evidence: [] },
+    }))
+    await writeFile(path, filled, 'utf8')
+    const resumed = await cli(['init'], { cwd: root })
+    assert.equal(resumed.code, 0, resumed.out)
+    assert.equal(await readFile(path, 'utf8'), filled)
+    const preview = await cli(['init', '--from-draft', '--dry-run'], { cwd: root })
+    assert.equal(preview.code, 0, preview.out)
+    assert.match(preview.out, /Answer supplied in chat/)
+    assert.equal(await exists('.caselaw/answers.json'), false)
     const r = await cli(['init', '--from-draft', '--yes'], { cwd: root })
     assert.equal(r.code, 0, r.out)
     const split = await readFile(join(root, 'docs/authority-split.md'), 'utf8')
@@ -176,6 +192,8 @@ describe('init --draft, then --from-draft', () => {
     assert.match(split, /## Where these answers came from[\s\S]*\| What the agent cannot do \| agent draft \| `README\.md:3` \| in chat \(--yes\) \|/)
     const answers = JSON.parse(await readFile(join(root, '.caselaw/answers.json'), 'utf8'))
     assert.deepEqual(answers.provenance['authority.cannot'].evidence, ['README.md:3'])
+    assert.equal(answers.provenance['authority.human_proof'].by, 'human')
+    assert.equal(answers.answers['harness.autonomy'], 'ask-first')
     assert.equal(await exists(DRAFT_PATH), false)
   })
 

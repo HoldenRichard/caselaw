@@ -1,7 +1,7 @@
 {
   "name": "caselaw",
-  "version": "0.3.0",
-  "description": "Case law for your codebase: an interview that generates your project's own rules, gates that earn their teeth, and an audit that keeps them honest.",
+  "version": "0.4.0",
+  "description": "Case law for your codebase: agent-led setup, project rules, gates that earn their teeth, and an audit that keeps them honest.",
   "type": "module",
   "engines": {
     "node": ">=20"
@@ -27,7 +27,6 @@
   "keywords": [
     "ai",
     "agents",
-    "claude-code",
     "governance",
     "codegen",
     "guardrails",

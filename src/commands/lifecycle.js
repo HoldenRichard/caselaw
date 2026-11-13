@@ -312,7 +312,7 @@ export async function doctor({ root }) {
       bad('hooks', `.claude/settings.json is unreadable: ${err.message}`, 'Fix the JSON; a broken settings file disables every hook.')
     }
   } else {
-    warn('hooks', 'no .claude/settings.json', 'Gates will only run in CI or by hand.')
+    warn('hooks', 'no built-in live hook configuration detected', 'Use the portable hook interface, staged checks, or CI. External hook wiring is not checked here.')
   }
 
   // Gate config must parse, or every gate is silently absent.

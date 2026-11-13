@@ -65,7 +65,7 @@ export const TEMPLATE_VERSION = '1.2'
 
 /** The dispatch table. test/unit/cli-surface.test.js checks every advertised command against it. */
 export const COMMANDS = {
-  init: { help: 'interview this project and generate its governance' },
+  init: { help: 'prepare setup for your coding agent' },
   check: { help: 'CI: are the committed docs still what the answers produce?' },
   upgrade: { help: 're-render from your answers at the current template' },
   doctor: { help: 'is any of this actually wired up?' },
@@ -82,7 +82,7 @@ export const COMMANDS = {
   closeout: { subs: ['verify'], help: 'verify close-out report against git status and authority split' },
 }
 
-export const BOOL_FLAGS = ['help', 'dry-run', 'yes', 'force', 'json', 'agent', 'strict', 'purge', 'reconfigure', 'draft', 'from-draft', 'compress', 'llm']
+export const BOOL_FLAGS = ['help', 'dry-run', 'yes', 'force', 'json', 'agent', 'strict', 'purge', 'reconfigure', 'draft', 'from-draft', 'interview', 'compress', 'llm']
 export const VALUED_FLAGS = [
   'with', 'doctrine-dir', 'origin', 'trigger', 'rule', 'enforcement', 'by', 'reason', 'what', 'apply',
   'set', 'enable', 'disable', 'autonomy', 'note', 'why', 'signal', 'window',
@@ -95,7 +95,7 @@ export const KNOWN_FLAGS = [...BOOL_FLAGS, ...VALUED_FLAGS]
 
 export const USAGE = `caselaw ${CLI_VERSION}
 
-  caselaw init [dir]            interview this project and generate its governance
+  caselaw init [dir]            prepare setup for your coding agent
   caselaw check [dir]           CI: are the committed docs still what the answers produce?
   caselaw upgrade [dir]         re-render from your answers at the current template
   caselaw doctor [dir]          is any of this actually wired up?
@@ -135,8 +135,9 @@ Options
   --strict               check: fail on files you edited too
   --with <a,b,c>         init: add optional modules: decisions, glossary, known-issues
   --reconfigure          init: ask every question again, including ones already answered
-  --draft                init: write .caselaw/draft.json for an agent to answer from the repository
-  --from-draft           init: confirm the agent's drafted answers, then generate (--yes after confirming in chat)
+  --draft                init: prepare or resume the agent's setup draft
+  --from-draft           init: preview or apply the draft (--yes after approval in chat)
+  --interview            init: use the terminal questionnaire
   --compress             rule evolve: optimize rule for word budget compression
   --llm                  rule evolve: run model-driven iterative proposal and verification
   --runner <cmd>         rule evolve: command line for LLM completions
@@ -571,7 +572,10 @@ async function cmdInit(args, root) {
 
   // Writing the draft touches only .caselaw/draft.json, so neither a dirty tree
   // nor a borrowed docs/ is a reason to refuse it; --from-draft meets both.
-  if (args.draft) return writeInitDraft({ root, detected, args })
+  const existing = await answersStore.load(root)
+  if (args.draft || (!existing && !args.fromDraft && !args.interview && !args.yes && !args.reconfigure)) {
+    return writeInitDraft({ root, detected, args, existing })
+  }
 
   // A flag that cannot be honoured is reported before anything else is checked.
   const asked = args.opt['doctrine-dir']
@@ -593,8 +597,6 @@ async function cmdInit(args, root) {
       return 1
     }
   }
-
-  const existing = await answersStore.load(root)
 
   // docs/ is where the doctrine goes, unless it is already someone else's: on
   // two of three dogfood repositories it was a build tool's — TypeDoc output
@@ -651,8 +653,8 @@ async function cmdInit(args, root) {
 }
 
 /** `init --draft`: the questions, what detection knows, and room for an agent's answers. */
-async function writeInitDraft({ root, detected, args }) {
-  const doc = (await answersStore.load(root)) ?? answersStore.emptyAnswers({
+async function writeInitDraft({ root, detected, args, existing }) {
+  const doc = existing ?? answersStore.emptyAnswers({
     templateVersion: TEMPLATE_VERSION,
     project: { name: detected.stack?.projectName || basename(root) },
   })
@@ -662,15 +664,16 @@ async function writeInitDraft({ root, detected, args }) {
     say('\n  --dry-run: nothing written.')
     return 0
   }
-  if ((await loadDraft(root).catch(() => null)) && !args.force) {
-    say(`\n  ${DRAFT_PATH} already exists. Finish it with \`caselaw init --from-draft\`, or pass --force to start it over.`)
-    return 1
+  const previous = args.force ? null : await loadDraft(root)
+  if (previous) {
+    say(`\n  Resuming ${DRAFT_PATH}.`)
+  } else {
+    await writeDraft(root, draft, { replace: args.force })
+    say(`\n  Prepared ${DRAFT_PATH} with repository findings and instructions for your agent.`)
   }
-  await writeDraft(root, draft)
-  say(`\n  Wrote ${DRAFT_PATH}: ${draft.questions.length} questions, with what detection found and the instructions an agent needs.`)
-  say('  An agent fills it in from the repository, naming the file behind every answer, and shows you each one.')
-  say('  Then: `caselaw init --from-draft` at a terminal to keep or change each answer,')
-  say('  or `caselaw init --from-draft --yes` once you have confirmed them in chat.')
+  say('  In your coding agent chat, say: “Set up CaseLaw for this repo. Read .caselaw/draft.json and ask me only what you cannot infer.”')
+  say('  Your agent fills in the draft, previews the setup, and applies it after you approve in chat.')
+  say('  To answer at a terminal instead, run `caselaw init --interview`.')
   return 0
 }
 
@@ -701,11 +704,11 @@ async function initFromDraft({ root, doc, detected, args }) {
   const human = isInteractive() && !args.yes && !args.dryRun
   if (!human && !args.yes && !args.dryRun) {
     say('\n  Nothing is generated from a draft no human has confirmed.')
-    say('  Show them each answer with the lines it rests on (`caselaw init --from-draft --dry-run` prints them), then pass --yes; or run this at a terminal.')
+    say('  Use `caselaw init --from-draft --dry-run` to review the draft and plan. Summarize the setup in chat, then pass --yes after approval.')
     return 1
   }
   if (args.dryRun) {
-    say('\n  What the agent drafted, with the lines each answer rests on:')
+    say('\n  Draft answers and their sources:')
     for (const line of await draftSheet(root, draft)) say(line)
   }
   const tty = human ? ttyPrompt() : null
@@ -715,7 +718,6 @@ async function initFromDraft({ root, doc, detected, args }) {
       doc,
       detected,
       prompt,
-      persist: args.dryRun ? null : (d) => answersStore.save(root, d),
       reconfigure: args.reconfigure,
     })
     doc.provenance = { ...(doc.provenance ?? {}), ...prompt.provenance }
@@ -724,7 +726,6 @@ async function initFromDraft({ root, doc, detected, args }) {
     // The reasons ride on the triage they explain, and on its confirmation.
     const noted = applyNotes(draft, doc, { confirmed: prompt.provenance['authority.triage']?.confirmed ?? null })
     if (noted) doc.provenance['authority.notes'] = noted
-    if (!args.dryRun) await answersStore.save(root, doc)
     const code = await finishInit({ root, doc, detected, args, prompt: tty ?? prompt })
     if (code === 0 && !args.dryRun) {
       await removeDraft(root)
@@ -765,6 +766,7 @@ async function finishInit({ root, doc, detected, args, prompt }) {
     return 0
   }
   if (plan.summary.willWrite === 0) {
+    if (args.fromDraft) await answersStore.save(root, doc)
     say('\n  Already up to date.')
     return 0
   }
@@ -884,7 +886,7 @@ export function parseArgs(list) {
   const out = {
     command: null, sub: null, name: null, dir: null,
     dryRun: false, yes: false, force: false, help: false, json: false, agent: false,
-    strict: false, purge: false, reconfigure: false, draft: false, fromDraft: false,
+    strict: false, purge: false, reconfigure: false, draft: false, fromDraft: false, interview: false,
     with: [], opt: {}, unknown: [],
   }
   const positional = []

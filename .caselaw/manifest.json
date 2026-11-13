@@ -46,12 +46,12 @@
     },
     "CLAUDE.md": {
       "kind": "block",
-      "hash": "3a37a3b7a13529f206a299960e8615764686817e25c473c5acbb7616f7b6d807",
+      "hash": "918b1c90559355ef78f33fdf3562f2b021ef8bdfd8a5c8415e5decd44934de55",
       "blockId": "pointer"
     },
     ".caselaw/bin/gate.mjs": {
       "kind": "file",
-      "hash": "05949fc8af73e7a35eb851fe8035ba9405f46a46a133c61bae411eb82887898c"
+      "hash": "08979afa18aa2d91065fff8a4cf44fe3fcf21f75b68571dc95589069d0987673"
     },
     ".caselaw/schema/gates.schema.json": {
       "kind": "file",
@@ -68,7 +68,7 @@
     },
     ".claude/commands/close-out.md": {
       "kind": "file",
-      "hash": "6e0360a0e8f0cc19cb3311c1ef90fd51b8ce8f4caa3ba64e4bb82407a5943d95"
+      "hash": "c2e40db4871ae07b3c4bcd300072717d54d34907ce35b11ec57efdf1b2468cac"
     },
     ".gitignore": {
       "kind": "block",
@@ -81,7 +81,7 @@
     },
     "AGENTS.md": {
       "kind": "block",
-      "hash": "3a37a3b7a13529f206a299960e8615764686817e25c473c5acbb7616f7b6d807",
+      "hash": "950ec8b7094709a833c9d995faf2c9380795cccc08667efb5294c9c12ba999c5",
       "blockId": "pointer"
     }
   }

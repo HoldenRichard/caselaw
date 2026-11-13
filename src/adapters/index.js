@@ -60,15 +60,15 @@ export const ADAPTERS = [
     label: 'Claude Code',
     tested: true,
     detect: (d) => Boolean(d?.agentConfig?.claudeMd || d?.agentConfig?.claudeDir),
-    artifacts(ctx = {}) {
-      return [{ path: 'CLAUDE.md', kind: 'block', blockId: 'pointer', version: 1, body: markdownPointer(ctx.dir) }]
+    artifacts() {
+      return [{ path: 'CLAUDE.md', kind: 'block', blockId: 'pointer', version: 1, body: '@AGENTS.md' }]
     },
   },
   {
     id: 'agents-md',
-    label: 'AGENTS.md (Codex and others)',
+    label: 'AGENTS.md (shared instructions)',
     tested: true,
-    detect: (d) => Boolean(d?.agentConfig?.agentsMd),
+    detect: () => true,
     artifacts(ctx = {}) {
       return [{ path: 'AGENTS.md', kind: 'block', blockId: 'pointer', version: 1, body: markdownPointer(ctx.dir) }]
     },
@@ -78,7 +78,7 @@ export const ADAPTERS = [
     label: 'Cursor',
     tested: true,
     detect: (d) => Boolean(d?.agentConfig?.cursorRules),
-    artifacts(ctx = {}) {
+    artifacts() {
       // Cursor reads .mdc rule files with YAML frontmatter. alwaysApply keeps
       // the pointer in context; the doctrine itself still lives in docs/.
       const body = [
@@ -87,7 +87,7 @@ export const ADAPTERS = [
         'alwaysApply: true',
         '---',
         '',
-        markdownPointer(ctx.dir),
+        sharedPointer,
       ].join('\n')
       return [{ path: '.cursor/rules/caselaw.mdc', kind: 'file', body: body + '\n' }]
     },
@@ -97,14 +97,16 @@ export const ADAPTERS = [
     label: 'GitHub Copilot',
     tested: true,
     detect: (d) => Boolean(d?.agentConfig?.copilot),
-    artifacts(ctx = {}) {
+    artifacts() {
       return [{
         path: '.github/copilot-instructions.md',
-        kind: 'block', blockId: 'pointer', version: 1, body: markdownPointer(ctx.dir),
+        kind: 'block', blockId: 'pointer', version: 1, body: sharedPointer,
       }]
     },
   },
 ]
+
+const sharedPointer = 'Read and follow the repository-root `AGENTS.md` for the shared CaseLaw instructions.'
 
 function markdownPointer(dir = 'docs') {
   return [
@@ -116,22 +118,15 @@ function markdownPointer(dir = 'docs') {
     '',
     PROPOSE_NOTE,
     '',
+    'Run gates from the repository root with `node .caselaw/bin/gate.mjs --mode staged` for staged changes or `--mode all` for the working tree.',
+    '',
     GENERATED_NOTE,
   ].join('\n')
 }
 
-/**
- * Which adapters apply to this project.
- *
- * Writing a Cursor rule file into a repo that has never seen Cursor is
- * clutter, and clutter is how a harness gets deleted. Default to Claude Code
- * only when nothing at all is detected — one file beats none, and it is the
- * host this was built against.
- */
+/** Always install the shared instructions. Add bridges for selected or detected tools. */
 export function selectAdapters(detected, { only = null } = {}) {
-  if (only) return ADAPTERS.filter((a) => only.includes(a.id))
-  const found = ADAPTERS.filter((a) => a.detect(detected))
-  return found.length ? found : ADAPTERS.filter((a) => a.id === 'claude-code')
+  return ADAPTERS.filter((a) => a.id === 'agents-md' || (only ? only.includes(a.id) : a.detect(detected)))
 }
 
 export function getAdapter(id) {

@@ -39,7 +39,7 @@ export const LOAD_BUDGET_WORDS = 3000
 export const RATIFIED_SINCE = 5
 export const PASS_DAYS = 30
 export const TROUBLE_CATCHES = 3
-/** Context compactions, as Claude Code's PreCompact hook records them. */
+/** Context compactions reported by an agent integration. */
 export const COMPACTIONS = { count: 5, days: 14 }
 export const COMPACTIONS_PATH = '.caselaw/compactions.jsonl'
 /** Trigger overlap at which two rules are worth reading as one. */
@@ -57,7 +57,7 @@ const exists = async (p) => { try { await access(p); return true } catch { retur
 export async function measureLoad(root, doc) {
   const dir = doctrineDirOf(doc)
   const files = []
-  // One pointer block is read per tool; the larger stands for both.
+  // Measure the shared pointer, with the larger legacy pointer as a fallback estimate.
   let pointer = null
   for (const f of ['CLAUDE.md', 'AGENTS.md']) {
     const text = await read(join(root, f))

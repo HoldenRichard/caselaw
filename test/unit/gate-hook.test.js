@@ -54,6 +54,56 @@ const payload = (filePath, content, extra = {}) =>
   JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: filePath, content }, ...extra })
 const hookJson = (out) => (out.trim() ? JSON.parse(out.trim().split('\n').pop()) : null)
 
+test('portable hooks evaluate whole writes, fragments, commands, and completed writes', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'caselaw-portable-hook-'))
+  try {
+    await install(root, [
+      gate({}),
+      { ...writerGuard(), severity: 'block' },
+    ])
+    await mkdir(join(root, 'docs'))
+    const cwd = join(root, 'docs')
+    const file = { cwd, path: 'notes.md' }
+    const hook = (mode, event) =>
+      run([process.execPath, RUNNER, '--host', 'generic', '--mode', mode, '--no-telemetry'], {
+        cwd: root, input: JSON.stringify(event),
+      })
+
+    for (const proposed of [{ content: 'FORBIDDEN_BLOCK' }, { fragments: ['FORBIDDEN_BLOCK'] }]) {
+      const result = await hook('pre', { ...file, ...proposed })
+      assert.equal(result.code, EXIT.PRE_BLOCK)
+      const report = hookJson(result.out)
+      assert.equal(report.decision, 'block')
+      assert.equal(report.result.blocking[0].path, 'docs/notes.md')
+    }
+    const clean = await hook('pre', { ...file, content: '' })
+    assert.equal(clean.code, EXIT.OK)
+    assert.equal(hookJson(clean.out).decision, 'allow')
+
+    const incomplete = await hook('pre', file)
+    assert.equal(incomplete.code, EXIT.OK)
+    assert.equal(incomplete.out, '')
+    assert.match(incomplete.err, /nothing was checked/)
+
+    const command = await hook('pre', { cwd, command: 'git add -A' })
+    assert.equal(command.code, EXIT.PRE_BLOCK)
+    assert.equal(hookJson(command.out).decision, 'block')
+
+    await writeFile(join(cwd, 'notes.md'), 'FORBIDDEN_BLOCK')
+    const post = await hook('post', file)
+    assert.equal(post.code, EXIT.OK)
+    assert.equal(hookJson(post.out).decision, 'block')
+
+    const compact = await run([process.execPath, RUNNER, '--host', 'generic', '--mode', 'compact'], {
+      cwd: root, input: JSON.stringify({ cwd, trigger: 'auto' }),
+    })
+    assert.equal(compact.code, EXIT.OK)
+    assert.equal(JSON.parse(await readFile(join(root, '.caselaw/compactions.jsonl'), 'utf8')).trigger, 'auto')
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 describe('hook mode — the exit-code contract, spawned', () => {
   test('POSITIVE CONTROL: the matrix — block exits 2, warn is stdout JSON, clean is silent, --json keeps the verdict, an interior `..` is refused', async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'caselaw-hook-')))

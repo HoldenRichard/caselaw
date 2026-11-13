@@ -38,7 +38,7 @@ describe('adapters — the support list is the test list', () => {
       assert.ok(arts.length > 0, `${a.id} produced nothing`)
       for (const art of arts) {
         assert.ok(art.path, `${a.id} produced an artifact with no path`)
-        assert.ok(art.body && art.body.length > 40, `${a.id} produced a suspiciously empty body`)
+        assert.ok(art.body?.trim(), `${a.id} produced a suspiciously empty body`)
       }
     }
   })
@@ -49,7 +49,7 @@ describe('adapters — the support list is the test list', () => {
     // to prevent, and the copy would be the one the agent reads.
     for (const a of ADAPTERS) {
       for (const art of a.artifacts({ detected: detectedWith({}) })) {
-        assert.match(art.body, /docs\/authority-split\.md/,
+        assert.match(art.body, a.id === 'agents-md' ? /docs\/authority-split\.md/ : /AGENTS\.md/,
           `${a.id} must point at the doctrine`)
         assert.ok(art.body.length < 900,
           `${a.id} body is ${art.body.length} chars — a pointer, not a copy`)
@@ -76,8 +76,14 @@ describe('adapters — golden renders', () => {
       assert.ok(art, `${id} did not produce ${expected.path}`)
       assert.equal(art.kind, expected.kind)
       if (expected.blockId) assert.equal(art.blockId, expected.blockId)
-      assert.match(art.body, /docs\/rules\/active\//)
-      assert.match(art.body, /You draft; you never ratify/)
+      if (id === 'agents-md') {
+        assert.match(art.body, /docs\/rules\/active\//)
+        assert.match(art.body, /You draft; you never ratify/)
+      } else {
+        assert.match(art.body, /AGENTS\.md/)
+        assert.doesNotMatch(art.body, /docs\/rules\/active\//)
+      }
+      if (id === 'claude-code') assert.equal(art.body, '@AGENTS.md')
     })
   }
 
@@ -90,25 +96,25 @@ describe('adapters — golden renders', () => {
 })
 
 describe('adapters — selection follows what the project already uses', () => {
-  test('a Claude-only repo gets one pointer, not four', () => {
+  test('a Claude project gets shared instructions and its bridge', () => {
     const chosen = selectAdapters(detectedWith({ claudeMd: true }))
-    assert.deepEqual(chosen.map((a) => a.id), ['claude-code'])
+    assert.deepEqual(chosen.map((a) => a.id), ['claude-code', 'agents-md'])
   })
 
   test('a repo using two tools gets both', () => {
     const chosen = selectAdapters(detectedWith({ claudeMd: true, cursorRules: true }))
-    assert.deepEqual(chosen.map((a) => a.id).sort(), ['claude-code', 'cursor'])
+    assert.deepEqual(chosen.map((a) => a.id).sort(), ['agents-md', 'claude-code', 'cursor'])
   })
 
   test('POSITIVE CONTROL: a repo using nothing does not get four files of clutter', () => {
     const chosen = selectAdapters(detectedWith({}))
-    assert.deepEqual(chosen.map((a) => a.id), ['claude-code'],
+    assert.deepEqual(chosen.map((a) => a.id), ['agents-md'],
       'writing config for tools a project has never used is how a harness gets deleted')
   })
 
-  test('an explicit adapter selection (adapterIds) overrides detection', () => {
+  test('explicit adapter selection replaces detected bridges and keeps the shared entry point', () => {
     const chosen = selectAdapters(detectedWith({ claudeMd: true }), { only: ['cursor'] })
-    assert.deepEqual(chosen.map((a) => a.id), ['cursor'])
+    assert.deepEqual(chosen.map((a) => a.id), ['agents-md', 'cursor'])
   })
 })
 
@@ -143,12 +149,12 @@ describe('adapters — end to end through buildArtifacts', () => {
     return root
   }
 
-  test('a Cursor+Codex project gets those pointers and no Claude files', async () => {
+  test('a Cursor project gets the shared entry point and no Claude files', async () => {
     await setup()
     const doc = emptyAnswers({ project: { name: 'P' } })
     doc.generatedAt = '2026-08-13T00:00:00.000Z'
     const arts = await buildArtifacts({
-      doc, detected: detectedWith({ cursorRules: true, agentsMd: true }),
+      doc, detected: detectedWith({ cursorRules: true }),
     })
     const paths = arts.map((a) => a.path)
     assert.ok(paths.includes('.cursor/rules/caselaw.mdc'))

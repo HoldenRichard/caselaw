@@ -17,10 +17,12 @@
  *   caselaw init --from-draft   confirm it, then generate exactly as `init` does
  */
 
-import { readFile, writeFile, mkdir, rm, access } from 'node:fs/promises'
+import { readFile, rm, access } from 'node:fs/promises'
 import { dirname, join, normalize, isAbsolute } from 'node:path'
 import { QUESTIONS, optionsFor, TRIAGE_OPTIONS } from './questions.js'
 import { SKIPPED } from '../core/answers.js'
+import { kindAt, refusal } from '../core/fsguard.js'
+import { atomicWrite, writeExclusive } from '../core/safe-write.js'
 import { normalize as normalizeText } from '../core/text.js'
 
 export const DRAFT_PATH = '.caselaw/draft.json'
@@ -29,17 +31,17 @@ export const UNKNOWN = '?'
 
 /** What the agent is told, inside the file it fills in. */
 export const HOW_TO_FILL = [
-  'Read the README, CONTRIBUTING, CI configuration and docs before answering. The detected block below is what caselaw found on its own; it is a starting point, not an answer.',
-  'For each question set "answer", and list "evidence": a path in this repository ("README.md"), a path and line ("CONTRIBUTING.md:42"), or "command: <what you ran>". Paths are checked; one that does not exist fails the draft.',
-  'Use option values exactly as listed. Where "allowOther" is true you may add free-text strings for boundaries the options miss.',
-  `If the repository does not establish an answer, set "answer" to "${UNKNOWN}". It becomes a visible gap. Never guess: a confident wrong answer is read and believed, and a gap is not.`,
-  'Leave "answer" null for a question that does not apply (the interview skips it).',
-  'A question marked "alreadyAnswered" was answered earlier by a human. Leave it as it is: a draft does not replace a human answer unless the human runs --from-draft with --reconfigure.',
-  'For each surface you name in outside.claims, list in "declarations" under that surface the concrete claims it makes, each as { "claim", "evidence", "truth", "rederive", "checked" }: the claim as the surface states it, evidence naming the file and line that holds it, where the truth lives (a file, a command, a dashboard), and a command that re-derives it if one exists. Leave "checked" empty unless you re-derived the claim from the product just now; an unchecked claim is the point of the register, not a flaw in it.',
-  'For each boundary you classify "untested", say in "notes" why it is assumed rather than known, as { "<boundary>": { "reason", "evidence" } }; the reason becomes the "assumed because" of the authority split.',
-  'A question marked "preference" is the human\'s choice, not a fact about the repository: ask the human, set "answer" to what they choose (its "default" is what they get by not choosing), and leave "evidence" empty.',
-  'Check each answer against the lines you cite: a file that exists is not a file that says what you claim. `caselaw init --from-draft --dry-run` prints every answer with the lines it rests on.',
-  'Then show the human that sheet and wait for them to confirm or correct each answer. Only after that run `caselaw init --from-draft --yes`; without a terminal, --yes is the record that a human confirmed.',
+  'Run setup in chat. Read the repo instructions, README, manifests and CI. Fill in the answers those files establish. Detection already supplies build, test, CI and publishing facts; do not ask the user to repeat them. A declared command is not evidence that it ran.',
+  'Ask at most two short, project-specific questions in one chat message if needed. Lead with the boundary that matters here: name the actual device, service, data or release step and ask what only a human may do and how they verify it. Ask about an external decision-maker only if it changes the handoff and the repo does not settle it.',
+  'Do not infer access or authorization from a dependency, language, README or CI workflow. Classify what is established as physical or chosen; mark assumptions untested and say why. Fold remaining low-impact choices into one short setup preview, using the ask-first preset unless the user requests otherwise. List any defaults or triggered rules you recommend enabling in that preview.',
+  'For repo facts, set "answer" and list "evidence": a repo-relative path, a path and line, or "command: <what you ran>". For an answer the user actually gave in chat, set "source" to "human" and leave "evidence" empty. The user can approve preferences together in the preview.',
+  'Use option values as listed, with free text only where "allowOther" is true. For triggered rules, consider outside-authority and public-claims answers first, then validate the selection with the dry run.',
+  `If an applicable answer is unknown, set "answer" to "${UNKNOWN}". Leave inapplicable questions null. Never guess.`,
+  'Keep answers marked "alreadyAnswered" unless the user requested reconfiguration.',
+  'Under "declarations", record concrete public claims for selected surfaces as { "claim", "evidence", "truth", "rederive", "checked" }. Cite the exact claim, name where to verify it and leave "checked" empty unless re-derived now.',
+  'For untested boundaries, add "notes" entries shaped as { "<boundary>": { "reason", "evidence" } }.',
+  'Run `caselaw init --from-draft --dry-run`. In chat, summarize what can be checked, what stays with the human, what is uncertain, and which rules and files will be installed. Keep the evidence in the draft and cite the key sources in the summary.',
+  'After the user approves the setup in chat, run `caselaw init --from-draft --yes` yourself, then verify the generated setup. The user does not need to run any command.',
 ]
 
 /** The draft for this repository, carrying any answers already on file. */
@@ -77,7 +79,7 @@ export function buildDraft({ doc, detected }) {
       ...(q.defaultAll ? { default: optionsFor(q, ctx).map((o) => o.value) } : {}),
       ...(q.type === 'number' ? { min: q.min, max: q.max, default: q.default } : {}),
       ...(hasAnswer(doc, q.id) ? { alreadyAnswered: true } : {}),
-      answer: doc.answers?.[q.id] ?? null,
+      answer: doc.answers?.[q.id] ?? (q.id === 'harness.autonomy' ? q.default : null),
       evidence: [],
     })),
     // Not a question: the claims themselves, which the register needs and a
@@ -176,16 +178,26 @@ export async function applyDeclarations(draft, doc, { confirmWith = null, accept
 
 const hasAnswer = (doc, id) => Object.prototype.hasOwnProperty.call(doc.answers || {}, id)
 
-export async function writeDraft(root, draft) {
+async function checkedDraftPath(root) {
   const p = join(root, DRAFT_PATH)
-  await mkdir(dirname(p), { recursive: true })
-  await writeFile(p, JSON.stringify(draft, null, 2) + '\n', 'utf8')
+  const parent = await kindAt(dirname(p))
+  if (parent !== 'missing' && parent !== 'dir') throw new Error('.caselaw must be a real directory.')
+  const reason = refusal(await kindAt(p))
+  if (reason) throw new Error(`${DRAFT_PATH} ${reason}.`)
+  return p
+}
+
+export async function writeDraft(root, draft, { replace = false } = {}) {
+  const p = await checkedDraftPath(root)
+  const write = replace ? atomicWrite : writeExclusive
+  await write(p, JSON.stringify(draft, null, 2) + '\n')
   return p
 }
 
 export async function loadDraft(root) {
+  const p = await checkedDraftPath(root)
   try {
-    return JSON.parse(normalizeText(await readFile(join(root, DRAFT_PATH), 'utf8')))
+    return JSON.parse(normalizeText(await readFile(p, 'utf8')))
   } catch (err) {
     if (err.code === 'ENOENT') return null
     throw new Error(`${DRAFT_PATH} is unreadable: ${err.message}`)
@@ -193,7 +205,7 @@ export async function loadDraft(root) {
 }
 
 export async function removeDraft(root) {
-  await rm(join(root, DRAFT_PATH), { force: true })
+  await rm(await checkedDraftPath(root), { force: true })
 }
 
 /**
@@ -218,8 +230,11 @@ export async function validateDraft(draft, { root, detected, doc = { answers: {}
     if (hasAnswer(doc, d.id) && JSON.stringify(doc.answers[d.id]) === JSON.stringify(d.answer)) continue
     const problem = shapeProblem(q, d.answer, { detected, answers })
     if (problem) errors.push(`${d.id}: ${problem}`)
-    // A preference (0.3's autonomy preset, the defaults) rests on the human's
-    // say-so, not on a file: it is confirmed at the review sheet, not cited.
+    // Human answers and preferences are confirmed at review, without file citations.
+    if (d.source === 'human') {
+      if (d.evidence?.length) errors.push(`${d.id}: a human chat answer must leave evidence empty.`)
+      continue
+    }
     if (q.preference) continue
     const ev = Array.isArray(d.evidence) ? d.evidence.filter((e) => typeof e === 'string' && e.trim()) : []
     if (!ev.length) { errors.push(`${d.id}: an answer with no evidence. Name the file or command it rests on, or answer "${UNKNOWN}".`); continue }
@@ -315,9 +330,9 @@ export function draftPrompt(draft, { confirmWith = null, accept = false, root = 
     if (item !== undefined) {
       if (d.answer === UNKNOWN) return { has: true, value: UNKNOWN, evidence: d.evidence || [] }
       const v = d.answer?.[item]
-      return v === undefined ? { has: false } : { has: true, value: v, evidence: d.evidence || [] }
+      return v === undefined ? { has: false } : { has: true, value: v, evidence: d.evidence || [], source: d.source }
     }
-    return { has: true, value: d.answer, evidence: d.evidence || [] }
+    return { has: true, value: d.answer, evidence: d.evidence || [], source: d.source }
   }
 
   const record = (id, entry) => {
@@ -358,7 +373,7 @@ export function draftPrompt(draft, { confirmWith = null, accept = false, root = 
       return d.value
     }
     if (!accept) return SKIPPED
-    record(q.id, { by: 'agent-draft', evidence: d.evidence, confirmed: 'in chat (--yes)' })
+    record(q.id, { by: d.source === 'human' ? 'human' : 'agent-draft', evidence: d.evidence, confirmed: 'in chat (--yes)' })
     return d.value
   }
 
@@ -410,6 +425,7 @@ export async function draftSheet(root, draft) {
   for (const q of draft.questions || []) {
     if (q.answer === null || q.answer === undefined || q.alreadyAnswered) continue
     out.push('', `  ${q.prompt}`, `    → ${q.answer === UNKNOWN ? 'not known (a visible gap)' : show(q.answer, q)}`)
+    if (q.source === 'human') out.push('    Answer supplied in chat.')
     out.push(...(await quoteEvidence(root, q.evidence || [])))
   }
   for (const [surface, list] of Object.entries(draft.declarations || {})) {

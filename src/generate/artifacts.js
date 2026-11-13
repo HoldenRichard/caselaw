@@ -42,7 +42,7 @@ export async function templateFiles(sub) {
   return out.sort()
 }
 
-/** Which agent files this project already uses; CLAUDE.md if none. */
+/** Shared instructions plus bridges for detected agent tools. */
 export function pointerTargets(detected) {
   return selectAdapters(detected).flatMap((a) => a.artifacts({ detected })).map((x) => x.path)
 }
@@ -167,8 +167,7 @@ export async function buildArtifacts({ doc, detected, adapterIds = null, modules
 
   out.push(...defaults, ...triggered)
 
-  // Each detected agent tool gets a pointer in its own idiom. The doctrine
-  // itself is never duplicated into them — only the instruction to read it.
+  // Install shared instructions and let detected tools find them through thin bridges.
   const adapters = selectAdapters(detected, { only: adapterIds })
   for (const adapter of adapters) {
     out.push(...adapter.artifacts({ detected, dir }))
@@ -211,7 +210,7 @@ export async function buildArtifacts({ doc, detected, adapterIds = null, modules
     for (const rel of commandFiles) {
       out.push({
         path: join('.claude/commands', rel), kind: 'file',
-        body: await readFile(join(TEMPLATE_ROOT, 'adapters/claude/commands', rel), 'utf8'),
+        body: (await readFile(join(TEMPLATE_ROOT, 'adapters/claude/commands', rel), 'utf8')).replace('docs/close-out.md', `${dir}/close-out.md`),
       })
     }
   }
