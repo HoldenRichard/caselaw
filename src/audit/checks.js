@@ -26,6 +26,9 @@ import { isOverdue, isoDate, daysBetween } from '../core/dates.js'
 import { crossCheck, PROMOTION_THRESHOLD, EVIDENCE_MODES } from '../core/gates.js'
 import { scanMachinePaths } from '../core/secrets.js'
 import { evaluateStage1, syncVerifier } from '../core/skillopt.js'
+import { QUESTIONS, answerHint } from '../interview/questions.js'
+
+const hintFor = (id) => answerHint(QUESTIONS.find((q) => q.id === id))
 
 export const SEVERITY = { ERROR: 'error', WARN: 'warn', INFO: 'info' }
 
@@ -60,13 +63,36 @@ export const CHECKS = [
   {
     id: 'doctrine-tracked',
     describe: 'governance files are in version control',
-    run({ untracked }) {
-      return untracked.map((p) =>
-        finding('doctrine-tracked', SEVERITY.ERROR, `${p} is not tracked by git`, {
-          path: p,
-          hint: 'Doctrine outside version control survives exactly as long as this machine does.',
-        }),
-      )
+    run({ untracked, installCommitted }) {
+      // A draft in rules/proposed/ is waiting for a human; it is expected to be
+      // uncommitted for a while, so it is a note, never an error.
+      const drafts = untracked.filter((p) => /(^|\/)rules\/proposed\//.test(p))
+      const rest = untracked.filter((p) => !drafts.includes(p))
+      const out = []
+      if (rest.length) {
+        // One finding for the lot. Before the install's first commit every
+        // generated file is untracked, which is one fact, not a dozen errors.
+        const first = installCommitted === false
+        out.push(finding('doctrine-tracked', first ? SEVERITY.WARN : SEVERITY.ERROR,
+          first
+            ? `commit the install: ${rest.length} governance file${rest.length === 1 ? ' is' : 's are'} not tracked by git yet (${rest.join(', ')})`
+            : `${rest.length} governance file${rest.length === 1 ? ' is' : 's are'} not tracked by git: ${rest.join(', ')}`, {
+            path: rest[0],
+            data: { files: rest },
+            hint: first
+              ? 'Run `git add` on these paths and commit. Once the install is in HEAD, an untracked doctrine file becomes an error.'
+              : 'Doctrine outside version control survives exactly as long as this machine does.',
+          }))
+      }
+      if (drafts.length) {
+        out.push(finding('doctrine-tracked', SEVERITY.INFO,
+          `${drafts.length} proposed rule${drafts.length === 1 ? '' : 's'} not committed yet: ${drafts.join(', ')}`, {
+            path: drafts[0],
+            data: { files: drafts },
+            hint: 'A draft awaiting a human. Commit it when you want it shared; ratifying moves it into active/.',
+          }))
+      }
+      return out
     },
   },
   {
@@ -98,6 +124,12 @@ export const CHECKS = [
             hint: 'A rule with no incident behind it is a superstition with a filename.',
           }))
           continue
+        }
+        for (const note of r.uncheckedRefs || []) {
+          out.push(finding('origin-resolves', SEVERITY.WARN, `rule "${r.name}": ${note}`, {
+            path: r.file,
+            hint: 'Not a verdict on the citation. Run the audit in a full clone to check it.',
+          }))
         }
         for (const ref of r.unresolvedRefs || []) {
           out.push(finding('origin-resolves', SEVERITY.ERROR,
@@ -184,6 +216,18 @@ export const CHECKS = [
           `harness change ${e.id} was to improve ${e.signal}; it was ${e.before} and after its window it is ${e.after}`, {
             hint: `\`caselaw harness revert ${e.id}\` proposes undoing it. Keep it if something else explains the number.`,
           }))
+    },
+  },
+  {
+    id: 'rule-index-current',
+    describe: 'the rules index lists exactly the active rules',
+    run({ ruleIndex }) {
+      if (!ruleIndex || ruleIndex.state === 'ok') return []
+      return [finding('rule-index-current', SEVERITY.WARN,
+        `${ruleIndex.path} is ${ruleIndex.state === 'missing' ? 'missing' : 'out of date with the rules in active/'}`, {
+          path: ruleIndex.path,
+          hint: 'Agents read the index to decide which rules to open; a stale one hides rules that are in force. `caselaw upgrade` regenerates it.',
+        })]
     },
   },
   {
@@ -355,8 +399,9 @@ export const CHECKS = [
     describe: 'interview questions left unanswered',
     run({ answers }) {
       return (answers?.unanswered || []).map((u) =>
-        finding('open-questions', SEVERITY.WARN, `unanswered: ${u.prompt}`, {
-          hint: `It is marked as a hole in ${(u.generates || []).join(', ') || 'the generated docs'} rather than guessed at. Answer it with \`caselaw init --reconfigure\`.`,
+        finding('open-questions', SEVERITY.WARN, `unanswered ${u.id}: ${u.prompt}`, {
+          hint: `It is marked as a hole in ${(u.generates || []).join(', ') || 'the generated docs'} rather than guessed at. Answer it with \`caselaw init --reconfigure\`` +
+            `, or have your agent run \`caselaw init --draft\`, set "answer" for ${u.id}${hintFor(u.id) ? ` (${hintFor(u.id)})` : ''}, then \`caselaw init --from-draft --yes\`.`,
         }),
       )
     },

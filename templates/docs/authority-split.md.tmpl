@@ -49,7 +49,7 @@ belief, not a fact.
 
 | Boundary | Assumed because | Settle it |
 |---|---|---|
-{{# each unverified }}| {{ label }} | {{ assumedBecause }} | {{# if settleCommand }}`{{ settleCommand }}`{{/ if }}{{# if settleHint }}_run `{{ settleHint }}` once by hand and record what happened_{{/ if }}{{^ if settleCommand }}{{^ if settleHint }}_no one-liner — try it by hand once_{{/ if }}{{/ if }} |
+{{# each unverified }}| {{ label }} | {{ assumedBecause }} | {{# if settleCommand }}`{{ settleCommand }}`{{/ if }}{{# if settleHint }}_run `{{ settleHint }}` once by hand and record what happened_{{/ if }}{{^ if settleCommand }}{{^ if settleHint }}_no one-liner recorded: try it by hand once, or name one under `authority.settle` in `.caselaw/answers.json`_{{/ if }}{{/ if }} |
 {{/ each }}
 
 > Before you accept any line above as permanent, prove it. A boundary you have never tested is

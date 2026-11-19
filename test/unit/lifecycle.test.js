@@ -10,6 +10,7 @@ import { buildPlan, UNCHANGED } from '../../src/core/plan.js'
 import * as answersStore from '../../src/core/answers.js'
 import * as manifestStore from '../../src/core/manifest.js'
 import { hash } from '../../src/core/text.js'
+import { syncRuleIndex, ruleIndexState } from '../../src/core/rules.js'
 
 let root
 beforeEach(async () => {
@@ -53,8 +54,36 @@ async function install(answers = {}) {
   }
   await manifestStore.save(root, manifest)
   await answersStore.save(root, doc)
+  await syncRuleIndex(root) // what the CLI's write step does after the plan
   return doc
 }
+
+describe('check: the rules index', () => {
+  const RULE = '# r\n\n**Trigger:** adding or changing a test.\n\n**Rule:** do it.\n\n**Origin:** 2026-01-01 an incident.\n\n**Enforcement:** memory\n'
+
+  test('POSITIVE CONTROL: a missing INDEX.md fails check as MISSING, and a stale one as STALE; syncing fixes both', async () => {
+    await install()
+    await put('docs/rules/active/r.md', RULE)
+    const stale = await check({ root, detected: DETECTED })
+    assert.equal(stale.ok, false, 'a rule in active/ that the index does not list must fail check')
+    assert.ok(stale.stale.some((s) => s.path === 'docs/rules/INDEX.md'))
+
+    await rm(join(root, 'docs/rules/INDEX.md'))
+    const missing = await check({ root, detected: DETECTED })
+    assert.equal(missing.ok, false)
+    assert.ok(missing.missing.some((m) => m.path === 'docs/rules/INDEX.md'))
+
+    await syncRuleIndex(root)
+    assert.equal((await check({ root, detected: DETECTED })).ok, true)
+    assert.match(await readFile(join(root, 'docs/rules/INDEX.md'), 'utf8'), /- \[r\]\(active\/r\.md\): adding or changing a test\./)
+  })
+
+  test('the index is owned: init\'s dirty-tree check and eject know it', async () => {
+    await install()
+    assert.ok((await manifestStore.load(root)).entries['docs/rules/INDEX.md'], 'recorded in the manifest')
+    assert.equal((await ruleIndexState(root)).state, 'ok')
+  })
+})
 
 describe('check — stale vs diverged vs missing', () => {
   test('a fresh install is up to date', async () => {
@@ -284,6 +313,7 @@ describe('the whole round trip', () => {
       })
     }
     await manifestStore.save(root, manifest)
+    await syncRuleIndex(root)
 
     assert.equal((await check({ root, detected: DETECTED })).ok, true, 'upgrade must actually resolve the drift')
     assert.match(await readFile(join(root, 'docs/authority-split.md'), 'utf8'), /A different procedure/)

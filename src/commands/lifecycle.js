@@ -16,19 +16,22 @@
  */
 
 import { readFile, writeFile, rm, rmdir, readdir, stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, relative, basename } from 'node:path'
 import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import * as answersStore from '../core/answers.js'
 import * as manifestStore from '../core/manifest.js'
 import * as gatesStore from '../core/gates.js'
-import { buildArtifacts } from '../generate/artifacts.js'
+import { buildArtifacts, HOST_HOOKS } from '../generate/artifacts.js'
+import { cleanHosts } from '../adapters/index.js'
+import { inspectPreCommit, ejectableHook, removeHook, ejectableBlock, stripBlock } from '../core/githooks.js'
 import { doctrineDirAt } from '../core/doctrine.js'
 import { buildPlan, SKIP, UNCHANGED } from '../core/plan.js'
 import { locate, remove as removeBlock } from '../core/blocks.js'
 import { strip as stripJson } from '../core/jsonmerge.js'
 import { kindAt, refusal } from '../core/fsguard.js'
 import { hash } from '../core/text.js'
+import { ruleIndexState, ruleIndexPath } from '../core/rules.js'
 
 const pExecFile = promisify(execFile)
 
@@ -68,6 +71,13 @@ export async function check({ root, detected, strict = false }) {
     if (known && !onDisk) missing.push({ path: e.path })
     else stale.push({ path: e.path, action: e.action })
   }
+
+  // INDEX.md is derived from active/, not from the answers, so it is judged
+  // against the directory as it stands. An agent that trusts a stale index
+  // skips rules that are in force; `upgrade` rewrites it.
+  const index = await ruleIndexState(root)
+  if (index.state === 'missing') missing.push({ path: index.path })
+  else if (index.state === 'stale') stale.push({ path: index.path, action: 'REGENERATE' })
 
   return {
     installed: true,
@@ -158,7 +168,11 @@ export async function planEject({ root, purge = false }) {
   // Bookkeeping is ours too, and it goes; it is listed because answers.json is
   // the file every generated doc tells the reader is the source of truth.
   const bookkeeping = ['.caselaw/answers.json', '.caselaw/manifest.json']
-  return { manifest, reconciliation, ...raw, stripBlocks, deleteFiles, keptDoctrine, bookkeeping, purge }
+  // The git pre-commit hook is per-clone and not in the manifest; it goes only
+  // while it is still exactly what we wrote.
+  const gitHook = await ejectableHook(root)
+  const hookBlock = await ejectableBlock(root)
+  return { manifest, reconciliation, ...raw, stripBlocks, deleteFiles, keptDoctrine, bookkeeping, purge, gitHook, hookBlock }
 }
 
 export async function applyEject({ root, plan }) {
@@ -213,6 +227,24 @@ export async function applyEject({ root, plan }) {
     }
   }
 
+  if (plan.hookBlock) {
+    try {
+      await stripBlock(plan.hookBlock)
+      ;(plan.hookBlock.next === null ? removed : stripped).push(relative(root, plan.hookBlock.path))
+    } catch (err) {
+      failed.push({ path: plan.hookBlock.path, reason: err.message })
+    }
+  }
+
+  if (plan.gitHook?.action === 'delete') {
+    try {
+      await removeHook(plan.gitHook.path)
+      removed.push(relative(root, plan.gitHook.path) || plan.gitHook.path)
+    } catch (err) {
+      failed.push({ path: plan.gitHook.path, reason: err.message })
+    }
+  }
+
   for (const path of plan.bookkeeping) {
     try {
       if (await exists(join(root, path))) { await rm(join(root, path), { force: true }); removed.push(path) }
@@ -223,7 +255,7 @@ export async function applyEject({ root, plan }) {
   // eject; git does not track empty directories, so `git status` read clean
   // and `ls -a` did not.
   const pruned = []
-  for (const dir of ['.claude/commands', '.caselaw/bin', '.caselaw/schema', '.caselaw', '.claude']) {
+  for (const dir of ['.claude/commands', '.caselaw/bin', '.caselaw/schema', '.caselaw', '.claude', '.codex', '.cursor/rules', '.cursor', '.gemini']) {
     try {
       const abs = join(root, dir)
       if ((await readdir(abs)).length === 0) { await rmdir(abs); pruned.push(dir) }
@@ -283,36 +315,57 @@ export async function doctor({ root }) {
     }
   }
 
-  // Hooks must point at a runner that is really there.
-  const settingsPath = join(root, '.claude/settings.json')
-  if (await exists(settingsPath)) {
+  // Hooks must point at a runner that is really there, for every host the
+  // setup selected (and, with no record of a selection, every host whose
+  // hook file exists).
+  const selected = Array.isArray(answers?.hosts) ? cleanHosts(answers.hosts) : null
+  let wired = 0
+  for (const [host, { path }] of Object.entries(HOST_HOOKS)) {
+    const present = await exists(join(root, path))
+    if (!present && !selected?.includes(host)) continue
+    const name = host === 'claude-code' ? 'hooks' : `hooks:${host}`
+    const file = basename(path)
+    if (!present) {
+      bad(name, `${path} is missing`, `${host} is selected but nothing wires its hooks; run \`caselaw upgrade\`.`)
+      continue
+    }
+    wired++
     try {
-      const settings = JSON.parse(await readFile(settingsPath, 'utf8'))
+      const settings = JSON.parse(await readFile(join(root, path), 'utf8'))
       const commands = Object.values(settings.hooks ?? {})
         .flat()
-        .flatMap((e) => (e.hooks ?? []).map((h) => h.command))
+        .flatMap((e) => [e?.command, ...(e?.hooks ?? []).map((h) => h.command)])
         .filter(Boolean)
       const ours = commands.filter((c) => c.includes('gate.mjs'))
       if (!commands.length) {
-        warn('hooks', 'settings.json has no hook commands', 'Gates will only run in CI or by hand.')
+        warn(name, `${file} has no hook commands`, 'Gates will only run in CI or by hand.')
       } else if (!ours.length) {
         // A settings file that exists and never invokes the runner is the
         // harness installed and inert — the failure this tool exists to
         // prevent, and it used to be reported as a warning under a green
         // "Wiring looks live".
-        bad('hooks', 'settings.json exists but nothing invokes the gate runner', 'Re-run `caselaw init` (or `upgrade`) so the hook entries are merged in; until then no gate runs on any edit.')
+        bad(name, `${file} exists but nothing invokes the gate runner`, 'Re-run `caselaw init` (or `upgrade`) so the hook entries are merged in; until then no gate runs on any edit.')
       } else {
-        // Run the command exactly as Claude Code would. A substring match on
+        // Run the command exactly as the host would. A substring match on
         // "gate.mjs" used to pass a hook whose path could never execute.
-        const probe = await exerciseHook(ours[0], root)
-        if (probe.ok) ok('hooks', `${ours.length} hook command(s) wired and answering`)
-        else bad('hooks', `the installed hook command does not reach the runner: ${probe.reason}`, 'The hook is configured but cannot execute; nothing is enforced on any edit.')
+        const probe = await exerciseHook(ours.find((c) => c.includes('--mode pre')) ?? ours[0], root, host)
+        if (probe.ok) ok(name, `${ours.length} hook command(s) wired and answering`)
+        else bad(name, `the installed hook command does not reach the runner: ${probe.reason}`, 'The hook is configured but cannot execute; nothing is enforced on any edit.')
       }
     } catch (err) {
-      bad('hooks', `.claude/settings.json is unreadable: ${err.message}`, 'Fix the JSON; a broken settings file disables every hook.')
+      bad(name, `${path} is unreadable: ${err.message}`, 'Fix the JSON; a broken settings file disables every hook.')
     }
-  } else {
+  }
+  if (!wired && !findings.some((f) => f.name.startsWith('hooks'))) {
     warn('hooks', 'no built-in live hook configuration detected', 'Use the portable hook interface, staged checks, or CI. External hook wiring is not checked here.')
+  }
+
+  // The commit is the one seam every agent passes through.
+  const commit = await inspectPreCommit(root)
+  if (commit.state !== 'no-git') {
+    if (commit.wired) ok('pre-commit', commit.state === 'ours' ? 'the caselaw hook runs the staged gates on every commit' : `${commit.path} runs the staged gates`)
+    else if (commit.state === 'absent') warn('pre-commit', 'no pre-commit hook runs the staged gates', 'Run `caselaw upgrade` to write one.')
+    else warn('pre-commit', `${commit.framework ?? 'an existing hook'} owns pre-commit and does not run the staged gates`, commit.notice ?? undefined)
   }
 
   // Gate config must parse, or every gate is silently absent.
@@ -342,12 +395,17 @@ async function exists(p) {
  * comes back. A clean payload must produce neither a block nor any sign the
  * runner was never reached.
  */
-function exerciseHook(command, root) {
+function exerciseHook(command, root, host = 'claude-code') {
   if (process.platform === 'win32') return Promise.resolve({ ok: true, reason: 'not exercised on Windows' })
-  const payload = JSON.stringify({
-    hook_event_name: 'PreToolUse', tool_name: 'Edit', cwd: root,
-    tool_input: { file_path: join(root, 'README.md'), old_string: '', new_string: '' },
-  })
+  // Each host's own shape, with a harmless shell command where it has one.
+  const payload = JSON.stringify(
+    host === 'codex' ? { hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd: root, tool_input: { command: 'true' } }
+    : host === 'gemini' ? { hook_event_name: 'BeforeTool', tool_name: 'run_shell_command', cwd: root, tool_input: { command: 'true' } }
+    : host === 'cursor' ? { hook_event_name: 'beforeShellExecution', command: 'true', cwd: root }
+    : {
+      hook_event_name: 'PreToolUse', tool_name: 'Edit', cwd: root,
+      tool_input: { file_path: join(root, 'README.md'), old_string: '', new_string: '' },
+    })
   return new Promise((resolvePromise) => {
     const child = spawn('sh', ['-c', command], {
       cwd: root, env: { ...process.env, CLAUDE_PROJECT_DIR: root }, stdio: ['pipe', 'pipe', 'pipe'],

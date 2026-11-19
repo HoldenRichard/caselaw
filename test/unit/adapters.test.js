@@ -64,6 +64,7 @@ describe('adapters — the support list is the test list', () => {
 const GOLDEN = {
   'claude-code': { path: 'CLAUDE.md', kind: 'block', blockId: 'pointer' },
   'agents-md': { path: 'AGENTS.md', kind: 'block', blockId: 'pointer' },
+  gemini: { path: 'GEMINI.md', kind: 'block', blockId: 'pointer' },
   cursor: { path: '.cursor/rules/caselaw.mdc', kind: 'file' },
   copilot: { path: '.github/copilot-instructions.md', kind: 'block', blockId: 'pointer' },
 }
@@ -83,7 +84,7 @@ describe('adapters — golden renders', () => {
         assert.match(art.body, /AGENTS\.md/)
         assert.doesNotMatch(art.body, /docs\/rules\/active\//)
       }
-      if (id === 'claude-code') assert.equal(art.body, '@AGENTS.md')
+      if (id === 'claude-code' || id === 'gemini') assert.equal(art.body, '@AGENTS.md')
     })
   }
 

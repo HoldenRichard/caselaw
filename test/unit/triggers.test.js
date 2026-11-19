@@ -10,6 +10,7 @@ import { mkdtemp, rm, mkdir, writeFile, readFile, readdir, access } from 'node:f
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { RULES_TEMPLATES, precedentProjects, assertStrangerReadable } from './helpers/precedent.js'
 import { TRIGGERS, TRIGGERED_ROOT, firedTriggers, markOffered, applyTriggers, writerGuardOn } from '../../src/core/triggers.js'
 import { detectSignals, datedRecords } from '../../src/detect/signals.js'
 import { buildArtifacts } from '../../src/generate/artifacts.js'
@@ -59,6 +60,8 @@ describe('each trigger fires on its fact, and only on it', () => {
       assert.match(fired[0].factNow, fact)
     }
     assert.deepEqual(ids(firedTriggers({ detected: { agentConfig: { claudeMd: true, claudeDir: true } } })), [], 'CLAUDE.md and .claude/ are one tool')
+    assert.deepEqual(ids(firedTriggers({ detected: { agentConfig: { claudeMd: true, agentsMd: true, agentsMdOwnContent: false } } })), [], 'an AGENTS.md holding only caselaw\'s pointer is not a second tool')
+    assert.deepEqual(ids(firedTriggers({ detected: { agentConfig: { claudeMd: true, codexDir: true } } })), ['T3'], 'Claude Code plus Codex is two tools')
   })
 })
 
@@ -124,6 +127,7 @@ describe('triggers accepted at install', () => {
   test('POSITIVE CONTROL: every triggered rule renders as a valid rule, under its own name, with no Origin of its own', async () => {
     const files = (await readdir(TRIGGERED_ROOT)).filter((f) => f.endsWith('.md')).sort()
     assert.deepEqual(files, [...new Set(TRIGGERS.map((t) => `${t.rule}.md`))].sort())
+    const precedentFile = await readFile(join(RULES_TEMPLATES, 'PRECEDENT.md'), 'utf8')
     for (const t of TRIGGERS) {
       const artifacts = await buildArtifacts({ doc: docWith({ 'harness.triggers': [t.id] }, { facts: { [t.id]: 'a fact' }, triggerSince: { [t.id]: '2026-10-31' } }), detected: DETECTED })
       const text = artifacts.find((a) => a.path === `docs/rules/active/${t.rule}.md`).body
@@ -132,6 +136,9 @@ describe('triggers accepted at install', () => {
       assert.equal(parsed.origin, null)
       assert.deepEqual(validateRule(parsed, { filename: `${t.rule}.md`, resolveRef: false }).problems, [], t.rule)
       assert.doesNotMatch(text, /\{\{|\}\}/)
+      assertStrangerReadable(text, t.rule)
+      assert.ok(precedentProjects(precedentFile, t.rule).size >= 1, `${t.rule} has its section in PRECEDENT.md`)
+      assert.match(parsed.precedent, /\(\.\.\/PRECEDENT\.md#/, `${t.rule}: its Precedent links to the single precedent file`)
     }
   })
 })

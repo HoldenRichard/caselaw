@@ -18,6 +18,7 @@ import { dirname, join } from 'node:path'
 import { render } from '../render/engine.js'
 import { DEFAULTS } from '../core/defaults.js'
 import { isoDate, addDays } from '../core/dates.js'
+import { slotOfCommand } from '../detect/commands.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 export const TEMPLATE_PATH = join(HERE, '../../templates/docs/authority-split.md.tmpl')
@@ -194,7 +195,7 @@ export function buildModel({ answers = {}, provenance = {}, detected = {}, proje
       // No question collects a note today, so the honest default is that none
       // was recorded — not "never tried", which was false whenever it had been.
       assumedBecause: cell((answers['authority.notes'] || {})[b] || 'not recorded', 300),
-      ...settle(b, detected),
+      ...settle(b, detected, answers),
     }))
 
   const can = buildCanList({ answers, detected, selected })
@@ -247,6 +248,21 @@ function harnessModel(answers = {}, since = null, triggered = '') {
   }
 }
 
+const SETTLE_MAX = 300
+
+/**
+ * Why a recorded settle command cannot be rendered, or null. It lands in a
+ * code span in a table that an agent reads as an instruction, so it is one
+ * line with no backtick and no pipe to break the span or the row.
+ */
+export function settleProblem(cmd) {
+  if (typeof cmd !== 'string' || !cmd.trim()) return 'expected one command, as text.'
+  if (/[\r\n\u2028\u2029]/.test(cmd)) return 'must be a single line.'
+  if (/[`|]/.test(cmd)) return 'must not contain a backtick or a pipe; wrap a longer pipeline in a script and name the script.'
+  if (cmd.trim().length > SETTLE_MAX) return `must be at most ${SETTLE_MAX} characters.`
+  return null
+}
+
 /**
  * The "Settle it" cell. A one-liner only when the command has actually been
  * seen to exit 0 here; an unverified detected command is offered as something
@@ -254,7 +270,10 @@ function harnessModel(answers = {}, since = null, triggered = '') {
  * detected test command did not even compile on a fresh clone, and the audit
  * would have told the reader to paste it.
  */
-function settle(boundary, detected) {
+function settle(boundary, detected, answers = {}) {
+  // A command the project recorded for this boundary outranks any guess here.
+  const given = (answers['authority.settle'] || {})[boundary]
+  if (typeof given === 'string' && !settleProblem(given)) return { settleCommand: given.trim(), settleHint: null }
   const cmd = settleCommandFor(boundary, detected)
   if (!cmd) return { settleCommand: null, settleHint: null }
   if (boundary === 'full-suite' && detected.commands?.test?.exitCode !== 0) {
@@ -289,6 +308,14 @@ export function publishingRows(publishing = []) {
 }
 
 /**
+ * The sentence `init --draft` writes for authority.agent_reach when it only
+ * restates the commands detection and CI already supplied. Shared so the
+ * generator can tell it from a human's own answer.
+ */
+export const DRAFTED_REACH_TAIL = 'Their execution and coverage still need to be verified locally.'
+const DRAFTED_REACH = new RegExp(`^The repository declares [\\s\\S]+\\. ${DRAFTED_REACH_TAIL.replace(/[.]/g, '\\.')}$`)
+
+/**
  * What the agent CAN do. Assembled from measured commands and the tier-2
  * answer rather than asked as its own question — the interview budget is
  * spent on what detection cannot settle. A command the human just named as a
@@ -316,8 +343,14 @@ function buildCanList({ answers, detected, selected = [] }) {
   // no CI to read. Under the project's own answer, the unverified ones only
   // repeated it with "unverified" attached (round 2 of the DEF-274 re-score);
   // a command measured to pass is proof, and stays.
-  const answered = Boolean(answers['authority.agent_reach'])
-  const cmds = gates.length ? {} : detected.commands || {}
+  // Only the slots CI covers are skipped: when CI's test step could not be
+  // resolved (a `${{ matrix }}` expression), suppressing every detected
+  // command left the agent with no test command at all (0.5.0 field test).
+  // A drafted reach sentence is the tool's own words, not the person's answer.
+  const reachText = plain(answers['authority.agent_reach'] || '')
+  const answered = Boolean(reachText) && !DRAFTED_REACH.test(reachText)
+  const covered = new Set(gates.map((g) => slotOfCommand(g.cmd ?? g.command ?? '')).filter(Boolean))
+  const cmds = Object.fromEntries(Object.entries(detected.commands || {}).filter(([name]) => !covered.has(name)))
   const verified = []
   for (const [name, entry] of Object.entries(cmds)) {
     if (!entry || !entry.cmd) continue
@@ -329,11 +362,14 @@ function buildCanList({ answers, detected, selected = [] }) {
   }
   if (verified.length) can.push(`Run: ${verified.join('; ')}.`)
 
+  // The drafted sentence names the same commands as the CI line or the "Run:"
+  // line above it; printing both said one thing twice. A person's own answer
+  // is never dropped for that reason, only an exact repeat of a line.
   const reach = plain(answers['authority.agent_reach'] || '')
-  if (reach) can.push(reach)
+  if (reach && !(can.length && DRAFTED_REACH.test(reach))) can.push(reach)
 
   if (!can.length) can.push('Read and edit source in this repository.')
-  return can
+  return [...new Set(can)]
 }
 
 /**

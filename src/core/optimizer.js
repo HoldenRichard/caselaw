@@ -19,7 +19,7 @@
 
 import { readFile, mkdir, access } from 'node:fs/promises'
 import { join, dirname } from 'node:path'
-import { listRules, readCatches, parseRule, serializeRule, stageEvolution, requireName } from './rules.js'
+import { listRules, readCatches, parseRule, serializeRule, stageEvolution, requireName, ruleIndexState, ruleIndexPath } from './rules.js'
 import { doctrineDirOf, ruleDirsFor } from './doctrine.js'
 import { DEFAULTS } from './defaults.js'
 import { TRIGGERS } from './triggers.js'
@@ -31,9 +31,10 @@ import { writeExclusive, atomicWrite, withMutationLock } from './safe-write.js'
 
 /**
  * The session-start budget, in words: the pointer block, the authority split
- * and every active rule. Provisional: a fresh install with every default and
- * two triggered rules loads about 2,300; the field test (phase 9) sets the
- * real default. Change it with harness.load_budget in .caselaw/answers.json.
+ * and the rules index. A rule's own text is read only when its Trigger
+ * matches the work, so rules are counted separately, as the cost on demand
+ * (the worst case, if every rule were opened). Change the budget with
+ * harness.load_budget in .caselaw/answers.json.
  */
 export const LOAD_BUDGET_WORDS = 3000
 export const RATIFIED_SINCE = 5
@@ -53,7 +54,12 @@ const isoDay = (d) => d.toISOString().slice(0, 10)
 const read = async (p) => { try { return await readFile(p, 'utf8') } catch { return null } }
 const exists = async (p) => { try { await access(p); return true } catch { return false } }
 
-/** The words a session loads at its start, file by file. */
+/**
+ * The words a session loads at its start, file by file (`words`, `files`),
+ * and apart from that the rules a session opens only when a Trigger matches
+ * (`onDemand`). The index is measured as written, or as it would be written
+ * when the install predates it.
+ */
 export async function measureLoad(root, doc) {
   const dir = doctrineDirOf(doc)
   const files = []
@@ -69,8 +75,14 @@ export async function measureLoad(root, doc) {
   if (split !== null) files.push({ path: `${dir}/authority-split.md`, words: words(split) })
   let listed = { active: [] }
   try { listed = await listRules(root) } catch { /* unreadable rules dir: measured as empty */ }
-  for (const r of listed.active) files.push({ path: r.path, words: words(r.parsed?.raw) })
-  return { words: files.reduce((n, f) => n + f.words, 0), files }
+  if (listed.active.length || await exists(join(root, ruleIndexPath(root)))) {
+    const index = await ruleIndexState(root).catch(() => null)
+    const text = await read(join(root, ruleIndexPath(root)))
+    if (index) files.push({ path: `${index.path}${text === null ? ' (not generated yet)' : ''}`, words: words(text ?? index.expected) })
+  }
+  const onDemand = listed.active.map((r) => ({ path: r.path, words: words(r.parsed?.raw) }))
+  const sum = (xs) => xs.reduce((n, f) => n + f.words, 0)
+  return { words: sum(files), files, onDemand: { words: sum(onDemand), files: onDemand } }
 }
 
 async function readCompactions(root) {
@@ -100,7 +112,7 @@ export async function optimizerSignals({ root, doc, now = new Date() }) {
   const sinceDays = last ? Math.floor((now - last) / DAY) : null
 
   const due = []
-  if (load.words > budget) due.push(`a session loads ${load.words} words of governance, over the ${budget}-word budget`)
+  if (load.words > budget) due.push(`a session loads ${load.words} words of governance at its start, over the ${budget}-word budget`)
   if (ratifiedSince >= RATIFIED_SINCE) due.push(`${ratifiedSince} rules were ratified since the last pass`)
   if (sinceDays !== null && sinceDays >= PASS_DAYS) due.push(`the last pass was ${sinceDays} days ago`)
   for (const t of trouble) due.push(`"${t.name}" caught ${t.catches} things since the last pass, and is still enforced by memory`)
@@ -136,12 +148,13 @@ export function optimizerProposals({ signals, listed, findings = [] }) {
       why: `it caught ${t.catches} things since the last pass; a rule that keeps being needed costs every session its words, and a gate costs none`,
       how: `caselaw rule promote ${t.name}` })
   }
-  if (signals.load.words > signals.budget) {
+  // Trimming a rule's text matters when opening every rule would be over the budget, though a session opens only the ones its work triggers.
+  if (signals.load.words + (signals.load.onDemand?.words || 0) > signals.budget) {
     for (const r of listed.active) {
       const n = words(r.parsed?.precedent)
       if (n > PRECEDENT_WORDS && !/^archived in /.test(r.parsed?.precedent || '')) {
         out.push({ id: `archive-precedent:${r.name}`, action: 'archive-precedent', rules: [r.name],
-          why: `its precedent is ${n} words every session reads; archived, the rule keeps the ids and a pointer`,
+          why: `its precedent is ${n} words every time the rule is opened; archived, the rule keeps the ids and a pointer`,
           how: `caselaw optimize --apply archive-precedent:${r.name}` })
       }
       const mutWords = words(r.parsed?.rule) + words(r.parsed?.trigger)

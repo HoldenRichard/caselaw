@@ -14,17 +14,29 @@
  * project and is never read for meaning, only carried. The manifest records a
  * hash of our entries, so an edit to them is detected and an edit to anything
  * else is not our business.
+ *
+ * 0.5 reuses this for every host that keeps hooks in a JSON file the project
+ * owns: Claude Code (.claude/settings.json), Codex (.codex/hooks.json), Cursor
+ * (.cursor/hooks.json, whose entries are flat `{command}` objects) and Gemini
+ * CLI (.gemini/settings.json). The merge is the same; only the event names
+ * differ.
  */
 
 import { hash } from './text.js'
 
 /** The substring that marks a hook entry as ours. */
 export const HOOK_MARK = '.caselaw/bin/gate.mjs'
-export const HOOK_EVENTS = ['PreToolUse', 'PostToolUse', 'PreCompact']
+export const HOOK_EVENTS = [
+  'PreToolUse', 'PostToolUse', 'PreCompact', 'SessionStart', // Claude Code, Codex
+  'BeforeTool', // Gemini CLI (its SessionStart is the one above)
+  'beforeShellExecution', 'afterFileEdit', 'sessionStart', // Cursor
+]
 
+const CURSOR_EVENTS = ['beforeShellExecution', 'afterFileEdit', 'sessionStart']
+
+const ours = (c) => typeof c === 'string' && c.includes(HOOK_MARK)
 const isOurs = (entry) =>
-  Array.isArray(entry?.hooks) &&
-  entry.hooks.some((h) => typeof h?.command === 'string' && h.command.includes(HOOK_MARK))
+  ours(entry?.command) || (Array.isArray(entry?.hooks) && entry.hooks.some((h) => ours(h?.command)))
 
 /** @returns {{ok: true, settings: object} | {ok: false, reason: string}} */
 export function parseSettings(text) {
@@ -72,10 +84,32 @@ export function hashOurs(ours) {
 }
 
 /**
+ * How the file was written, so a rewrite looks like the project's own edit:
+ * one-line files stay one line, tabs and four-space files keep their indent,
+ * CRLF and a missing final newline are kept. A new file is two-space with a
+ * final newline, which is what Claude Code itself writes.
+ */
+function formatOf(text) {
+  if (text == null || String(text).trim() === '') return { indent: 2, eol: '\n', final: true }
+  const t = String(text)
+  const eol = t.includes('\r\n') ? '\r\n' : '\n'
+  const body = t.replace(/^﻿/, '').trimEnd()
+  const lead = /\n([ \t]+)\S/.exec(body)
+  return { indent: body.includes('\n') ? (lead ? (lead[1][0] === '\t' ? '\t' : lead[1].length) : 2) : 0, eol, final: /\n\s*$/.test(t) }
+}
+
+function serialize(value, format) {
+  let out = JSON.stringify(value, null, format.indent || undefined)
+  if (format.eol !== '\n') out = out.replace(/\n/g, format.eol)
+  return out + (format.final ? format.eol : '')
+}
+
+/**
  * Merge our entries into an existing file's text (null when absent).
  * Unchanged when ours are already exactly present — the project's own
- * formatting is then left alone. Otherwise the file is re-serialised with
- * two-space indentation, which is what Claude Code itself writes.
+ * formatting is then left alone. Otherwise the file is re-serialised in the
+ * layout it already had (see formatOf). Cursor's hooks.json also needs a
+ * top-level `version`, added when our entries are Cursor's and the file lacks it.
  *
  * @returns {{ok: false, reason: string} | {ok: true, action: 'unchanged'|'merged', text: string, ours: object}}
  */
@@ -95,10 +129,11 @@ export function merge(existingText, ourHooks) {
     if (combined.length) hooks[event] = combined
     else delete hooks[event]
   }
-  const next = { ...settings }
+  const stamp = CURSOR_EVENTS.some((e) => wanted[e]?.length) ? { version: 1 } : {}
+  const next = Object.keys(hooks).length ? { ...stamp, ...settings } : { ...settings }
   if (Object.keys(hooks).length) next.hooks = hooks
   else delete next.hooks
-  return { ok: true, action: 'merged', text: JSON.stringify(next, null, 2) + '\n', ours: wanted }
+  return { ok: true, action: 'merged', text: serialize(next, formatOf(existingText)), ours: wanted }
 }
 
 /**
@@ -112,6 +147,8 @@ export function strip(existingText) {
   if (!r.ok) return r
   if (r.action === 'unchanged') return { ok: true, action: 'absent', text: existingText }
   const rest = JSON.parse(r.text)
-  if (Object.keys(rest).length === 0) return { ok: true, action: 'emptied', text: null }
+  // Cursor's hooks.json carries a bare `version`; with it alone left, the file was ours.
+  const keys = Object.keys(rest).filter((k) => k !== 'version')
+  if (keys.length === 0) return { ok: true, action: 'emptied', text: null }
   return { ok: true, action: 'stripped', text: r.text }
 }

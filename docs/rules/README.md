@@ -6,10 +6,11 @@ incident that proved it.
 
 Three directories:
 
-- **`active/`** — in force. Your agent loads any rule whose Trigger matches the work at hand.
+- **`active/`** — in force. Your agent reads `INDEX.md` (one generated line per rule: its Trigger)
+  and opens a rule's file only when that Trigger matches the work at hand.
   At install it holds the defaults you chose: rules that recurred across the projects caselaw
-  came from, each citing those incidents as its **Precedent** until its first catch here writes
-  your own Origin. Everything else in it was ratified from this project's own incidents.
+  came from, each with a one-sentence **Precedent** (the evidence is in `PRECEDENT.md`, which no
+  session loads) until its first catch here writes your own Origin. Everything else in it was ratified from this project's own incidents.
 - **`proposed/`** — drafted, awaiting a human. Agents write here; agents never move things out.
 - **`candidates/`** — rules extracted from another project, kept as worked examples, and any
   rule demoted from active/. They are not in force until you adopt one and write your own

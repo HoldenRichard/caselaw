@@ -19,11 +19,13 @@
 
 import { readFile, rm, access } from 'node:fs/promises'
 import { dirname, join, normalize, isAbsolute } from 'node:path'
-import { QUESTIONS, optionsFor, TRIAGE_OPTIONS } from './questions.js'
+import { QUESTIONS, optionsFor, TRIAGE_OPTIONS, NONE_VALUE } from './questions.js'
 import { SKIPPED } from '../core/answers.js'
+import { DRAFTED_REACH_TAIL, settleProblem } from '../generate/authority-split.js'
 import { kindAt, refusal } from '../core/fsguard.js'
 import { atomicWrite, writeExclusive } from '../core/safe-write.js'
 import { normalize as normalizeText } from '../core/text.js'
+import { HOST_IDS, detectedHosts, cleanHosts } from '../adapters/index.js'
 
 export const DRAFT_PATH = '.caselaw/draft.json'
 export const DRAFT_VERSION = 1
@@ -31,21 +33,45 @@ export const UNKNOWN = '?'
 
 /** What the agent is told, inside the file it fills in. */
 export const HOW_TO_FILL = [
-  'Run setup in chat. Read the repo instructions, README, manifests and CI. Fill in the answers those files establish. Detection already supplies build, test, CI and publishing facts; do not ask the user to repeat them. A declared command is not evidence that it ran. Carry scan-limit and unread-CI warnings into the setup summary; review omitted areas directly when they matter.',
+  'Run setup in chat. Read the repo instructions, README, manifests and CI. Fill in the answers those files establish. Detection already supplies build, test, CI, publishing and local git-hook gate facts (detected.localGates: a hooks directory the repo wires with core.hooksPath; read the script and treat it as the local verification gate); do not ask the user to repeat them. A declared command is not evidence that it ran. Carry scan-limit and unread-CI warnings into the setup summary; review omitted areas directly when they matter.',
   'Use the suggested answers as a starting point. Verify their sources, keep repository facts separate from local capabilities, and bundle the recommended rules and review cadence into the approval summary. Review triggered recommendations against the actual workflow. A changelog or a test credential fixture may not justify an extra operating rule. Do not ask separate questions about commands, defaults, or a review interval.',
   'Ask at most two short, project-specific questions in one chat message if needed. Lead with the boundary that matters here: name the actual device, service, data or release step and ask what only a human may do and how they verify it. Ask about an external decision-maker only if it changes the handoff and the repo does not settle it.',
   'Do not infer access or authorization from a dependency, language, README or CI workflow. Classify what is established as physical or chosen; mark assumptions untested and say why. Fold remaining low-impact choices into one short setup preview, using the ask-first preset unless the user requests otherwise. List any defaults or triggered rules you recommend enabling in that preview.',
-  'For repo facts, set "answer" and list "evidence": a repo-relative path, a path and line, or "command: <what you ran>". For an answer the user actually gave in chat, set "source" to "human" and leave "evidence" empty. The user can approve preferences together in the preview.',
-  'Use option values as listed, with free text only where "allowOther" is true. For triggered rules, consider outside-authority and public-claims answers first, then validate the selection with the dry run.',
+  'For repo facts, set "answer" and "evidence". "evidence" is always an ARRAY of strings, never a bare string: each is "path:line" (for example "README.md:127"), a repo-relative path, or "command: <what you ran>". The cited line must say what the answer claims; a blank line or an unrelated one is flagged before the user confirms. An answer follows its question\'s type: text is a string, multiselect is an array of option values, triage is an object. For an answer the user actually gave in chat, set "source" to "human" and leave "evidence" empty. The user can approve preferences together in the preview.',
+  `Under "hosts", list the agent tools to wire: ${HOST_IDS.join(', ')}. It is prefilled from what the repo shows; add the tool you are running in yourself (you know which it is), plus any other the repo uses. agents-md is always installed. Each listed tool gets its instruction bridge and live hooks; do not ask the user which tools they use.`,
+  'Use option values as listed, with free text only where "allowOther" is true. If nothing applies to a list question that offers "none", answer ["none"] and cite what shows it. For triggered rules, consider outside-authority and public-claims answers first, then validate the selection with the dry run.',
   `If an applicable answer is unknown, set "answer" to "${UNKNOWN}". Leave inapplicable questions null. Never guess.`,
   'Keep answers marked "alreadyAnswered" unless the user requested reconfiguration.',
-  'Under "declarations", record concrete public claims for selected surfaces as { "claim", "evidence", "truth", "rederive", "checked" }. Cite the exact claim, name where to verify it and leave "checked" empty unless re-derived now.',
-  'For untested boundaries, add "notes" entries shaped as { "<boundary>": { "reason", "evidence" } }.',
+  'Under "declarations", record concrete public claims as an object keyed by surface (a value of outside.claims) whose value is an array: { "<surface>": [ { "claim": "<the claim as the file states it>", "evidence": ["README.md:127"], "truth": "<what is actually true>", "rederive": "<the command or file that re-checks it>", "checked": "" } ] }. "evidence" is an array of "path:line" strings; leave "checked" empty unless you re-derived the claim now (then YYYY-MM-DD).',
+  'For untested boundaries, add "notes" entries shaped as { "<boundary>": { "reason": "<why it is assumed>", "evidence": ["path:line"], "settle": "<optional command>" } }, one per boundary named in authority.cannot. "settle" is optional: one single-line command a person can run to settle the boundary, without a backtick or a pipe. Offer one only if you know it is safe to run; it is shown in the boundary\'s row and in the audit.',
+  'The "example" object in this file shows each shape filled in. Copy its structure, not its content.',
   'Run `caselaw init --from-draft --dry-run`. In chat, summarize what can be checked, what stays with the human, what is uncertain, and which rules and files will be installed. Keep the evidence in the draft and cite the key sources in the summary.',
   'After the user approves the setup in chat, run `caselaw init --from-draft --yes` yourself, then verify the generated setup. The user does not need to run any command.',
 ]
 
+/**
+ * Each shape the agent fills in, filled in. Shown in the draft file itself:
+ * a contract that only describes its shapes in prose is how declarations
+ * evidence ended up a string where an array was needed.
+ */
+export const DRAFT_EXAMPLE = {
+  questions: [{ id: 'authority.human_proof', answer: 'Run the app on a device and tap through checkout.', evidence: ['README.md:40'] }],
+  declarations: { readme: [{ claim: 'Requires macOS 14 or later', evidence: ['README.md:12'], truth: 'the deployment target', rederive: 'MACOSX_DEPLOYMENT_TARGET in the project file', checked: '' }] },
+  notes: { device: { reason: 'No device is attached in this environment.', evidence: ['command: xcrun simctl list devices'] } },
+}
+
 /** The draft for this repository, carrying any answers already on file. */
+
+/**
+ * The agent tool this setup is running inside, when it says so in the
+ * environment (Claude Code sets CLAUDECODE=1 for its shell). Field tests of
+ * 0.5.0: agents left the prefill at agents-md alone and wired nothing for
+ * themselves, although the instructions told them to add their own tool.
+ */
+function runningHost(env = process.env) {
+  return env.CLAUDECODE === '1' ? ['claude-code'] : []
+}
+
 export function buildDraft({ doc, detected, previous = null }) {
   const suggested = {}
   const commands = Object.entries(detected.commands || {})
@@ -54,15 +80,25 @@ export function buildDraft({ doc, detected, previous = null }) {
   const gates = detected.ciGates?.gates || []
   const checks = gates.length ? gates : commands
   const evidence = [...new Set(gates.length ? gates.map((g) => g.file) : commands.map((c) => c.source.split(':')[0]))]
-  if (checks.length) {
-    const commandsText = [...new Set(checks.map((c) => c.cmd))].join('; ')
-    const hasContext = checks.some((c) => c.workingDirectory || c.shell || c.condition || c.jobCondition || c.continueOnError)
-    const description = commandsText.length <= 350 && !hasContext
-      ? `these verification commands: ${commandsText}`
-      : `${checks.length} verification steps in ${evidence.join(', ')}; consult those sources for the complete commands and job prerequisites`
+  // Hooks the repo ships and wires with core.hooksPath are its local gate.
+  const local = detected.hooks?.localGates || []
+  if (checks.length || local.length) {
+    const parts = []
+    if (checks.length) {
+      const commandsText = [...new Set(checks.map((c) => c.cmd))].join('; ')
+      const hasContext = checks.some((c) => c.workingDirectory || c.shell || c.condition || c.jobCondition || c.continueOnError)
+      const description = commandsText.length <= 350 && !hasContext
+        ? `these verification commands: ${commandsText}`
+        : `${checks.length} verification steps in ${evidence.join(', ')}; consult those sources for the complete commands and job prerequisites`
+      parts.push(`The repository declares ${description}.`)
+    }
+    if (local.length) {
+      parts.push(`It ships local git hooks: ${local.map((g) => `${g.files.join(', ')} (enabled with \`${g.wiring}\`${g.wired === false ? '; not enabled in this clone' : ''})`).join('; ')}.`)
+      evidence.push(...local.flatMap((g) => [g.documentedIn, g.files[0]].filter(Boolean)))
+    }
     suggested['authority.agent_reach'] = {
-      answer: `The repository declares ${description}. Their execution and coverage still need to be verified locally.`,
-      evidence,
+      answer: `${parts.join(' ')} ${DRAFTED_REACH_TAIL}`,
+      evidence: [...new Set(evidence)],
     }
   }
   const claims = detected.signals?.claims || []
@@ -95,7 +131,11 @@ export function buildDraft({ doc, detected, previous = null }) {
     project: doc.project ?? {},
     ...(previous?.doctrineDir ? { doctrineDir: previous.doctrineDir } : {}),
     ...(previous?.modules ? { modules: previous.modules } : {}),
+    // Not a question: which agent tools get bridges and hooks. A draft in
+    // progress wins, then an earlier install's record, then what the repo shows.
+    hosts: cleanHosts(previous?.hosts) ?? cleanHosts(doc.hosts) ?? cleanHosts([...detectedHosts(detected), ...runningHost()]),
     howToFill: HOW_TO_FILL,
+    example: DRAFT_EXAMPLE,
     detected: {
       warnings: detected.warnings || [],
       languages: (detected.stack?.languages || []).slice(0, 5).map((l) => `${l.name} ${l.pct}%`),
@@ -105,7 +145,8 @@ export function buildDraft({ doc, detected, previous = null }) {
       signals: detected.signals ?? {},
       generatedDocs: detected.stack?.generatedDocs ?? [],
       publishing: detected.publishing ?? [],
-      ciGates: detected.ciGates ?? { gates: [], setup: [], shared: [], contexts: [], unread: [] },
+      ciGates: detected.ciGates ?? { gates: [], setup: [], shared: [], contexts: [], unread: [], unresolved: [] },
+      localGates: detected.hooks?.localGates ?? [],
       instructions: detected.instructions ?? { files: [], prChecklist: null, mentions: [] },
     },
     questions: QUESTIONS.map((q) => ({
@@ -146,7 +187,12 @@ async function noteProblems(draft, { root }) {
   for (const [b, n] of Object.entries(notes)) {
     if (!named.has(b)) { errors.push(`notes.${b}: not one of the answers to authority.cannot.`); continue }
     if (!n || typeof n.reason !== 'string' || !n.reason.trim()) { errors.push(`notes.${b}: a note needs its reason.`); continue }
-    for (const x of Array.isArray(n.evidence) ? n.evidence : []) {
+    if (n.evidence !== undefined && !Array.isArray(n.evidence)) { errors.push(`notes.${b}: ${EVIDENCE_SHAPE}`); continue }
+    if (n.settle !== undefined) {
+      const bad = settleProblem(n.settle)
+      if (bad) errors.push(`notes.${b}.settle: ${bad}`)
+    }
+    for (const x of n.evidence ?? []) {
       const missing = await evidenceProblem(root, x)
       if (missing) errors.push(`notes.${b}: evidence "${x}" ${missing}.`)
     }
@@ -159,6 +205,10 @@ export function applyNotes(draft, doc, { confirmed = null } = {}) {
   const entries = Object.entries(draft.notes || {}).filter(([, n]) => n && n.reason)
   if (!entries.length || !confirmed) return null
   doc.answers['authority.notes'] = { ...(doc.answers['authority.notes'] || {}), ...Object.fromEntries(entries.map(([b, n]) => [b, n.reason])) }
+  // The command that would settle a boundary, when the note names one: the
+  // authority split prints it in the boundary's row and the audit repeats it.
+  const settle = entries.filter(([, n]) => n.settle !== undefined && !settleProblem(n.settle)).map(([b, n]) => [b, n.settle.trim()])
+  if (settle.length) doc.answers['authority.settle'] = { ...(doc.answers['authority.settle'] || {}), ...Object.fromEntries(settle) }
   return { by: 'agent-draft', evidence: [...new Set(entries.flatMap(([, n]) => n.evidence || []))], confirmed }
 }
 
@@ -180,8 +230,9 @@ async function declarationProblems(draft, { root, doc }) {
       const at = `declarations.${surface}[${i}]`
       if (!e || typeof e.claim !== 'string' || !e.claim.trim()) { errors.push(`${at}: a declaration needs the claim itself.`); continue }
       if ((existing[surface] || []).some((x) => JSON.stringify(stripEvidence(x)) === JSON.stringify(stripEvidence(e)))) continue
-      const ev = Array.isArray(e.evidence) ? e.evidence.filter((x) => typeof x === 'string' && x.trim()) : []
-      if (!ev.length) { errors.push(`${at}: name the file and line that holds this claim.`); continue }
+      if (e.evidence !== undefined && e.evidence !== null && !Array.isArray(e.evidence)) { errors.push(`${at}: ${EVIDENCE_SHAPE}`); continue }
+      const ev = (e.evidence ?? []).filter((x) => typeof x === 'string' && x.trim())
+      if (!ev.length) { errors.push(`${at}: name the file and line that holds this claim, as "evidence": ["README.md:127"].`); continue }
       for (const x of ev) {
         const missing = await evidenceProblem(root, x)
         if (missing) errors.push(`${at}: evidence "${x}" ${missing}.`)
@@ -193,6 +244,8 @@ async function declarationProblems(draft, { root, doc }) {
 }
 
 const stripEvidence = ({ evidence, ...rest } = {}) => rest
+
+const EVIDENCE_SHAPE = '"evidence" must be an array of strings, for example ["README.md:127"] or ["command: npm test"], not a single string or an object.'
 
 /**
  * The drafted declarations, kept or dropped as a whole: at a terminal the
@@ -267,6 +320,9 @@ export async function validateDraft(draft, { root, detected, doc = { answers: {}
   if (!draft || draft.draftVersion !== DRAFT_VERSION) {
     return [`${DRAFT_PATH}: expected draftVersion ${DRAFT_VERSION}; regenerate it with \`caselaw init --draft\`.`]
   }
+  if (draft.hosts !== undefined && (!Array.isArray(draft.hosts) || draft.hosts.some((h) => !HOST_IDS.includes(h)))) {
+    errors.push(`hosts: expected a list drawn from ${HOST_IDS.join(', ')}.`)
+  }
   const known = new Map(QUESTIONS.map((q) => [q.id, q]))
   const answers = Object.fromEntries((draft.questions || []).filter((d) => d.answer != null && d.answer !== UNKNOWN).map((d) => [d.id, d.answer]))
   for (const d of draft.questions || []) {
@@ -283,8 +339,9 @@ export async function validateDraft(draft, { root, detected, doc = { answers: {}
       continue
     }
     if (q.preference) continue
-    const ev = Array.isArray(d.evidence) ? d.evidence.filter((e) => typeof e === 'string' && e.trim()) : []
-    if (!ev.length) { errors.push(`${d.id}: an answer with no evidence. Name the file or command it rests on, or answer "${UNKNOWN}".`); continue }
+    if (d.evidence !== undefined && d.evidence !== null && !Array.isArray(d.evidence)) { errors.push(`${d.id}: ${EVIDENCE_SHAPE}`); continue }
+    const ev = (d.evidence ?? []).filter((e) => typeof e === 'string' && e.trim())
+    if (!ev.length) { errors.push(`${d.id}: an answer with no evidence. Set "evidence" to an array naming the file or command it rests on, such as ["README.md:12"] or ["command: npm test"], or answer "${UNKNOWN}".`); continue }
     for (const e of ev) {
       const missing = await evidenceProblem(root, e)
       if (missing) errors.push(`${d.id}: evidence "${e}" ${missing}.`)
@@ -310,6 +367,7 @@ function shapeProblem(q, value, { detected, answers }) {
     case 'multiselect': {
       if (!Array.isArray(value)) return 'expected a list.'
       const values = new Set(optionsFor(q, { detected, answers }).map((o) => o.value))
+      if (value.includes(NONE_VALUE) && value.length > 1 && values.has(NONE_VALUE)) return `"${NONE_VALUE}" is an answer on its own; drop it or drop the others.`
       const stray = value.filter((v) => typeof v !== 'string' || (!values.has(v) && !q.allowOther))
       return stray.length ? `not among the options, and this question takes no free text: ${stray.join(', ')}.` : null
     }
@@ -348,12 +406,90 @@ export function draftDoubts(draft, detected = {}) {
   return out
 }
 
-/** Null when the evidence holds up; otherwise what is wrong with it. */
+/** The lines of a file, as an array without the empty one a trailing newline leaves; null for a directory or an unreadable file. */
+async function fileLines(root, path) {
+  try {
+    const lines = (await readFile(join(root, path), 'utf8')).split(/\r?\n/)
+    if (lines.at(-1) === '') lines.pop()
+    return lines
+  } catch {
+    return null
+  }
+}
+
+/** Null when the evidence holds up; otherwise what is wrong with it. A line that does not exist is an error. */
 async function evidenceProblem(root, e) {
   if (/^command:\s*\S/.test(e)) return null
-  const path = e.replace(/:\d+(-\d+)?$/, '')
+  const m = /^(.*?):(\d+)(?:-(\d+))?$/.exec(e)
+  const path = m ? m[1] : e
   if (isAbsolute(path) || normalize(path).startsWith('..')) return 'points outside the repository'
-  try { await access(join(root, path)); return null } catch { return 'names a file that does not exist here' }
+  try { await access(join(root, path)) } catch { return 'names a file that does not exist here' }
+  if (!m) return null
+  const lines = await fileLines(root, path)
+  if (lines === null) return 'cites a line in something that is not a readable file'
+  const [from, to] = [Number(m[2]), Number(m[3] || m[2])]
+  if (from < 1 || to < from) return 'names an impossible line range (lines start at 1)'
+  if (to > lines.length) return `names line ${to}, but ${path} has ${lines.length} line${lines.length === 1 ? '' : 's'}`
+  return null
+}
+
+const STOPWORDS = new Set(['the', 'and', 'for', 'with', 'that', 'this', 'from', 'are', 'was', 'not', 'you', 'your', 'its', 'all', 'any', 'can', 'has', 'have', 'will', 'our', 'more', 'than', 'into', 'use', 'uses', 'used', 'which', 'when', 'where', 'also', 'but', 'over'])
+
+/** The words that could make one text support another: lowercased, plural-trimmed, no stopwords; numbers count. */
+function meaningfulWords(text) {
+  const out = new Set()
+  for (const raw of String(text).toLowerCase().match(/[a-z0-9][a-z0-9.+_-]*/g) || []) {
+    let w = raw.replace(/[.+_-]+$/, '')
+    if (w.length > 3 && w.endsWith('s')) w = w.slice(0, -1)
+    if ((w.length >= 3 || /^\d+$/.test(w)) && !STOPWORDS.has(w)) out.add(w)
+  }
+  return out
+}
+
+/**
+ * What a person should look at in the drafted evidence, none of it an error:
+ * a cited line that is blank (the 0.4.2 field test accepted `README.md:127`, a
+ * blank line, as the evidence for "312 tests"), or one that shares no
+ * meaningful word with the claim it is cited for. A line that exists is not a
+ * line that supports; the person confirming decides.
+ *
+ * @returns {Promise<string[]>}
+ */
+export async function evidenceWarnings(draft, { root, doc = { answers: {} } } = {}) {
+  const out = []
+  const short = (t) => (String(t).length > 80 ? `${String(t).slice(0, 77)}...` : String(t))
+  const look = async (label, evidence, claim) => {
+    for (const e of Array.isArray(evidence) ? evidence : []) {
+      if (typeof e !== 'string' || /^command:/.test(e) || await evidenceProblem(root, e)) continue
+      const m = /^(.*?):(\d+)(?:-(\d+))?$/.exec(e)
+      const lines = await fileLines(root, m ? m[1] : e)
+      if (lines === null) continue
+      const cited = m ? lines.slice(Number(m[2]) - 1, Math.min(Number(m[3] || m[2]), Number(m[2]) + 19)) : lines
+      if (m && cited.every((l) => !l.trim())) {
+        out.push(`${label}: evidence "${e}" is ${cited.length > 1 ? 'only blank lines' : 'a blank line'}, so it cannot support the claim. Cite the line that states it.`)
+        continue
+      }
+      if (!claim) continue
+      const have = meaningfulWords(cited.join(' '))
+      if (![...meaningfulWords(claim)].some((w) => have.has(w))) {
+        out.push(`${label}: evidence "${e}" shares no meaningful word with the claim "${short(claim)}"${m ? `; the cited line reads "${short(cited[0].trim())}"` : ''}. Cite the line that states it, or check the claim.`)
+      }
+    }
+  }
+  for (const d of draft?.questions || []) {
+    if (d.answer == null || d.answer === UNKNOWN || d.source === 'human' || !Array.isArray(d.evidence)) continue
+    if (hasAnswer(doc, d.id) && JSON.stringify(doc.answers[d.id]) === JSON.stringify(d.answer)) continue
+    await look(d.id, d.evidence, null)
+  }
+  const existing = doc.answers?.declarations || {}
+  for (const [surface, entries] of Object.entries(draft?.declarations || {})) {
+    for (const [i, e] of (Array.isArray(entries) ? entries : []).entries()) {
+      if (!e || typeof e.claim !== 'string' || (existing[surface] || []).some((x) => JSON.stringify(stripEvidence(x)) === JSON.stringify(stripEvidence(e)))) continue
+      await look(`declarations.${surface}[${i}]`, e.evidence, e.claim)
+    }
+  }
+  for (const [b, n] of Object.entries(draft?.notes || {})) await look(`notes.${b}`, n?.evidence, null)
+  return out
 }
 
 /**
@@ -469,6 +605,7 @@ export async function quoteEvidence(root, evidence = []) {
 /** The whole draft as a sheet a person can read in chat before `--yes`. */
 export async function draftSheet(root, draft) {
   const out = []
+  if (Array.isArray(draft.hosts)) out.push('', `  Agent tools to wire: ${draft.hosts.join(', ')}`)
   for (const q of draft.questions || []) {
     if (q.answer === null || q.answer === undefined || q.alreadyAnswered) continue
     out.push('', `  ${q.prompt}`, `    → ${q.answer === UNKNOWN ? 'not known (a visible gap)' : show(q.answer, q)}`)

@@ -32,6 +32,7 @@ const THEIRS = {
   hooks: {
     PreToolUse: [{ matcher: 'Edit|Write', hooks: [{ type: 'command', command: 'python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/curriculum_gate.py" pre', timeout: 30 }] }],
     SessionStart: [{ hooks: [{ type: 'command', command: 'echo their own hook' }] }],
+    Stop: [{ hooks: [{ type: 'command', command: 'echo their stop hook' }] }],
   },
 }
 const theirsText = JSON.stringify(THEIRS, null, 2) + '\n'
@@ -53,7 +54,9 @@ describe('jsonmerge — the pure functions', () => {
     assert.equal(merged.model, THEIRS.model)
     assert.deepEqual(merged.env, THEIRS.env)
     assert.deepEqual(merged.permissions, THEIRS.permissions)
-    assert.deepEqual(merged.hooks.SessionStart, THEIRS.hooks.SessionStart, 'an event we do not touch is untouched')
+    assert.deepEqual(merged.hooks.Stop, THEIRS.hooks.Stop, 'an event we do not touch is untouched')
+    assert.equal(merged.hooks.SessionStart.length, 2, 'their SessionStart hook and our rule digest coexist')
+    assert.deepEqual(merged.hooks.SessionStart[0], THEIRS.hooks.SessionStart[0], 'theirs first, as it was')
     assert.equal(merged.hooks.PreToolUse.length, 2, 'their PreToolUse hook and ours coexist')
     assert.ok(merged.hooks.PreToolUse[0].hooks[0].command.includes('curriculum_gate.py'), 'theirs first, as it was')
     assert.ok(merged.hooks.PreToolUse[1].hooks[0].command.includes(HOOK_MARK))
@@ -169,7 +172,8 @@ describe('jsonmerge — through the plan, the manifest and eject', () => {
     assert.equal(written.model, THEIRS.model)
     assert.deepEqual(written.env, THEIRS.env)
     assert.ok(JSON.stringify(written.hooks.PreToolUse).includes('curriculum_gate.py'))
-    assert.deepEqual(written.hooks.SessionStart, THEIRS.hooks.SessionStart)
+    assert.deepEqual(written.hooks.Stop, THEIRS.hooks.Stop)
+    assert.deepEqual(written.hooks.SessionStart[0], THEIRS.hooks.SessionStart[0])
   })
 
   test('POSITIVE CONTROL: an edit to OUR entries is a SKIP, and only --force overrides it', async () => {
@@ -216,6 +220,7 @@ describe('jsonmerge — through the plan, the manifest and eject', () => {
     s.hooks.PreToolUse = s.hooks.PreToolUse.filter((e) => !JSON.stringify(e).includes(HOOK_MARK))
     delete s.hooks.PostToolUse
     delete s.hooks.PreCompact // ours since 0.3: the compaction counter
+    s.hooks.SessionStart = s.hooks.SessionStart.filter((e) => !JSON.stringify(e).includes(HOOK_MARK)) // ours since 0.5: the rule digest
     await writeFile(p, JSON.stringify(s, null, 2) + '\n', 'utf8')
     r = await manifestStore.reconcile(root, manifest, { locate })
     assert.ok(r.missing.includes('.claude/settings.json'))

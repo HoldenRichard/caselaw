@@ -23,7 +23,7 @@ import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import { validateSnapshotFiles } from './incidents.js'
-import { atomicWrite, withMutationLock } from './safe-write.js'
+import { writeManaged, withMutationLock } from './safe-write.js'
 
 export const GATES_PATH = '.caselaw/gates.json'
 export const FIRES_PATH = '.caselaw/gate-fires.jsonl'
@@ -77,9 +77,7 @@ export async function load(root) {
 }
 
 export async function save(root, config) {
-  const p = join(root, GATES_PATH)
-  await mkdir(dirname(p), { recursive: true })
-  await atomicWrite(p, JSON.stringify(config, null, 2) + '\n')
+  await writeManaged(root, GATES_PATH, JSON.stringify(config, null, 2) + '\n')
   return config
 }
 

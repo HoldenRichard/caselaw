@@ -144,7 +144,7 @@ export async function detect(root, opts = {}) {
   // These two touch disjoint state and can overlap; between them they hold
   // most of stage 0's wall clock (xcodebuild and gh both live here).
   const [cmdResult, envResult] = await Promise.all([
-    guard('commands', () => detectCommands(root, opts, { walked: walked.value, stack: report.stack }), {
+    guard('commands', () => detectCommands(root, opts, { walked: walked.value, stack: report.stack, ciGates: report.ciGates }), {
       commands: emptyCommands(),
       warnings: [],
     }),

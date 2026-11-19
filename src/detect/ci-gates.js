@@ -31,7 +31,18 @@ const SETUP_STEP = /^(?:\([^)]*\)\s*)?(install|set|setup|cache|checkout|print|co
 const GATE_NAME = /(build|test|lint|check|typecheck|ci)[^/]*\.ya?ml/i
 
 export function emptyCiGates() {
-  return { gates: [], setup: [], shared: [], contexts: [], unread: [] }
+  return { gates: [], setup: [], shared: [], contexts: [], unread: [], unresolved: [] }
+}
+
+/**
+ * A command that only reports a tool's version is not a check: reprompt's CI
+ * printed `xcodebuild -version` and `swift --version`, and both were listed as
+ * what an agent runs to verify a change.
+ */
+const VERSION_PROBE = /^[\w./-]+(?:\s+[\w:.-]+){0,3}\s+(?:--version|-version|-V)\s*(?:2>&1)?\s*$|^(?:go|docker|dotnet|kubectl|terraform)\s+version(?:\s+--?[\w-]+)?\s*$/
+
+export function isVersionProbe(cmd) {
+  return VERSION_PROBE.test(String(cmd).trim())
 }
 
 /**
@@ -70,7 +81,16 @@ export async function detectCiGates(root, walked) {
     const jobs = jobsOf(text)
     const lines = text.split(/\r?\n/)
     const jobOf = (line) => jobs.find((j) => line - 1 > j.start && line - 1 < j.end)
-    const gates = runSteps(text).map((g) => ({ ...g, job: jobOf(g.line)?.name ?? null }))
+    const { gates: resolved, dropped } = resolveSteps(text, scanGateSteps(text))
+    const gates = resolved.map((g) => ({ ...g, job: jobOf(g.line)?.name ?? null }))
+    if (dropped.length) {
+      for (const d of dropped) ciGates.unresolved.push({ file, line: d.line, step: d.step, job: jobOf(d.line)?.name ?? null, cmd: d.cmd, expressions: d.expressions })
+      warnings.push({
+        code: 'ci-expression-unresolved',
+        message: `${dropped.length} command${dropped.length === 1 ? '' : 's'} in ${file} (first at line ${dropped[0].line}) contain an expression CI fills in at run time (${dropped[0].expressions[0]}), so ${dropped.length === 1 ? 'it was' : 'they were'} not listed as runnable.`,
+        hint: 'Read the workflow to see what CI runs; a matrix value that takes several values has no single local command.',
+      })
+    }
     const available = Math.max(0, MAX_GATES - ciGates.gates.length)
     ciGates.gates.push(...gates.slice(0, available).map((g) => ({ file, ...g })))
     if (gates.length > available) {
@@ -86,7 +106,7 @@ export async function detectCiGates(root, walked) {
     // not run on a clean machine without `make build-deps-ubuntu` (round 4).
     // Only what runs before the job's first gate: ntfy's "Print build results"
     // runs after `make build`, and is not setup the build needs.
-    for (const s of setupSteps(text)) {
+    for (const s of resolveSteps(text, scanSetupSteps(text)).gates) {
       const job = jobOf(s.line)?.name ?? null
       if (gates.some((g) => g.job === job && g.line > s.line)) ciGates.setup.push({ file, ...s, job })
     }
@@ -153,7 +173,79 @@ export function runsOnChange(text) {
 
 /** Each gate command with the line it is on and the name of its step, in file order. */
 export function runSteps(text) {
-  return scanSteps(text).filter((c) => !c.setup && !c.unread && !SETUP.test(c.cmd) && !ASSIGNMENT_ONLY.test(c.cmd)).map(({ cmd, line, step, context }) => ({ cmd, line, step, ...context }))
+  return resolveSteps(text, scanGateSteps(text)).gates
+}
+
+function scanGateSteps(text) {
+  return scanSteps(text).filter((c) => !c.setup && !c.unread && !SETUP.test(c.cmd) && !ASSIGNMENT_ONLY.test(c.cmd) && !isVersionProbe(c.cmd)).map(({ cmd, line, step, context }) => ({ cmd, line, step, ...context }))
+}
+
+function scanSetupSteps(text) {
+  return scanSteps(text).filter((c) => c.setup && !c.unread && !SETUP.test(c.cmd) && !ASSIGNMENT_ONLY.test(c.cmd) && !isVersionProbe(c.cmd)).map(({ cmd, line, step, context }) => ({ cmd, line, step, ...context }))
+}
+
+const EXPRESSION = /\$\{\{([\s\S]*?)\}\}/g
+
+/**
+ * `${{ ... }}` is filled in by the CI runner, so a command holding one is not a
+ * command anyone can run. A plain `matrix.key` whose job lists exactly one
+ * value is substituted (and the gate says so); anything else drops the command
+ * and is reported as unresolved. itsdangerous ran its tests as
+ * `tox run -e ${{ matrix.tox || format('py{0}', matrix.python) }}`, and the
+ * generated docs listed that line as a command.
+ */
+function resolveSteps(text, steps) {
+  const jobs = jobsOf(text)
+  const lines = text.split(/\r?\n/)
+  const gates = []
+  const dropped = []
+  for (const s of steps) {
+    const found = [...s.cmd.matchAll(EXPRESSION)]
+    if (!found.length) { gates.push(s); continue }
+    const job = jobs.find((j) => s.line - 1 > j.start && s.line - 1 < j.end)
+    const singles = job ? matrixSingles(lines.slice(job.start, job.end)) : {}
+    const unresolved = []
+    const notes = []
+    const cmd = s.cmd.replace(EXPRESSION, (whole, expr) => {
+      const key = /^\s*matrix\.([\w-]+)\s*$/.exec(expr)?.[1]
+      if (key && singles[key] !== undefined) { notes.push(`matrix.${key} is "${singles[key]}" in this job`); return singles[key] }
+      unresolved.push(whole.trim())
+      return whole
+    })
+    if (unresolved.length) dropped.push({ ...s, expressions: unresolved })
+    else gates.push({ ...s, cmd, note: `${notes.join('; ')}; substituted into the CI command` })
+  }
+  return { gates, dropped }
+}
+
+/** Matrix keys that hold exactly one value (and no `include`/`exclude` to add more), as {key: value}. */
+function matrixSingles(jobLines) {
+  const indent = (l) => l.match(/^\s*/)[0].length
+  const at = jobLines.findIndex((l) => /^\s*matrix:\s*$/.test(l))
+  if (at === -1) return {}
+  const base = indent(jobLines[at])
+  const body = []
+  for (let i = at + 1; i < jobLines.length && (!jobLines[i].trim() || indent(jobLines[i]) > base); i++) if (jobLines[i].trim()) body.push(jobLines[i])
+  if (!body.length) return {}
+  const keyIndent = indent(body[0])
+  const out = {}
+  for (let i = 0; i < body.length; i++) {
+    if (indent(body[i]) !== keyIndent) continue
+    const m = /^\s*([\w-]+):\s*(.*)$/.exec(body[i])
+    if (!m) continue
+    if (m[1] === 'include' || m[1] === 'exclude') return {}
+    let values
+    if (m[2].trim().startsWith('[')) values = m[2].trim().replace(/^\[|\]\s*(#.*)?$/g, '').split(',').map((x) => unquote(x.trim())).filter(Boolean)
+    else if (!m[2].trim()) {
+      values = []
+      for (let j = i + 1; j < body.length && indent(body[j]) > keyIndent; j++) {
+        const item = /^\s*-\s+(.+?)\s*$/.exec(body[j])
+        if (item) values.push(unquote(item[1]))
+      }
+    } else continue
+    if (values.length === 1 && !/\$\{\{/.test(values[0])) out[m[1]] = values[0]
+  }
+  return out
 }
 
 /**
@@ -162,7 +254,7 @@ export function runSteps(text) {
  * housekeeping are not listed; a reader knows to install dependencies.
  */
 export function setupSteps(text) {
-  return scanSteps(text).filter((c) => c.setup && !c.unread && !SETUP.test(c.cmd) && !ASSIGNMENT_ONLY.test(c.cmd)).map(({ cmd, line, step, context }) => ({ cmd, line, step, ...context }))
+  return resolveSteps(text, scanSetupSteps(text)).gates
 }
 
 // A shell comment ends at the physical newline; its trailing slash does not continue it.

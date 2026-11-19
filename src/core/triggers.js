@@ -54,10 +54,12 @@ function agentTools(detected = {}) {
   const ac = detected.agentConfig || {}
   return [
     (ac.claudeMd || ac.claudeDir) && 'Claude Code',
-    ac.agentsMd && 'AGENTS.md',
+    ac.agentsMd && ac.agentsMdOwnContent !== false && 'AGENTS.md',
     ac.cursorRules && 'Cursor',
     ac.copilot && 'Copilot',
     ac.windsurfRules && 'Windsurf',
+    ac.codexDir && 'Codex',
+    (ac.geminiMd || ac.geminiDir) && 'Gemini CLI',
   ].filter(Boolean)
 }
 

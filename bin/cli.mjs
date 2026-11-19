@@ -16,21 +16,21 @@
  * file dispatches. The first public release advertised seven that were not.
  */
 
-import { writeFile, mkdir, readFile } from 'node:fs/promises'
+import { writeFile, mkdir, readFile, stat } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { dirname, join, resolve, basename } from 'node:path'
+import { dirname, join, resolve, basename, relative, isAbsolute } from 'node:path'
 import { argv, cwd, stdout, stdin } from 'node:process'
 import { pathToFileURL } from 'node:url'
 
 import { detect } from '../src/detect/index.js'
 import { docsOwner } from '../src/detect/docs-owner.js'
 import { runInterview } from '../src/interview/runner.js'
-import { QUESTIONS } from '../src/interview/questions.js'
+import { QUESTIONS, describeUnanswered } from '../src/interview/questions.js'
 import { ttyPrompt } from '../src/interview/prompt.js'
-import { buildDraft, writeDraft, loadDraft, removeDraft, validateDraft, draftDoubts, draftPrompt, applyDeclarations, applyNotes, draftSheet, DRAFT_PATH } from '../src/interview/draft.js'
+import { buildDraft, writeDraft, loadDraft, removeDraft, validateDraft, draftDoubts, evidenceWarnings, draftPrompt, applyDeclarations, applyNotes, draftSheet, DRAFT_PATH } from '../src/interview/draft.js'
 import * as answersStore from '../src/core/answers.js'
 import { cleanDoctrineDir, doctrineDirOf, doctrineDirAt, DEFAULT_DOCTRINE_DIR, FALLBACK_DOCTRINE_DIR } from '../src/core/doctrine.js'
 import * as manifestStore from '../src/core/manifest.js'
@@ -41,16 +41,18 @@ import { buildArtifacts } from '../src/generate/artifacts.js'
 import { markOffered, applyTriggers } from '../src/core/triggers.js'
 import { check, planUpgrade, planEject, applyEject, doctor, newQuestionsSince } from '../src/commands/lifecycle.js'
 import { buildReviewPrompt, buildRolePrompt, MAX_DIFF } from '../src/commands/review.js'
-import { selectAdapters } from '../src/adapters/index.js'
+import { selectAdapters, cleanHosts } from '../src/adapters/index.js'
+import { installPreCommit, inspectPreCommit } from '../src/core/githooks.js'
 import { gather } from '../src/audit/gather.js'
 import { optimizerSignals, optimizerProposals, applyProposal } from '../src/core/optimizer.js'
-import { listRules } from '../src/core/rules.js'
+import { listRules, syncRuleIndex, ruleIndexState } from '../src/core/rules.js'
 import { runChecks } from '../src/audit/checks.js'
 import { formatReport, toJson, agentPrompt } from '../src/audit/report.js'
 import { cmdRule, RULE_SUBCOMMANDS } from '../src/commands/rule.js'
 import { cmdGate, GATE_SUBCOMMANDS } from '../src/commands/gate.js'
 import { cmdHarness, HARNESS_SUBCOMMANDS } from '../src/commands/harness.js'
 import { cmdPersonal, PERSONAL_SUBCOMMANDS } from '../src/commands/personal.js'
+import { renderHelp, canonicalFlag, unknownOptionLine } from '../src/commands/help.js'
 import { loadPersonal, personalDefaults, personalOff } from '../src/core/personal.js'
 
 const require = createRequire(import.meta.url)
@@ -74,7 +76,7 @@ export const COMMANDS = {
   review: { help: 'print a review prompt for a DIFFERENT model to run' },
   optimize: { help: 'measure what a session loads, and propose what to compact or trim' },
   detect: { help: 'print what Stage 0 sees, and ask nothing' },
-  rules: { help: 'list active rules, optionally filtered with --for <paths>' },
+  rules: { help: 'list active rules, optionally filtered with --for <paths> (space or comma separated)' },
   rule: { subs: RULE_SUBCOMMANDS, help: 'the case-law loop: draft, ratify, adopt, promote' },
   gate: { subs: GATE_SUBCOMMANDS, help: 'run a gate by hand; promote one that has earned it' },
   harness: { subs: HARNESS_SUBCOMMANDS, help: 'the harness\'s own changes: propose, apply, reject, revert, log' },
@@ -104,7 +106,7 @@ export const USAGE = `caselaw ${CLI_VERSION}
   caselaw review [dir]          print a review prompt for a DIFFERENT model to run
   caselaw optimize [dir]        measure what a session loads, and propose what to compact or trim
   caselaw detect [dir]          print what Stage 0 sees, and ask nothing
-  caselaw rules [dir]           list active rules, optionally filtered with --for <paths>
+  caselaw rules [dir]           list active rules, optionally filtered with --for <paths> (space or comma separated)
 
   caselaw rule propose <name>   draft a rule into docs/rules/proposed/ (an agent may do this)
   caselaw rule ratify <name>    move a proposal into active/ — a human, at a terminal
@@ -125,6 +127,8 @@ export const USAGE = `caselaw ${CLI_VERSION}
   caselaw personal export <f>   the same, for sharing by hand: no paths, no repository names
   caselaw closeout verify <f>   verify close-out report against git status and authority split
   caselaw --help
+
+Run any command with --help for its own flags (required ones marked) and an example: rule promote --help.
 
 Options
   --dry-run              build and show the plan, write nothing
@@ -181,12 +185,25 @@ Options
 export async function main(list = argv.slice(2)) {
   const args = parseArgs(list)
 
+  // `caselaw <command> [<sub>] --help` prints that command's own flags and an
+  // example, with the repository's actual doctrine directory in it.
+  if (args.help && args.command && COMMANDS[args.command]) {
+    const spec = COMMANDS[args.command]
+    say(spec.subs && args.sub && !spec.subs.includes(args.sub)
+      ? `Unknown subcommand "${args.sub}". caselaw ${args.command} takes: ${spec.subs.join(', ')}.`
+      : renderHelp(args.command, spec.subs ? args.sub : null, { dir: doctrineDirAt(resolve(args.dir || cwd())), subs: spec.subs }))
+    return 0
+  }
   if (args.unknown.length) {
     // An unknown flag used to be ignored, so a documented-but-unimplemented
     // --emit ran the bare command, exited 0, and nothing told the reader the
-    // flag had done nothing.
-    say(`Unknown option ${args.unknown.map((u) => `"${u}"`).join(', ')}.\n`)
-    say(USAGE)
+    // flag had done nothing. One line, naming the nearest flag: the whole
+    // usage text answers no question the agent had.
+    say(unknownOptionLine(args.unknown, {
+      known: KNOWN_FLAGS,
+      command: COMMANDS[args.command] ? args.command : null,
+      sub: COMMANDS[args.command]?.subs?.includes(args.sub) ? args.sub : null,
+    }))
     return 2
   }
   if (args.help || !args.command) {
@@ -284,12 +301,25 @@ async function cmdUpgrade(args, root) {
 
   say('')
   say(formatPlan(plan, { root }))
+  // The rules index is derived from active/, outside the plan: a stale or missing one is fixed here.
+  const index = await ruleIndexState(root)
+  if (index.state !== 'ok') say(`  ${index.state === 'missing' ? 'MISSING' : 'STALE  '}  ${index.path}  (regenerated from active/)`)
+  await sayPreCommitPlan(root)
   if (args.dryRun) {
     say('\n  --dry-run: nothing written.')
     return 0
   }
   if (plan.summary.willWrite === 0 && !fired.applied.length && !fired.proposed.length && !(fired.guard && !doc.harness?.writerGuard)) {
-    say('\n  Already up to date.')
+    // The index and the commit hook live outside the plan, so an install with
+    // nothing else to write still gets them (0.5.0 field test: the plan said
+    // ALSO for a core.hooksPath hook, then exited before writing it).
+    if (index.state !== 'ok') {
+      await syncRuleIndex(root)
+      say(`\n  Regenerated ${index.path}.`)
+    }
+    const commit = await installPreCommit(root)
+    if (commit.installed) say(`\n  Wired ${isAbsolute(commit.path) ? relative(root, commit.path) : commit.path}: the staged gates now run on every commit.`)
+    if (index.state === 'ok' && !commit.installed) say('\n  Already up to date.')
     return 0
   }
 
@@ -337,7 +367,7 @@ async function cmdEject(args, root) {
   }
 
   say('')
-  const goes = plan.deleteFiles.length + plan.bookkeeping.length + plan.stripBlocks.filter((b) => b.willRemove).length
+  const goes = plan.deleteFiles.length + plan.bookkeeping.length + plan.stripBlocks.filter((b) => b.willRemove).length + (plan.gitHook?.action === 'delete' ? 1 : 0)
   say(`  Eject — ${goes} file(s) removed, ${plan.stripBlocks.filter((b) => !b.willRemove).length} block(s) stripped`)
   say('')
   for (const p of plan.deleteFiles) say(`  DELETE  ${p}`)
@@ -347,6 +377,7 @@ async function cmdEject(args, root) {
     else say(`  STRIP   ${b.path}  (${b.kind === 'json-merge' ? 'the caselaw hook entries' : `block "${b.blockId}"`}, the rest of the file stays)`)
   }
   for (const l of plan.leaveAlone) say(`  KEEP    ${l.path}  ← ${l.reason}`)
+  if (plan.gitHook) say(`  ${plan.gitHook.action === 'delete' ? 'DELETE' : 'KEEP  '}  ${relative(root, plan.gitHook.path)}  ← ${plan.gitHook.action === 'delete' ? "caselaw's pre-commit hook" : plan.gitHook.reason}`)
   const doctrine = `${doctrineDirAt(root)}/`
   if (plan.keptDoctrine.length) {
     say(`  KEEP    ${plan.keptDoctrine.length} file(s) under ${doctrine}  ← your doctrine; readable without this tool`)
@@ -418,8 +449,13 @@ async function cmdOptimize(args, root) {
   const findings = runChecks(await gather(root, { now }), { only: ['borrowed-rules-earn', 'refs-resolve'] }).findings
   const proposals = optimizerProposals({ signals, listed, findings })
 
-  say(`\n  A session loads ${signals.load.words} words of governance (budget ${signals.budget}):`)
+  say(`\n  A session loads ${signals.load.words} words of governance at its start (budget ${signals.budget}):`)
   for (const f of signals.load.files) say(`    ${String(f.words).padStart(5)}  ${f.path}`)
+  const od = signals.load.onDemand
+  if (od?.files.length) {
+    say(`\n  Opened only when a rule's Trigger matches the work: ${od.words} words across ${od.files.length} rule${od.files.length === 1 ? '' : 's'}, if every one were opened:`)
+    for (const f of od.files) say(`    ${String(f.words).padStart(5)}  ${f.path}`)
+  }
   say(signals.due.length ? `\n  Due, because ${signals.due.join('; ')}.` : '\n  Nothing says it is time.')
   if (!proposals.length) say('\n  No proposals.')
   proposals.forEach((p, i) => say(`\n  ${i + 1}. ${p.id}\n     why: ${p.why}\n     how: ${p.how}`))
@@ -556,7 +592,15 @@ async function cmdCloseout(args, root) {
 
 async function cmdRules(args, root) {
   const { listRulesCmd } = await import('../src/commands/rule.js')
-  return listRulesCmd(args, { root, say })
+  // A leading argument is the project directory only when it is one that holds
+  // an install; otherwise every argument is a path to match rules against.
+  let paths = args.paths || []
+  if (paths.length) {
+    const first = resolve(paths[0])
+    const isInstall = await stat(join(first, '.caselaw')).then((s) => s.isDirectory(), () => false)
+    if (isInstall) { root = first; paths = paths.slice(1) }
+  }
+  return listRulesCmd({ ...args, paths }, { root, say })
 }
 
 async function cmdInit(args, root) {
@@ -627,6 +671,9 @@ async function cmdInit(args, root) {
   if (dir && dir !== DEFAULT_DOCTRINE_DIR) doc.doctrineDir = dir
   else if (dir === DEFAULT_DOCTRINE_DIR) delete doc.doctrineDir
   doc.detected = summarizeDetection(detected)
+  // The agent tools the setup chose to wire; with no draft, or an old one, detection decides.
+  const hosts = cleanHosts(pending?.hosts)
+  if (hosts) doc.hosts = hosts
   // Stamped once, then reused. If this came from the clock, the generated
   // docs would differ every day and `check` could never tell calendar drift
   // from real drift.
@@ -703,7 +750,7 @@ async function initFromDraft({ root, doc, detected, args }) {
     say('  Fix them in the draft and run this again. Nothing was written.')
     return 1
   }
-  const doubts = draftDoubts(draft, detected)
+  const doubts = [...draftDoubts(draft, detected), ...(await evidenceWarnings(draft, { root, doc }))]
   if (doubts.length) {
     say('\n  Before confirming, check:')
     for (const d of doubts) say(`  - ${d}`)
@@ -767,6 +814,7 @@ async function finishInit({ root, doc, detected, args, prompt }) {
 
   say('')
   say(formatPlan(plan, { root }))
+  await sayPreCommitPlan(root)
 
   if (args.dryRun) {
     say('\n  --dry-run: nothing written.')
@@ -789,16 +837,16 @@ async function finishInit({ root, doc, detected, args, prompt }) {
 
   say(`\n  Wrote ${plan.summary.willWrite} file(s).`)
   if (doc.unanswered.length) {
-    say(`  ${doc.unanswered.length} question(s) unanswered — they are marked in the output, not guessed.`)
+    say(`  ${doc.unanswered.length} question(s) unanswered; they are marked in the output, not guessed:`)
+    for (const l of describeUnanswered(doc.unanswered, { detected, answers: doc.answers })) say(`    ${l}`)
   }
-  const skippedSettings = plan.entries.find((e) => e.path === '.claude/settings.json' && e.action === SKIP)
-  if (skippedSettings) {
-    say(`  ! .claude/settings.json was skipped (${skippedSettings.reason}). No gate hook is installed until it is fixed.`)
+  for (const skipped of plan.entries.filter((e) => e.kind === 'json-merge' && e.action === SKIP)) {
+    say(`  ! ${skipped.path} was skipped (${skipped.reason}). No gate hook is installed there until it is fixed.`)
   }
   for (const p of await ignoredByGit(root, plan.entries.filter((e) => e.action !== SKIP).map((e) => e.path))) {
     say(`  ! ${p} is ignored by .gitignore, so it cannot be committed or shared. Add \`!${p}\` to .gitignore if it should be.`)
   }
-  say('  Commit these files: the audit reports doctrine outside version control as an error, and so will CI.')
+  say('  Commit these files. The audit asks for that once now; after the first commit it reports an untracked doctrine file as an error, and so will CI.')
   say(`  Read ${doctrineDirOf(doc)}/authority-split.md. It is the one your agent should read first.\n`)
   return 0
 }
@@ -826,6 +874,17 @@ async function ignoredByGit(root, paths) {
   } catch (err) {
     return err?.code === 1 ? [] : [] // exit 1: none ignored; anything else: cannot say
   }
+}
+
+/**
+ * The pre-commit hook is written outside the plan (it lives in .git/, which no
+ * commit carries), so the plan names it before anyone confirms.
+ */
+async function sayPreCommitPlan(root) {
+  const st = await inspectPreCommit(root)
+  if (st.state === 'absent') say(`  ALSO      ${relative(root, st.path)}  a small sh hook that runs the staged gates on every commit (git does not track it; eject removes it)`)
+  else if (st.state === 'framework' && !st.wired && ['husky', 'core.hooksPath'].includes(st.framework)) say(`  ALSO      ${st.path}  adds a marked block that runs the staged gates first on every commit (eject removes only the block)`)
+  else if (st.state === 'framework' && !st.wired) say(`  NOTE      ${st.path}  ${st.framework} owns the commit hook and caselaw will not edit its config: no gate runs on commit until you add the printed line`)
 }
 
 /** Write an approved plan and record what we own. Shared by init and upgrade. */
@@ -856,6 +915,13 @@ async function writePlan({ root, plan, manifest, doc }) {
   if (doc) doc.templateVersion = TEMPLATE_VERSION
   await manifestStore.save(root, manifest)
   if (doc) await answersStore.save(root, doc)
+  // The rules index summarizes active/, which this write may have changed.
+  await syncRuleIndex(root)
+  // The commit is the seam every agent passes through. Written when nothing
+  // stands there; otherwise the line to add is printed, never forced in.
+  const commit = await installPreCommit(root)
+  if (commit.installed) say(`  Wired ${isAbsolute(commit.path) ? relative(root, commit.path) : commit.path}: the staged gates now run on every commit.`)
+  else if (commit.notice) say(`  ! ${commit.framework ? `The ${commit.framework} setup owns` : 'An existing hook owns'} the commit hook, which does not run the staged gates yet; caselaw will not edit it. ${commit.notice}`)
 }
 
 function renderDetection(d) {
@@ -909,7 +975,8 @@ export function parseArgs(list) {
       out.opt[key] = true
     } else if (a.startsWith('--')) {
       const eq = a.indexOf('=')
-      const key = eq === -1 ? a.slice(2) : a.slice(2, eq)
+      // `--pattern` is `--patterns`; `--doctrine_dir` is `--doctrine-dir`.
+      const key = canonicalFlag(eq === -1 ? a.slice(2) : a.slice(2, eq))
       if (!VALUED_FLAGS.includes(key)) {
         out.unknown.push(a)
         continue
@@ -932,6 +999,11 @@ export function parseArgs(list) {
     out.sub = positional[1] ?? null
     out.name = positional[2] ?? null
     out.dir = positional[3] ?? null
+  } else if (out.command === 'rules') {
+    // `rules --for a.js b.js`: everything after the command is a path or a
+    // directory; cmdRules tells them apart (a second path used to be the dir).
+    out.dir = null
+    out.paths = positional.slice(1)
   } else {
     out.dir = positional[1] ?? null
   }

@@ -21,13 +21,15 @@ import { pathToFileURL } from 'node:url'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import * as rules from '../core/rules.js'
-import { atomicWrite, withMutationLock } from '../core/safe-write.js'
+import { atomicWrite, writeManaged, withMutationLock } from '../core/safe-write.js'
 import { hash } from '../core/text.js'
 import { ruleDirsFor, doctrineDirAt } from '../core/doctrine.js'
 import * as gatesStore from '../core/gates.js'
+import { missingPromoteFlags, promoteExample } from './help.js'
 import { MECHANISABLE, suggestKinds, buildGate, baselineDisposition, enforcementLine } from '../core/promote.js'
 import { SKIPPED } from '../core/answers.js'
 import * as answersStore from '../core/answers.js'
+import * as manifestStore from '../core/manifest.js'
 import { DEFAULTS } from '../core/defaults.js'
 import { TRIGGERS } from '../core/triggers.js'
 import { recordPersonalCatch, personalOff, PERSONAL_REPOS } from '../core/personal.js'
@@ -139,7 +141,7 @@ async function propose(args, { root, say, interactive, prompt }) {
   say(`  Drafted ${r.path}`)
   const code = reportProblems(say, r.validation.problems)
   say('')
-  say(`  A human ratifies it: caselaw rule ratify ${r.name}`)
+  say(code ? '  Fix the errors above first: ratify refuses a draft with errors.' : `  A human ratifies it: caselaw rule ratify ${r.name}`)
   return code
 }
 
@@ -245,6 +247,9 @@ async function adopt(args, { root, say }) {
 async function forgetGenerated(root, names, say) {
   const doc = await answersStore.load(root)
   if (!doc) return
+  // The manifest forgets them too, or the audit reports a deliberate move as a missing generated file.
+  const dirs = ruleDirsFor(doctrineDirAt(root))
+  await manifestStore.forgetFiles(root, names.flatMap((n) => [`${dirs.active}/${n}.md`, `${dirs.precedent}/${n}.md`]))
   let changed = false
   const drop = (key, id) => {
     if (!Array.isArray(doc.answers[key]) || !doc.answers[key].includes(id)) return
@@ -259,7 +264,7 @@ async function forgetGenerated(root, names, say) {
   }
   if (changed) {
     await atomicWrite(join(root, answersStore.ANSWERS_PATH), JSON.stringify(doc, null, 2) + '\n')
-    say('  Taken out of .caselaw/answers.json too, so an upgrade does not reinstall it.')
+    say('  Taken out of .caselaw/answers.json too, so an upgrade does not reinstall it. Run `caselaw upgrade` to bring the generated docs in line.')
   }
 }
 
@@ -356,6 +361,7 @@ async function promote(args, io) {
   if (!kind) {
     if (!interactive) {
       say(`  Not at a terminal: pass --kind <${MECHANISABLE.map((m) => m.kind).join('|')}>. Suggested for this rule: ${ranked[0].kind}.`)
+      say(`  Each kind needs its own flags, all at once, for example:\n    ${promoteExample(ranked[0].kind, args.name)}`)
       return 2
     }
     const p = prompt()
@@ -380,7 +386,7 @@ async function promote(args, io) {
     return 2
   }
 
-  const answers = await collectAnswers(kind, o, io)
+  const answers = await collectAnswers(kind, o, io, args.name)
   if (!answers) return 2
   if (o.id) answers.id = o.id
 
@@ -467,13 +473,14 @@ async function promote(args, io) {
       return false
     }
     config.gates.push(gate)
-    await atomicWrite(join(root, gatesStore.GATES_PATH), JSON.stringify(config, null, 2) + '\n')
+    await writeManaged(root, gatesStore.GATES_PATH, JSON.stringify(config, null, 2) + '\n')
     const ruleText = rules.serializeRule({
       ...parsed,
       name: parsed.name || active.name,
       enforcement: enforcementLine(gate.id),
     })
-    await atomicWrite(path, ruleText)
+    await writeManaged(root, active.path, ruleText)
+    await rules.syncRuleIndex(root)
     return true
   })
   if (!written) return 1
@@ -485,7 +492,13 @@ async function promote(args, io) {
 }
 
 /** The fields each kind needs, from flags or from prompts. Returns null after explaining what is missing. */
-async function collectAnswers(kind, o, { say, interactive, prompt }) {
+async function collectAnswers(kind, o, { say, interactive, prompt }, name = '<name>') {
+  // Without a terminal nothing can ask, so every missing flag is reported at once, with a command that supplies them.
+  const lacking = interactive ? null : missingPromoteFlags(kind, o, name)
+  if (lacking) {
+    say(lacking)
+    return null
+  }
   const list = (s) => String(s ?? '').split(',').map((x) => x.trim()).filter(Boolean)
   const toPattern = (s) => (s.startsWith('re:') ? { regex: s.slice(3), label: s.slice(3) } : { literal: s, label: s })
   const answers = { message: o.message }
@@ -779,15 +792,16 @@ export async function listRulesCmd(args, { root, say }) {
     raw: r.raw || `${r.parsed?.trigger || ''} ${r.parsed?.rule || ''}`,
   }))
 
+  // Paths come from --for (a comma list) and from any further arguments, so
+  // `rules --for a.js b.js` and `rules --for a.js,b.js` ask the same thing.
   const forOption = args.opt?.for || args.for
-  const forPaths = typeof forOption === 'string'
-    ? forOption.split(',').map((p) => p.trim()).filter(Boolean)
-    : Array.isArray(forOption) ? forOption : null
+  const fromFlag = typeof forOption === 'string' ? [forOption] : Array.isArray(forOption) ? forOption : []
+  const forPaths = [...fromFlag, ...(args.paths || [])]
+    .flatMap((p) => String(p).split(',')).map((p) => p.trim()).filter(Boolean)
 
   let results = enrichedActive
-  if (forPaths && forPaths.length > 0) {
-    results = rules.selectTriggeredRules(enrichedActive, forPaths)
-  }
+  // Exhaustive for a path: every active rule whose Trigger matches, never a top few.
+  if (forPaths.length > 0) results = rules.selectTriggeredRules(enrichedActive, forPaths, { budget: Infinity })
 
   if (args.json) {
     say(JSON.stringify(results, null, 2))
@@ -795,14 +809,15 @@ export async function listRulesCmd(args, { root, say }) {
   }
 
   if (results.length === 0) {
-    say(forPaths ? `  No active rules triggered for: ${forPaths.join(', ')}` : '  No active rules.')
+    say(forPaths.length ? `  No active rules triggered for: ${forPaths.join(', ')}` : '  No active rules.')
     return 0
   }
 
-  say(forPaths ? `  Active rules triggered for ${forPaths.join(', ')} (${results.length}):` : `  Active rules (${results.length}):`)
+  say(forPaths.length ? `  Active rules triggered for ${forPaths.join(', ')} (${results.length}):` : `  Active rules (${results.length}):`)
   for (const r of results) {
     const c = r.catches ? ` [${r.catches} catch${r.catches === 1 ? '' : 'es'}]` : ''
     say(`    - ${r.name}${c}: ${r.trigger || '(no trigger)'}`)
+    for (const m of r.matched || []) say(`        matched ${m.path}: ${m.detail}`)
   }
   return 0
 }

@@ -10,9 +10,9 @@ formatter may have reflowed since you last read them, re-read the exact region b
 authoring the edit.
 
 **Origin (upstream):** an edit failed because its target string read "76-char item
-budget" while the formatter had earlier reflowed the comment to "76-char budget". The
-same batch's apply scripts made uniqueness-assertion standard, after which 25 file
-rewrites landed with zero misplaced edits.
+budget" while the formatter had earlier reflowed the comment to "76-char budget". After
+the project's apply scripts asserted uniqueness as standard, 25 file rewrites landed
+with zero misplaced edits.
 
 **Enforcement:** memory
 

@@ -14,7 +14,7 @@ import * as gatesStore from '../core/gates.js'
 import { parseRule, serializeRule, requireName } from '../core/rules.js'
 import { ruleDirsFor, doctrineDirAt } from '../core/doctrine.js'
 import { listIncidents } from '../core/incidents.js'
-import { atomicWrite, withMutationLock } from '../core/safe-write.js'
+import { writeManaged, withMutationLock } from '../core/safe-write.js'
 
 export const GATE_SUBCOMMANDS = ['test', 'baseline', 'promote', 'synthesize']
 
@@ -175,8 +175,8 @@ async function synthesize(args, { root, say }) {
       if (config.gates.some(g => g.id === res.gate.id)) throw new gatesStore.GateError('Gate already exists; nothing overwritten.', { code: 'GATE_EXISTS' })
       if (await readFile(path, 'utf8') !== text) throw new gatesStore.GateError('Rule changed during certification.', { code: 'STALE_RULE' })
       config.gates.push(res.gate)
-      await atomicWrite(join(root, gatesStore.GATES_PATH), JSON.stringify(config, null, 2) + '\n')
-      await atomicWrite(path, serializeRule({ ...parsed, enforcement: `machine:${res.gate.id}` }))
+      await writeManaged(root, gatesStore.GATES_PATH, JSON.stringify(config, null, 2) + '\n')
+      await writeManaged(root, `${dirs.active}/${args.name}.md`, serializeRule({ ...parsed, enforcement: `machine:${res.gate.id}` }))
     })
     say(`  Registered in ${gatesStore.GATES_PATH} and updated enforcement to machine:${res.gate.id}.`)
   } else {

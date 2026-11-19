@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url'
 
 import { measureLoad, optimizerSignals, optimizerProposals, applyProposal, triggerSimilarity, mergedProposal } from '../../src/core/optimizer.js'
 import { archivePrecedent } from '../../src/core/precedent.js'
-import { listRules, ratify, parseRule } from '../../src/core/rules.js'
+import { listRules, ratify, parseRule, syncRuleIndex } from '../../src/core/rules.js'
 import { buildArtifacts } from '../../src/generate/artifacts.js'
 import { emptyAnswers } from '../../src/core/answers.js'
 import { runChecks } from '../../src/audit/checks.js'
@@ -42,16 +42,38 @@ const rule = ({ name, trigger = 'any change to the migration runner', text = 'Do
     .filter(Boolean).join('\n\n') + '\n'
 
 describe('what a session loads', () => {
-  test('POSITIVE CONTROL: the larger pointer block once, the authority split, and every active rule', async () => {
+  test('POSITIVE CONTROL: the larger pointer block once, the authority split and the index at the start; rules only on demand', async () => {
     await put('CLAUDE.md', 'intro words here\n<!-- caselaw:begin id=pointer v=1 hash=x -->\none two three four\n<!-- caselaw:end id=pointer -->\n')
     await put('AGENTS.md', '<!-- caselaw:begin id=pointer v=1 hash=x -->\none two\n<!-- caselaw:end id=pointer -->\n')
     await put('docs/authority-split.md', 'a b c d e\n')
     await put('docs/rules/active/r.md', rule({ name: 'r' }))
     await put('docs/rules/candidates/c.md', rule({ name: 'c' }))
+    await syncRuleIndex(root)
     const load = await measureLoad(root, doc())
-    assert.deepEqual(load.files.map((f) => f.path), ['CLAUDE.md (pointer block)', 'docs/authority-split.md', 'docs/rules/active/r.md'])
+    assert.deepEqual(load.files.map((f) => f.path), ['CLAUDE.md (pointer block)', 'docs/authority-split.md', 'docs/rules/INDEX.md'])
     assert.equal(load.files[0].words, 14, 'the block and its markers (a session reads both), not the three words around it')
     assert.equal(load.words, load.files.reduce((n, f) => n + f.words, 0))
+    assert.deepEqual(load.onDemand.files.map((f) => f.path), ['docs/rules/active/r.md'], 'a rule is read only when its Trigger matches')
+    assert.ok(load.onDemand.words > 0)
+    assert.equal(load.words, (await measureLoad(root, doc())).words, 'rules do not count toward the session-start load')
+  })
+
+  test('POSITIVE CONTROL: adding a rule moves the on-demand words, not the start words beyond its one index line', async () => {
+    await put('docs/authority-split.md', 'a b c d e\n')
+    await put('docs/rules/active/r.md', rule({ name: 'r' }))
+    await syncRuleIndex(root)
+    const before = await measureLoad(root, doc())
+    await put('docs/rules/active/s.md', rule({ name: 's', text: 'word '.repeat(300) }))
+    await syncRuleIndex(root)
+    const after = await measureLoad(root, doc())
+    assert.ok(after.onDemand.words - before.onDemand.words >= 300)
+    assert.ok(after.words - before.words < 30, `the start load grew by ${after.words - before.words} words for a 300-word rule`)
+  })
+
+  test('an install with no index yet is measured as if it had one', async () => {
+    await put('docs/rules/active/r.md', rule({ name: 'r' }))
+    const load = await measureLoad(root, doc())
+    assert.ok(load.files.some((f) => /INDEX\.md \(not generated yet\)/.test(f.path)))
   })
 })
 
@@ -136,8 +158,8 @@ describe('archiving a precedent', () => {
     assert.equal(g.rerender, true)
     const artifacts = await buildArtifacts({ doc: d, detected: { agentConfig: { claudeMd: true }, commands: {}, deploySurface: [] } })
     const body = (p) => artifacts.find((a) => a.path === p)?.body
-    assert.match(body('docs/rules/active/re-derive-claims.md'), /\*\*Precedent:\*\* archived in `docs\/rules\/precedent\/re-derive-claims\.md` \(DEF-216, DEF-748, DEF-145, DEF-158, DEF-131\)\./)
-    assert.match(body('docs/rules/precedent/re-derive-claims.md'), /345 of 347 were unsigned/)
+    assert.match(body('docs/rules/active/re-derive-claims.md'), /\*\*Precedent:\*\* archived in `docs\/rules\/precedent\/re-derive-claims\.md`\./)
+    assert.match(body('docs/rules/precedent/re-derive-claims.md'), /every recent commit was signed/)
   })
 })
 

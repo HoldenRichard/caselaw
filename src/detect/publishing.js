@@ -48,6 +48,24 @@ const HOSTED_DOCS = [
     'the pushes its project settings on readthedocs.org select (they are not in this repository)'],
 ]
 
+/** A document that says how a release is made, at the root or in docs/. */
+const RELEASE_DOC = /^(docs\/|\.github\/)?(RELEASING|RELEASE|RELEASE[-_ ]?(PROCESS|CHECKLIST|GUIDE)|PUBLISHING|HOW[-_ ]TO[-_ ]RELEASE)(\.(md|rst|txt))?$/i
+/** A line that makes a release a tag: `git tag v1.2.3`, "push the tag", "tag a release". */
+const TAG_RELEASE = /\bgit\s+tag\b|\bgit\s+push\b[^\n]*(--tags|\bv?\d+\.\d+|\btags?\/)|\bpush(?:ing)?\b[^\n]{0,60}\btags?\b|\btag(?:ging)?\b[^\n]{0,40}\brelease\b|\brelease\b[^\n]{0,40}\btag\b/i
+
+/** A workflow named for releasing that starts on a tag push, whatever it runs. */
+function tagReleaseWorkflow(file, text) {
+  const events = workflowEvents(text) || []
+  const tags = events.filter((e) => e.event === 'push' && (e.filters.tags || []).length)
+  const name = /^name:\s*(.+)$/m.exec(text)?.[1] || ''
+  if (!tags.length || !/release|publish|deploy/i.test(`${file} ${name}`)) return null
+  const when = tags.flatMap(({ event, filters }) => phrase(event, { tags: filters.tags }))
+  return { file, triggers: workflowTriggers(text), publishes: [{
+    what: 'a release (this workflow runs on a tag push; what it publishes could not be read, review it)', line: 1,
+    when, conditions: [], branches: [], unread: true,
+  }] }
+}
+
 export function emptyPublishing() {
   return []
 }
@@ -67,7 +85,15 @@ export async function detectPublishing(root, walked) {
     let text
     try { text = await readFile(join(root, file), 'utf8') } catch { continue }
     const steps = publishSteps(text)
-    if (!steps.length) continue
+    if (!steps.length) {
+      // A release workflow with no publisher we know is still a release: it runs on a tag.
+      const unread = tagReleaseWorkflow(file, text)
+      if (unread) {
+        out.push(unread)
+        warnings.push({ code: 'release-workflow-unread', message: `${file} runs on a tag push and looks like a release workflow, but what it publishes could not be read.`, hint: 'Read the workflow before pushing a tag.' })
+      }
+      continue
+    }
     const events = workflowEvents(text)
     const jobs = jobsOf(text)
     for (const s of steps) {
@@ -83,6 +109,32 @@ export async function detectPublishing(root, walked) {
       if (s.unread) warnings.push({ code: 'publishing-wrapper-unread', message: `${file}:${s.line} invokes a publishing wrapper whose destination and additional conditions need source review.` })
     }
     out.push({ file, triggers: workflowTriggers(text), publishes: steps })
+  }
+  // A GoReleaser config with no workflow that runs it: the release is still
+  // configured, and starts wherever someone runs `goreleaser`.
+  const grFile = walked.files.find((f) => f === '.goreleaser.yml' || f === '.goreleaser.yaml')
+  if (grFile && !out.some((p) => p.publishes.some((s) => s.what.startsWith('GoReleaser')))) {
+    out.push({ file: grFile, triggers: ['running goreleaser'], publishes: [{
+      what: `GoReleaser${goreleaser.length ? `: ${goreleaser.join(', ')}` : ''}`, line: 1,
+      when: ['running goreleaser, by hand or from a CI this repository does not contain'], conditions: [], branches: [],
+    }] })
+  }
+  // Releases the repository documents rather than automates: pflag's RELEASING.md
+  // says a release is a pushed tag, and no workflow says so. Skipped when a
+  // workflow already publishes on a tag push.
+  const taggedByWorkflow = out.some((p) => p.publishes.some((s) => (s.when || p.triggers || []).some((t) => /pushing a tag|any push/.test(t))))
+  if (!taggedByWorkflow) {
+    for (const file of walked.files.filter((f) => RELEASE_DOC.test(f)).sort()) {
+      let text
+      try { text = await readFile(join(root, file), 'utf8') } catch { continue }
+      const at = text.split(/\r?\n/).findIndex((l) => TAG_RELEASE.test(l))
+      if (at === -1) continue
+      out.push({ file, triggers: [`pushing a version tag, as ${file} documents`], publishes: [{
+        what: `a tagged release (documented in ${file}; the mechanism that publishes it is not in this repository's workflows)`, line: at + 1,
+        when: [`pushing a version tag, as ${file} documents`], conditions: [], branches: [],
+      }] })
+      break
+    }
   }
   // pyvisa's documentation is built and published by Read the Docs from
   // `.readthedocs.yaml`, with no workflow at all (round 4).

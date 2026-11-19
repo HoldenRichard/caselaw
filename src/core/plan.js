@@ -62,6 +62,12 @@ export async function buildPlan(root, artifacts, opts = {}) {
       // rewrite if the manifest says we wrote it and the user has not touched
       // it since. Otherwise it is someone else's file with our name.
       const owned = opts.manifest?.entries?.[toPosix(a.path)]
+      // A caselaw command's own edit (a gate in gates.json, a first-catch
+      // Origin) is kept, not regenerated over and not called a hand edit.
+      if (!force && owned?.toolHash && owned.toolHash === hash(existing)) {
+        entries.push({ ...a, action: UNCHANGED, nextText: existing, interiorHash: hash(existing), keptToolEdit: true })
+        continue
+      }
       const untouched = owned && owned.hash === hash(existing)
       if (untouched || force) {
         entries.push({ ...a, action: NEW, nextText: a.body, replacing: true, bytes: a.body.length })
@@ -173,6 +179,7 @@ export function formatPlan({ entries, summary }, { root = '.' } = {}) {
       : e.action === MERGE && e.kind === 'json-merge' ? '  adds the caselaw hook entries, nothing else touched'
       : e.action === MERGE ? `  managed block "${e.blockId}", nothing else touched`
       : e.action === PATCH ? `  appends a managed block, nothing removed`
+      : e.action === UNCHANGED && e.keptToolEdit ? '  kept: a caselaw command wrote into it'
       : e.action === UNCHANGED ? '  already correct'
       : e.replacing ? '  regenerated' : ''
     lines.push(`  ${e.action.padEnd(9)} ${e.path.padEnd(width)}${note}`)

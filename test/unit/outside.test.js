@@ -36,8 +36,10 @@ describe('where a project makes claims, from its files', () => {
 })
 
 describe('session 2 offers what detection supports', () => {
-  test('POSITIVE CONTROL: an iOS app is offered app review, and a library with a registry the registry\'s policies', () => {
-    assert.ok(gatekeeperCandidates({ stack: { languages: [{ name: 'Swift' }] } }).some((o) => o.value === 'app-review'))
+  test('POSITIVE CONTROL: an app with store evidence is offered app review, and a library with a registry the registry\'s policies', () => {
+    assert.ok(gatekeeperCandidates({ stack: { languages: [{ name: 'Swift' }] }, signals: { stores: [{ kind: 'app-store' }] } }).some((o) => o.value === 'app-review'))
+    // The language alone is not evidence of a store: reprompt is Swift and ships through no store.
+    assert.ok(!gatekeeperCandidates({ stack: { languages: [{ name: 'Swift' }] } }).some((o) => o.value === 'app-review'))
     const lib = gatekeeperCandidates({ signals: { registries: [{ kind: 'npm' }] } }).map((o) => o.value)
     assert.ok(lib.includes('registry-policy'))
     assert.ok(!lib.includes('app-review'))

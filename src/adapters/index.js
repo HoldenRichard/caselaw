@@ -37,7 +37,7 @@ export const RESERVED_COMMANDS = {
 export function pointerLines(dir = 'docs') {
   return [
     { text: `\`${dir}/authority-split.md\` — what you can and cannot verify here. Read it first.` },
-    { text: `\`${dir}/rules/active/\` — case law. At session start, scan it and load every rule whose Trigger matches this turn. Rules are trigger-scoped, never ambient.` },
+    { text: `\`${dir}/rules/INDEX.md\`: case law, one line per rule. Read it now; open a rule in \`${dir}/rules/active/\` only when its Trigger matches the work. Never ambient.` },
     { text: `\`${dir}/close-out.md\` — end a working session with this, including its rule-proposals line.` },
   ]
 }
@@ -62,6 +62,17 @@ export const ADAPTERS = [
     detect: (d) => Boolean(d?.agentConfig?.claudeMd || d?.agentConfig?.claudeDir),
     artifacts() {
       return [{ path: 'CLAUDE.md', kind: 'block', blockId: 'pointer', version: 1, body: '@AGENTS.md' }]
+    },
+  },
+  {
+    // Gemini CLI reads GEMINI.md, not AGENTS.md. Its `@file` import pulls the
+    // shared instructions in, so the bridge is the same one line as Claude's.
+    id: 'gemini',
+    label: 'Gemini CLI',
+    tested: true,
+    detect: (d) => Boolean(d?.agentConfig?.geminiMd || d?.agentConfig?.geminiDir),
+    artifacts() {
+      return [{ path: 'GEMINI.md', kind: 'block', blockId: 'pointer', version: 1, body: '@AGENTS.md' }]
     },
   },
   {
@@ -122,6 +133,29 @@ function markdownPointer(dir = 'docs') {
     '',
     GENERATED_NOTE,
   ].join('\n')
+}
+
+/** The host ids a setup draft may name, in the order a draft lists them. */
+export const HOST_IDS = ['claude-code', 'codex', 'cursor', 'gemini', 'copilot', 'agents-md']
+
+/**
+ * The hosts this repository already shows signs of, as a draft's `hosts`
+ * prefill. Codex reads AGENTS.md itself, so it has no adapter (nothing to
+ * bridge); only its hooks, and its .codex/ directory, make it a host.
+ */
+export function detectedHosts(detected) {
+  return HOST_IDS.filter((id) => id === 'codex' ? Boolean(detected?.agentConfig?.codexDir) : ADAPTERS.find((a) => a.id === id)?.detect(detected))
+}
+
+/**
+ * A `hosts` answer as a list of known ids, agents-md always included, in
+ * canonical order; null when it is not a list (no answer: detection decides).
+ */
+export function cleanHosts(value) {
+  if (!Array.isArray(value)) return null
+  const known = new Set(value.filter((v) => HOST_IDS.includes(v)))
+  known.add('agents-md')
+  return HOST_IDS.filter((id) => known.has(id))
 }
 
 /** Always install the shared instructions. Add bridges for selected or detected tools. */

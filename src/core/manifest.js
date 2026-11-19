@@ -80,6 +80,11 @@ export function record(manifest, { path, kind, contentHash, blockId, templateId 
     })
   }
   const key = toPosix(path)
+  // A file a caselaw command edited since generation (see adoptEdit) is already
+  // recorded at the hash it has now; re-recording the same bytes as a fresh
+  // generation would drop the mark and let the next upgrade overwrite the edit.
+  const prev = manifest.entries[key]
+  if (kind === 'file' && prev?.toolHash && prev.toolHash === contentHash) return manifest
   manifest.entries[key] = {
     kind,
     hash: contentHash,
@@ -87,6 +92,55 @@ export function record(manifest, { path, kind, contentHash, blockId, templateId 
     ...(templateId ? { templateId } : {}),
   }
   return manifest
+}
+
+/**
+ * A caselaw command (`rule catch`, `rule promote`, `gate promote`) just rewrote
+ * a file we generated. That is not a hand edit, so it must not be reported as
+ * one: the new hash is recorded beside the generated one (`toolHash`), and
+ * reconcile() and buildPlan() treat either as ours. Without this the tool's own
+ * workflow turned `check --strict` red.
+ *
+ * Only a file that was clean before the write is adopted. If a person had
+ * already edited it, their edit rides into the new bytes and stays reported.
+ *
+ * @param {string} root
+ * @param {string} path  repo-relative
+ * @param {{before: string|null, after: string}} texts  the file around the write
+ * @returns {Promise<boolean>} whether the manifest changed
+ */
+export async function adoptEdit(root, path, { before, after }) {
+  let manifest
+  try { manifest = await load(root) } catch { return false }
+  const entry = manifest?.entries?.[toPosix(path)]
+  if (!entry || entry.kind !== 'file' || before === null) return false
+  const was = hash(before)
+  if (was !== entry.hash && was !== entry.toolHash) return false
+  const now = hash(after)
+  if (now === entry.hash) {
+    if (!entry.toolHash) return false
+    delete entry.toolHash
+  } else if (entry.toolHash === now) return false
+  else entry.toolHash = now
+  await save(root, manifest, { now: manifest.generatedAt || new Date().toISOString() })
+  return true
+}
+
+/**
+ * Drop entries for files a command moved out of generated ground on purpose
+ * (`rule demote`, a merge's retired sources). The answers no longer ask for
+ * them, so an upgrade will not recreate them; left in the manifest they read
+ * as "recorded as generated but missing".
+ */
+export async function forgetFiles(root, paths) {
+  let manifest
+  try { manifest = await load(root) } catch { return false }
+  if (!manifest) return false
+  const gone = paths.map(toPosix).filter((p) => manifest.entries[p])
+  if (!gone.length) return false
+  for (const p of gone) forget(manifest, p)
+  await save(root, manifest, { now: manifest.generatedAt || new Date().toISOString() })
+  return true
 }
 
 export function forget(manifest, path) {
@@ -98,16 +152,19 @@ export function forget(manifest, path) {
  * Compare the manifest against what is actually on disk.
  *
  * @returns {Promise<{clean: string[], modified: string[], missing: string[],
- *                    unreadable: {path: string, reason: string}[]}>}
+ *                    unreadable: {path: string, reason: string}[], toolEdited: string[]}>}
  *
  * 'modified' means the user edited content we own — upgrade must not touch
- * those without --force, and the audit reports them.
+ * those without --force, and the audit reports them. 'toolEdited' is the
+ * subset of 'clean' a caselaw command rewrote (adoptEdit): not drift, but not
+ * ours to delete on eject either.
  */
 export async function reconcile(root, manifest, { locate } = {}) {
   const clean = []
   const modified = []
   const missing = []
   const unreadable = []
+  const toolEdited = []
 
   for (const [path, entry] of Object.entries(manifest.entries)) {
     const abs = join(root, path)
@@ -124,7 +181,10 @@ export async function reconcile(root, manifest, { locate } = {}) {
     }
 
     if (entry.kind === 'file') {
-      ;(hash(text) === entry.hash ? clean : modified).push(path)
+      const h = hash(text)
+      if (h === entry.hash) clean.push(path)
+      else if (entry.toolHash && h === entry.toolHash) { clean.push(path); toolEdited.push(path) }
+      else modified.push(path)
       continue
     }
 
@@ -159,7 +219,7 @@ export async function reconcile(root, manifest, { locate } = {}) {
     else modified.push(path)
   }
 
-  return { clean, modified, missing, unreadable }
+  return { clean, modified, missing, unreadable, toolEdited }
 }
 
 /**
@@ -175,6 +235,7 @@ export function orphans(manifest, plannedPaths) {
 /** Everything eject would touch, split by how it must be removed. */
 export function ejectPlan(manifest, reconciliation) {
   const modified = new Set(reconciliation.modified)
+  const toolEdited = new Set(reconciliation.toolEdited || [])
   const unreadable = new Map((reconciliation.unreadable || []).map((u) => [u.path, u.reason]))
   const deleteFiles = []
   const stripBlocks = []
@@ -183,6 +244,12 @@ export function ejectPlan(manifest, reconciliation) {
   for (const [path, entry] of Object.entries(manifest.entries)) {
     if (modified.has(path)) {
       leaveAlone.push({ path, reason: 'you edited it' })
+      continue
+    }
+    if (toolEdited.has(path)) {
+      // A command rewrote it with content the project now depends on (a gate
+      // list, a first-catch Origin): same protection as a hand edit.
+      leaveAlone.push({ path, reason: 'a caselaw command wrote into it (a gate or an Origin)' })
       continue
     }
     if (unreadable.has(path)) {

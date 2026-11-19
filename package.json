@@ -1,14 +1,13 @@
 {
   "name": "caselaw",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "description": "Case law for your codebase: agent-led setup, project rules, gates that earn their teeth, and an audit that keeps them honest.",
   "type": "module",
   "engines": {
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --require ./test/setup.cjs --test test/unit/*.test.js",
-    "typecheck": "tsc --noEmit -p jsconfig.json"
+    "test": "node --require ./test/setup.cjs --test test/unit/*.test.js"
   },
   "files": [
     "bin",

@@ -50,3 +50,17 @@ export function tomlKeys(body) {
 function escape(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
+
+/**
+ * The raw text of each `key = [ ... ]` entry in a table body, keyed by name:
+ * `[dependency-groups]` is a table of arrays, and only the names matter to
+ * "which group holds pytest". A line that starts a new key ends the previous
+ * entry, so a `]` inside `"coverage[toml]"` does not cut a group short.
+ */
+export function tomlEntries(body) {
+  const out = new Map()
+  if (typeof body !== 'string') return out
+  const starts = [...body.matchAll(/^\s*["']?([A-Za-z0-9_.-]+)["']?\s*=/gm)].map((m) => ({ key: m[1], at: m.index }))
+  starts.forEach((s, i) => { if (s.key !== 'include-group') out.set(s.key, body.slice(s.at, starts[i + 1]?.at ?? body.length)) })
+  return out
+}

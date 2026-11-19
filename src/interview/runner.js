@@ -13,7 +13,7 @@
  *     by the audit.
  */
 
-import { questionsFor, rank, optionsFor, sessionMeta, SESSIONS } from './questions.js'
+import { questionsFor, rank, optionsFor, sessionMeta, settleNone, SESSIONS } from './questions.js'
 import { setAnswer, SKIPPED } from '../core/answers.js'
 
 /**
@@ -93,7 +93,7 @@ export async function askOne(q, { doc, detected, prompt }) {
       return prompt.select({ ...q, options: optionsFor(q, ctx) })
 
     case 'multiselect':
-      return prompt.multiselect({ ...q, options: optionsFor(q, ctx) })
+      return settleNone(await prompt.multiselect({ ...q, options: optionsFor(q, ctx) }))
 
     case 'triage':
       return askTriage(q, { doc, prompt })

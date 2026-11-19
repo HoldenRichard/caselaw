@@ -31,8 +31,9 @@ import { spawnSync } from 'node:child_process'
 import { dirname, join, basename } from 'node:path'
 import { normalize, hash } from './text.js'
 import { matchGlob } from '../../runtime/gate.mjs'
-import { writeExclusive, atomicWrite, withMutationLock } from './safe-write.js'
+import { writeExclusive, atomicWrite, writeManaged, withMutationLock } from './safe-write.js'
 import { ruleDirsFor, doctrineDirAt } from './doctrine.js'
+import * as manifestStore from './manifest.js'
 
 /**
  * Where case law lives, in the default layout. Relative to the project root,
@@ -287,7 +288,12 @@ const COMMITISH_RE = /(?:commit|sha|rev|revision|@)\W*$/i
  * `sha`, `rev` or `@`.
  *
  * @param {string} text
- * @returns {{shas: string[], dates: string[], issues: string[], urls: string[], total: number}}
+ * `shaLike` holds the 7-40 hex tokens that were NOT counted: all letters, like
+ * "deadbeef" (the shape an invented SHA takes, and also the shape of "defaced").
+ * They are not references and never satisfy "cites something"; validateRule
+ * still asks git about them, so an invented one is not waved through.
+ *
+ * @returns {{shas: string[], shaLike: string[], dates: string[], issues: string[], urls: string[], total: number}}
  */
 export function findReferences(text) {
   const src = typeof text === 'string' ? text : ''
@@ -299,6 +305,7 @@ export function findReferences(text) {
   rest = rest.replace(ISSUE_RE, ' ')
 
   const shas = []
+  const shaLike = []
   for (const m of rest.matchAll(HEX_TOKEN_RE)) {
     const token = m[0]
     const before = rest.slice(Math.max(0, m.index - 16), m.index)
@@ -307,9 +314,10 @@ export function findReferences(text) {
       (/\d/.test(token) && /[a-f]/i.test(token)) ||
       COMMITISH_RE.test(before)
     if (qualifies) shas.push(token)
+    else if (/^[a-f]+$/i.test(token)) shaLike.push(token)
   }
 
-  return { shas, dates, issues, urls, total: urls.length + dates.length + issues.length + shas.length }
+  return { shas, shaLike, dates, issues, urls, total: urls.length + dates.length + issues.length + shas.length }
 }
 
 /**
@@ -453,11 +461,12 @@ export function validateRule(parsed, opts = {}) {
         'Before this can be ratified, point at the incident: a commit SHA, an ISO date, #123, or a URL.',
       )
     }
-    if (refs.shas.length && opts.resolveRef !== false) {
+    const toCheck = [...refs.shas, ...refs.shaLike]
+    if (toCheck.length && opts.resolveRef !== false) {
       const resolveRef = opts.resolveRef ?? gitRefResolver(opts.root ?? process.cwd())
       const missing = []
       const unknown = []
-      for (const sha of refs.shas) {
+      for (const sha of toCheck) {
         const answer = resolveRef(sha)
         if (answer && typeof answer.then === 'function') {
           throw new RuleError(
@@ -479,15 +488,15 @@ export function validateRule(parsed, opts = {}) {
           `Origin cites ${missing.length === 1 ? 'a commit' : 'commits'} not in this repository: ${missing.join(', ')}.`,
           foreign
             ? "That SHA belongs to the project this candidate came from, which is why adopting requires your own Origin."
-            : 'Fix the SHA, or cite the incident another way. A citation nobody can follow is not a citation.',
+            : `Fix the SHA, or cite the incident another way. A citation nobody can follow is not a citation.${missing.some((m) => refs.shaLike.includes(m)) ? ' If a hex-looking word is not a commit, reword it.' : ''}`,
         )
       }
       if (unknown.length) {
         add(
           'origin-unresolvable',
           'warn',
-          `Could not check ${unknown.join(', ')} — git did not answer (not installed, or this is not a repository).`,
-          'Not a verdict on the citation. Re-run inside the repo to check it.',
+          `Could not check ${unknown.join(', ')}: git has no full history to check it against (git is not installed, this is not a repository, or it is a shallow clone).`,
+          'Not a verdict on the citation, so it is a warning here. Re-run in a full clone (`git fetch --unshallow`) to check it; it is an error where the history is complete.',
         )
       }
     }
@@ -545,7 +554,7 @@ export const CATCHES_PATH = '.caselaw/catches.jsonl'
  */
 export async function recordCatch(root, name, opts = {}) {
   requireName(name)
-  return withMutationLock(root, () => recordCatchLocked(root, name, opts))
+  return withMutationLock(root, () => withIndex(root, () => recordCatchLocked(root, name, opts)))
 }
 
 async function recordCatchLocked(root, name, opts) {
@@ -568,7 +577,7 @@ async function recordCatchLocked(root, name, opts) {
   let firstLocal = false
   if (!str(parsed.origin)) {
     firstLocal = true
-    await atomicWrite(path, serializeRule({ ...parsed, name: parsed.name || name, origin: `${what} (first catch here, recorded ${at})` }))
+    await writeManaged(root, relPath('active', name, root), serializeRule({ ...parsed, name: parsed.name || name, origin: `${what} (first catch here, recorded ${at})` }))
   }
   const log = join(root, CATCHES_PATH)
   await mkdir(dirname(log), { recursive: true })
@@ -600,7 +609,7 @@ export async function readCatches(root) {
  */
 export async function demote(root, name, opts = {}) {
   requireName(name)
-  return withMutationLock(root, () => demoteLocked(root, name, opts))
+  return withMutationLock(root, () => withIndex(root, () => demoteLocked(root, name, opts)))
 }
 
 async function demoteLocked(root, name, opts) {
@@ -631,6 +640,14 @@ async function demoteLocked(root, name, opts) {
   if (opts.onRetired) await opts.onRetired([name])
   await rm(from)
   return { name, from: relPath('active', name, root), to: relPath('candidates', name, root), at, reason }
+}
+
+function isShallow(root) {
+  const res = spawnSync('git', ['-C', root, 'rev-parse', '--is-shallow-repository'], {
+    encoding: 'utf8', timeout: 5000, windowsHide: true,
+    env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', GIT_PAGER: 'cat' },
+  })
+  return res.status === 0 && res.stdout.trim() === 'true'
 }
 
 /**
@@ -665,7 +682,7 @@ export function gitRefResolver(root = process.cwd()) {
     if (res.error || res.status === null) answer = null
     else if (res.status === 0) answer = true
     else if (/not a git repository|does not exist/i.test(res.stderr || '')) answer = null
-    else answer = false
+    else answer = isShallow(root) ? null : false // a shallow clone cannot say a commit is absent, only that it is not here
     cache.set(sha, answer)
     return answer
   }
@@ -738,6 +755,94 @@ export async function listRules(root, opts = {}) {
     }
   }
   return out
+}
+
+// ---------------------------------------------------------------------------
+// The index: one line per active rule, so a session reads a page, not the directory
+// ---------------------------------------------------------------------------
+
+/**
+ * Render INDEX.md from the active rules. Pure and deterministic (sorted by
+ * file name, no dates), so `check` can compare it byte for byte. It lists
+ * exactly what is in active/: candidates and proposals are not in force, and a
+ * superseded rule has already left the directory.
+ *
+ * @param {Array<{name: string, file: string, parsed: object}>} active
+ */
+export function renderRuleIndex(active) {
+  const lines = [...active].sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0)).map((r) => {
+    const trigger = String(r.parsed?.trigger ?? '').replace(/\s+/g, ' ').trim() || '(no trigger)'
+    const gate = /^machine:\s*(\S+)/i.exec(String(r.parsed?.enforcement ?? '').trim())
+    return `- [${r.name}](active/${r.file}): ${trigger}${gate ? ` [gate: ${gate[1]}]` : ''}`
+  })
+  return [
+    '# Active rules',
+    '',
+    'Generated by caselaw from `active/`; do not edit. `caselaw upgrade` refreshes it. Each line is a rule in force and the kind of work it fires on: open a rule\'s file (the link) only when its Trigger matches the work in front of you.',
+    '',
+    ...(lines.length ? lines : ['No active rules.']),
+    '',
+  ].join('\n')
+}
+
+/** Every rule file in active/, parsed, without the validation `listRules` does (no git calls). */
+async function readActiveRules(root) {
+  const dir = join(root, dirsAt(root).active)
+  let names
+  try { names = await readdir(dir) } catch (err) {
+    if (err.code === 'ENOENT') return []
+    throw new RuleError(`Cannot read ${dirsAt(root).active}: ${err.message}`, { code: 'UNREADABLE' })
+  }
+  const out = []
+  for (const file of names.sort()) {
+    if (!isRuleFile(file)) continue
+    let text
+    try { text = await readFile(join(dir, file), 'utf8') } catch { continue }
+    const parsed = parseRule(text)
+    out.push({ name: parsed.name || file.replace(/\.md$/i, ''), file, parsed })
+  }
+  return out
+}
+
+/** Where INDEX.md lives, relative to the project root. */
+export function ruleIndexPath(root) {
+  return `${dirsAt(root).active.replace(/\/active$/, '')}/INDEX.md`
+}
+
+/** Is INDEX.md what the active rules produce? `ok`, `stale` or `missing`. */
+export async function ruleIndexState(root) {
+  const expected = renderRuleIndex(await readActiveRules(root))
+  let onDisk = null
+  try { onDisk = await readFile(join(root, ruleIndexPath(root)), 'utf8') } catch { /* missing */ }
+  const state = onDisk === null ? 'missing' : normalize(onDisk) === normalize(expected) ? 'ok' : 'stale'
+  return { state, path: ruleIndexPath(root), expected }
+}
+
+/**
+ * Regenerate INDEX.md. The one function every change to active/ goes through
+ * (ratify, demote, catch, promote, install, upgrade), so the index cannot
+ * lag the directory it summarizes.
+ *
+ * @returns {Promise<{path: string, changed: boolean}>}
+ */
+export async function syncRuleIndex(root) {
+  const { state, path, expected } = await ruleIndexState(root)
+  if (state !== 'ok') await atomicWrite(join(root, path), expected)
+  // Owned like any generated file (so eject and init's dirty-tree check know it),
+  // but never an artifact: it follows active/, which a human also changes.
+  const manifest = await manifestStore.load(root).catch(() => null)
+  if (manifest && manifest.entries?.[path]?.hash !== hash(expected)) {
+    manifestStore.record(manifest, { path, kind: 'file', contentHash: hash(expected) })
+    await manifestStore.save(root, manifest)
+  }
+  return { path, changed: state !== 'ok' }
+}
+
+/** Run a transition that may change active/, then refresh the index (inside the caller's lock). */
+async function withIndex(root, fn) {
+  const result = await fn()
+  await syncRuleIndex(root)
+  return result
 }
 
 /**
@@ -815,7 +920,7 @@ export async function stageEvolution(root, name, candidateText, originalText) {
  */
 export async function ratify(root, name, opts = {}) {
   requireName(name)
-  return withMutationLock(root, () => ratifyLocked(root, name, opts))
+  return withMutationLock(root, () => withIndex(root, () => ratifyLocked(root, name, opts)))
 }
 
 async function ratifyLocked(root, name, opts = {}) {
@@ -940,7 +1045,7 @@ async function ratifyLocked(root, name, opts = {}) {
     if (hash(await readRuleFile(to, name, 'active', root)) !== replacement.digest) {
       throw new RuleError('Active rule changed during ratification.', { code: 'STALE_PROPOSAL' })
     }
-    await atomicWrite(to, stamped)
+    await writeManaged(root, relPath('active', name, root), stamped)
   } else {
     await writeExclusive(to, stamped)
   }
@@ -1320,6 +1425,62 @@ export function matchesTriggerPath(triggerText, filePath) {
 }
 
 /**
+ * What kind of work a path is, as words a Trigger may use. A Trigger says "adding
+ * or changing a test", not `tests/**`, so matching on paths alone selected
+ * nothing for a test file. Deliberately small and conservative: a path that
+ * says nothing about its kind yields no keywords and matches only by path.
+ *
+ * @param {string} filePath
+ * @returns {string[]}
+ */
+export function pathKeywords(filePath) {
+  const p = String(filePath ?? '').toLowerCase().replace(/\\/g, '/').replace(/^(\.\/)+/, '')
+  const segs = p.split('/')
+  const base = segs[segs.length - 1] || ''
+  const dirs = segs.slice(0, -1)
+  const out = new Set()
+  const has = (re) => re.test(p)
+  if (dirs.some((d) => /^(tests?|__tests__|specs?)$/.test(d)) || /(^|[._-])(test|tests|spec)([._-]|$)/.test(base)) out.add('test')
+  if (dirs.some((d) => /^docs?$/.test(d)) || /\.(md|mdx|rst|adoc)$/.test(base)) out.add('doc')
+  if (/^readme/.test(base)) out.add('readme')
+  if (/^(changelog|changes|history|news|release-notes)/.test(base)) { out.add('changelog'); out.add('release') }
+  if (/^(privacy|terms|license|licence|policy)/.test(base)) out.add('policy')
+  if (/^(package(-lock)?\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|pyproject\.toml|setup\.(py|cfg)|requirements[\w.-]*\.txt|pipfile(\.lock)?|poetry\.lock|cargo\.(toml|lock)|go\.(mod|sum)|gemfile(\.lock)?|pom\.xml|build\.gradle(\.kts)?|podfile(\.lock)?|package\.swift|composer\.(json|lock))$/.test(base)) {
+    out.add('dependenc'); out.add('publish'); out.add('release')
+  }
+  if (has(/(^|\/)\.github\/workflows\//) || has(/(^|\/)\.circleci\//) || /^(\.gitlab-ci\.ya?ml|azure-pipelines\.ya?ml|jenkinsfile|\.travis\.ya?ml|bitbucket-pipelines\.ya?ml)$/.test(base)) {
+    out.add('ci'); out.add('release'); out.add('publish')
+  }
+  if (dirs.some((d) => /^(db\/)?migrations?$/.test(d)) || /migration/.test(base)) { out.add('migration'); out.add('schema') }
+  if (/^\.env/.test(base) || /\.(pem|key|p12|keystore|jks)$/.test(base) || /(secret|credential)/.test(p)) { out.add('credential'); out.add('secret'); out.add('key') }
+  if (dirs.some((d) => d === 'scripts') || /\.(sh|bash)$/.test(base) || /^(makefile|justfile)$/.test(base)) out.add('script')
+  return [...out]
+}
+
+/** A keyword as a Trigger word: a prefix at a word start; very short ones whole-word only. */
+const keywordRe = (kw) => new RegExp(kw.length <= 2 ? `(?<![a-z])${kw}(?![a-z])` : `(?<![a-z])${kw}`, 'i')
+
+/**
+ * Why a Trigger matches a path, as reasons (empty: it does not). Two ways:
+ * the Trigger names the path, a directory or a glob; or it uses a word for
+ * the kind of work the path is (`pathKeywords`). Every reason is shown, so a
+ * match can be checked rather than trusted.
+ *
+ * @param {string} triggerText
+ * @param {string} filePath
+ * @returns {Array<{via: 'path'|'keyword', detail: string}>}
+ */
+export function explainTriggerMatch(triggerText, filePath) {
+  const reasons = []
+  if (matchesTriggerPath(triggerText, filePath)) reasons.push({ via: 'path', detail: 'the Trigger names this path or a glob that covers it' })
+  for (const kw of pathKeywords(filePath)) {
+    const word = new RegExp(`${keywordRe(kw).source}[a-z]*`, 'i').exec(String(triggerText ?? ''))
+    if (word) reasons.push({ via: 'keyword', detail: `a ${kw} path, and the Trigger says "${word[0]}"` })
+  }
+  return reasons
+}
+
+/**
  * Select active rules triggered by touched file paths, sorted by leverage and capped by word budget.
  *
  * @param {Array<object>} activeRules
@@ -1337,9 +1498,12 @@ export function selectTriggeredRules(activeRules = [], touchedFilePaths = [], op
   if (paths.length === 0) return []
 
   // 1. Filter rules matching any touched file path
+  const why = new Map()
   const matching = activeRules.filter((r) => {
     const trigger = r.trigger || r.parsed?.trigger || ''
-    return paths.some((p) => matchesTriggerPath(trigger, p))
+    const matched = paths.flatMap((p) => explainTriggerMatch(trigger, p).map((x) => ({ path: p, ...x })))
+    if (matched.length) why.set(r, matched)
+    return matched.length > 0
   })
 
   // 2. Sort rules: prioritize prose rules (memory/checklist) over machine gates,
@@ -1374,7 +1538,7 @@ export function selectTriggeredRules(activeRules = [], touchedFilePaths = [], op
 
   for (const r of matching) {
     const machine = isMachineEnforced(r)
-    let processed = r
+    let processed = { ...r, matched: why.get(r) }
     let bodyText = r.raw || `${r.trigger || r.parsed?.trigger || ''} ${r.rule || r.parsed?.rule || ''}`
 
     if (machine) {
@@ -1390,6 +1554,7 @@ export function selectTriggeredRules(activeRules = [], touchedFilePaths = [], op
       }
       processed = {
         ...r,
+        matched: why.get(r),
         compacted: true,
         rule: `[Enforced by machine gate: ${gateId}]`,
         raw: `**Trigger:** ${r.trigger || r.parsed?.trigger || ''}\n**Enforcement:** machine:${gateId}`,

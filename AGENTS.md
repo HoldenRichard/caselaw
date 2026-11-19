@@ -1,10 +1,10 @@
-<!-- caselaw:begin id=pointer v=1 hash=950ec8b7094709a833c9d995faf2c9380795cccc08667efb5294c9c12ba999c5 -->
+<!-- caselaw:begin id=pointer v=1 hash=f769ae7ebe5f16be7c746a80548691ec915add1568ba1960bf7a2466c7944ff3 -->
 ## How work is done here
 
 Read these before planning or editing. They are the authority; this block is a pointer.
 
 - `docs/authority-split.md` — what you can and cannot verify here. Read it first.
-- `docs/rules/active/` — case law. At session start, scan it and load every rule whose Trigger matches this turn. Rules are trigger-scoped, never ambient.
+- `docs/rules/INDEX.md`: case law, one line per rule. Read it now; open a rule in `docs/rules/active/` only when its Trigger matches the work. Never ambient.
 - `docs/close-out.md` — end a working session with this, including its rule-proposals line.
 
 At any catch with a proven root cause, draft a rule: `caselaw rule propose "<name>"`. You draft; you never ratify. Only a human moves a rule into active/.

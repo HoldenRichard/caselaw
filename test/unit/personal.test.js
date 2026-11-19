@@ -119,3 +119,11 @@ describe('at the command line', () => {
     assert.match(await readFile(join(home, 'personal.json'), 'utf8'), /"version": 1/)
   })
 })
+
+test('POSITIVE CONTROL: a repository in the system temp folder is never recorded in the default personal store', async () => {
+  const { isThrowaway } = await import('../../src/core/personal.js')
+  const { tmpdir } = await import('node:os')
+  const { realpath } = await import('node:fs/promises')
+  assert.equal(await isThrowaway(join(await realpath(tmpdir()), 'some-clone')), true)
+  assert.equal(await isThrowaway('/Users/someone/projects/app'), false)
+})

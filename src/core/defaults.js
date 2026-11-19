@@ -26,12 +26,12 @@ export const DEFAULTS_ROOT = join(HERE, '../../templates/defaults')
 export const DEMOTION_DAYS = 60
 
 export const DEFAULTS = [
-  { id: 'D1', name: 're-derive-claims', label: 'Claims are re-derived, not carried: premises received and claims sent out', caught: 'Kabu, caselaw, the marketing pipeline, the website' },
-  { id: 'D2', name: 'seen-to-fail', label: 'A check counts once it has been seen to fail; report the verdict, not "completed"', caught: 'Kabu, the marketing pipeline, the study record' },
-  { id: 'D3', name: 'say-what-was-not-covered', label: 'A check states what it did not cover', caught: 'Stir, the marketing pipeline, caselaw' },
-  { id: 'D4', name: 'one-writer-per-tree', label: 'One writer per working tree; stage explicit paths', caught: 'the study record, caselaw' },
-  { id: 'D5', name: 'outward-actions-wait', label: 'Outward-facing, irreversible or spending actions wait for the human; words in the human\'s voice are theirs', caught: 'Reprompt, Kabu, the marketing pipeline' },
-  { id: 'D6', name: 'stop-the-chain-on-failure', label: 'A dependent step never runs after the step before it failed', caught: 'Kabu, Reprompt, the study record' },
+  { id: 'D1', name: 're-derive-claims', label: 'Claims are re-derived, not carried: premises received and claims sent out', caught: 'an iOS app, this tool, a content pipeline, a website' },
+  { id: 'D2', name: 'seen-to-fail', label: 'A check counts once it has been seen to fail; report the verdict, not "completed"', caught: 'an iOS app, a content pipeline, a research record' },
+  { id: 'D3', name: 'say-what-was-not-covered', label: 'A check states what it did not cover', caught: 'a video tool, a content pipeline, this tool' },
+  { id: 'D4', name: 'one-writer-per-tree', label: 'One writer per working tree; stage explicit paths', caught: 'a research record, this tool' },
+  { id: 'D5', name: 'outward-actions-wait', label: 'Outward-facing, irreversible or spending actions wait for the human; words in the human\'s voice are theirs', caught: 'a macOS app, an iOS app, a content pipeline' },
+  { id: 'D6', name: 'stop-the-chain-on-failure', label: 'A dependent step never runs after the step before it failed', caught: 'an iOS app, a macOS app, a research record' },
 ]
 
 /** The defaults this install accepted, in order. Unanswered or "I don't know" is none: a gap, not a guess. */

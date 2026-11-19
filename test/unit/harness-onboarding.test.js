@@ -16,6 +16,7 @@ import { parseRule, validateRule } from '../../src/core/rules.js'
 import { ttyPrompt } from '../../src/interview/prompt.js'
 import { QUESTIONS } from '../../src/interview/questions.js'
 import { validateDraft } from '../../src/interview/draft.js'
+import { RULES_TEMPLATES, precedentProjects, assertStrangerReadable } from './helpers/precedent.js'
 
 const DETECTED = { agentConfig: { claudeMd: true }, commands: {}, deploySurface: [] }
 const docWith = (answers = {}) => {
@@ -34,7 +35,7 @@ describe('the defaults chosen at install', () => {
     const active = paths(artifacts).filter((p) => p.startsWith('docs/rules/active/'))
     assert.deepEqual(active.sort(), ['docs/rules/active/one-writer-per-tree.md', 'docs/rules/active/re-derive-claims.md'])
     const d1 = artifacts.find((a) => a.path === 'docs/rules/active/re-derive-claims.md').body
-    assert.match(d1, /\*\*Precedent:\*\* In the study caselaw came from/)
+    assert.match(d1, /\*\*Precedent:\*\* a remembered claim/)
     assert.match(d1, /\*\*Default:\*\* D1, active since 2026-10-30 \(caselaw 0\.3\)/)
     assert.match(d1, /caselaw rule catch re-derive-claims --what/)
     assert.match(d1, /after 60 days of commits/)
@@ -58,6 +59,7 @@ describe('the defaults chosen at install', () => {
   test('POSITIVE CONTROL: every shipped default is a valid rule whose precedent cites, under its own name', async () => {
     const files = (await readdir(DEFAULTS_ROOT)).filter((f) => f.endsWith('.md')).sort()
     assert.deepEqual(files, DEFAULTS.map((d) => `${d.name}.md`).sort(), 'one template per default, and no stray ones')
+    const precedentFile = await readFile(join(RULES_TEMPLATES, 'PRECEDENT.md'), 'utf8')
     for (const d of DEFAULTS) {
       const doc = docWith({ 'harness.defaults': [d.id] })
       doc.harness = { since: '2026-10-30' }
@@ -67,10 +69,13 @@ describe('the defaults chosen at install', () => {
       assert.equal(parsed.origin, null, `${d.name} must not ship an Origin: that is this project's to write`)
       const v = validateRule(parsed, { filename: `${d.name}.md`, resolveRef: false })
       assert.deepEqual(v.problems, [], `${d.name}: ${JSON.stringify(v.problems)}`)
-      // Short second mentions ("the record", "the marketing pipeline") are the same project, not another.
-      const same = { record: "study's record", 'marketing pipeline': "Kabu's marketing pipeline" }
-      const projects = new Set([...parsed.precedent.matchAll(/DEF-\d+ \(([^,]+),/g)].map((m) => m[1].replace(/^the /, '')).map((n) => same[n] || n))
-      assert.ok(projects.size >= 2 || /caselaw itself/.test(parsed.precedent), `${d.name}: a default recurred in two or more projects; its precedent names ${[...projects].join(', ')}`)
+      // The recurrence claim ("two or more of the projects caselaw came from") is backed by PRECEDENT.md,
+      // which names each project by its kind; the rule itself carries one plain sentence and a link.
+      const projects = precedentProjects(precedentFile, d.name)
+      assert.ok(projects.size >= 2, `${d.name}: a default recurred in two or more projects; PRECEDENT.md names ${[...projects].join(', ') || 'none'}`)
+      assert.match(parsed.precedent, /\(\.\.\/PRECEDENT\.md#/, `${d.name}: its Precedent links to the single precedent file`)
+      assert.ok(precedentFile.includes(`## ${d.name}\n`), `${d.name} has a section in PRECEDENT.md`)
+      assertStrangerReadable(body, d.name)
       assert.doesNotMatch(body, /\{\{|\}\}/, 'every placeholder rendered')
     }
   })

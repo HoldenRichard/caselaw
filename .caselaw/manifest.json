@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "cliVersion": "0.4.1",
+  "cliVersion": "0.4.2",
   "templateVersion": "1.2",
-  "generatedAt": "2026-11-13T22:09:26.777Z",
+  "generatedAt": "2026-11-19T18:59:42.729Z",
   "entries": {
     "docs/authority-split.md": {
       "kind": "file",
@@ -14,7 +14,7 @@
     },
     "docs/rules/README.md": {
       "kind": "file",
-      "hash": "8127b8f4959b5035447d5e3716d57b81badc7f2b48df7be6d0c312e7b8866c67"
+      "hash": "5a5aac4f06b9369951237baea57404512a0bb9ebbd40e192a6ccd836354b8e24"
     },
     "docs/rules/_template.md": {
       "kind": "file",
@@ -26,7 +26,7 @@
     },
     "docs/rules/candidates/assertion-before-replace.md": {
       "kind": "file",
-      "hash": "3669b0959cab43f0c598fea396b1f23f48fb14c988c6d0c5610f89b6e34a954d"
+      "hash": "2618df682aa8eb29301f2bc71131b22106b1885fd5468e0a335e6b9898e4f608"
     },
     "docs/rules/candidates/config-identity-gate.md": {
       "kind": "file",
@@ -38,7 +38,7 @@
     },
     "docs/rules/candidates/rename-greps-the-tree.md": {
       "kind": "file",
-      "hash": "7c271c74246813c4b850503f75cf46a82b19889033a861c2dfa0adaaf5a01035"
+      "hash": "8b89fa829a701bc75911579c8e46441e1543a25b6ed7a1a6774622120cdb9890"
     },
     "docs/rules/candidates/trace-the-premise.md": {
       "kind": "file",
@@ -51,7 +51,7 @@
     },
     ".caselaw/bin/gate.mjs": {
       "kind": "file",
-      "hash": "9d422cdf869b7342fa2d6b05383b07fd183a288f3ae1f385d6714bdefeb762c7"
+      "hash": "29927b9088f3efc8728329d9077fc1771cbe1b85939aebe44efd41a90bd38ac7"
     },
     ".caselaw/schema/gates.schema.json": {
       "kind": "file",
@@ -63,7 +63,7 @@
     },
     ".claude/settings.json": {
       "kind": "json-merge",
-      "hash": "05c0fa123e0d1160305d6caf25b16a61a50fe7f1a8a61ff0787e88540035fb40",
+      "hash": "d074c784e316a24694f018c8ab5d75a72840312a6e234c5327417d1ea8dbb461",
       "blockId": "hooks"
     },
     ".claude/commands/close-out.md": {
@@ -81,8 +81,21 @@
     },
     "AGENTS.md": {
       "kind": "block",
-      "hash": "950ec8b7094709a833c9d995faf2c9380795cccc08667efb5294c9c12ba999c5",
+      "hash": "f769ae7ebe5f16be7c746a80548691ec915add1568ba1960bf7a2466c7944ff3",
       "blockId": "pointer"
+    },
+    "docs/rules/PRECEDENT.md": {
+      "kind": "file",
+      "hash": "3b8b4b2c115ac46eab4f120274d31683f77c15129f633839ed679cf1045bd79f"
+    },
+    ".codex/hooks.json": {
+      "kind": "json-merge",
+      "hash": "a381df1d47beaea8132daedcd0f79fd42d3f536a63cc7d7383d4a99e0876e9b3",
+      "blockId": "hooks"
+    },
+    "docs/rules/INDEX.md": {
+      "kind": "file",
+      "hash": "71bdff2ed2ca1dc0f98495875c9ff9aa429a932bcb2935aae5ca1b23d9b7f161"
     }
   }
 }

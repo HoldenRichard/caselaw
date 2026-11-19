@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/caselaw.svg?color=24292e&label=npm)](https://www.npmjs.com/package/caselaw)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**Using the current npm release?** See the [caselaw 0.4.2 documentation](https://github.com/HoldenRichard/caselaw/tree/v0.4.2#readme).
+**Using the current npm release?** See the [caselaw 0.5.0 documentation](https://github.com/HoldenRichard/caselaw/tree/v0.5.0#readme).
 
 **Case law for your codebase.** Set up project rules with your coding agent,
 turn proven rules into gates, and audit both as the project changes.
@@ -14,9 +14,10 @@ In your coding agent's chat, say:
 > infer, then show me the proposed setup.
 
 The agent runs `npx caselaw init --draft` to prepare or resume the draft. It reads your repo for
-build and test commands, CI, and publishing. If a decision remains, it asks a
-short question in chat about the actual project. You approve one setup summary,
-and the agent installs and checks the result.
+build and test commands (preferring what CI and your task runners actually run), local git hooks,
+CI, and publishing, and it names the agent tools to wire, including the one it is running in. If a
+decision remains, it asks a short question in chat about the actual project. You approve one setup
+summary, and the agent installs and checks the result.
 
 The agent can resume a draft with `caselaw init --draft`, preview it with
 `caselaw init --from-draft --dry-run`, then apply it with
@@ -87,19 +88,48 @@ which already existed gets disabled on day one.
 docs/
   authority-split.md      what you and your agent can each verify, and what a human still has to do
   close-out.md            the session template that asks for rules
-  rules/                  README, template, the defaults and triggered rules you chose, 2 candidates
+  rules/INDEX.md          one line per active rule: what agents read at session start
+  rules/                  the defaults and triggered rules you chose, 2 candidates, PRECEDENT.md
 .caselaw/
   answers.json            your answers: edit this, not the docs
   gates.json              empty until a rule earns one
   bin/gate.mjs            vendored, zero-dependency
 AGENTS.md                the shared entry point for any agent
+CLAUDE.md, GEMINI.md     one-line bridges to AGENTS.md, for the tools you use
+.claude/ .codex/ .cursor/ .gemini/   hook settings for the tools you use (merged, never overwritten)
+.git/hooks/pre-commit    runs the staged gates on every commit (or a marked block in your husky or core.hooksPath hook)
 ```
+
+Agents read `docs/rules/INDEX.md` at session start, one line per rule, and open a rule only
+when its Trigger matches the work. A session starts from a few hundred words of governance,
+however many rules you accumulate. The evidence behind the shipped rules lives in
+`docs/rules/PRECEDENT.md`, which no session loads.
 
 Point any agent at the repository-root `AGENTS.md` if it doesn't load that file
 automatically. It leads to the authority split, active rules, and session
 close-out. If CaseLaw detects a tool with a built-in adapter, it also installs
 a bridge to those same instructions. `caselaw upgrade` adds the shared entry
 point to existing installs and updates unmodified bridges in place.
+
+### Enforcement in every agent
+
+Instructions are not enforcement, so setup wires the gates into the tools you use:
+
+| Tool | Before an action | Session start |
+|---|---|---|
+| Claude Code | `.claude/settings.json` hooks, exit 2 blocks | rule index, re-injected after compaction |
+| Codex | `.codex/hooks.json` (trust it once with `/hooks`) | rule index, re-injected after compaction |
+| Cursor | `.cursor/hooks.json` | rule index |
+| Gemini CLI | `.gemini/settings.json` | rule index |
+| everyone, humans included | `.git/hooks/pre-commit` runs the staged gates | |
+
+Hook files are merged with your own settings, never overwritten, and `caselaw doctor` fires each
+host's hook with that host's own payload to prove it is wired. If husky or a `core.hooksPath`
+directory owns your pre-commit, setup adds one marked block that runs first (the plan names it,
+and `eject` removes only the block). Lefthook and pre-commit configs are YAML, so caselaw prints
+the exact entry to add instead of editing them, and `doctor` reports the commit gate missing
+until it is there. With the outward-actions default in force, `git push`, `npm publish` and
+the like ask for confirmation on Claude Code and Cursor, and print a notice elsewhere.
 
 ### Running gates from any agent
 
@@ -140,6 +170,7 @@ telemetry and makes no gate decision.
 
 | | |
 |---|---|
+| `caselaw <command> [<subcommand>] --help` | that command's own flags, required ones marked, with an example |
 | `caselaw init` | prepare setup for your coding agent |
 | `caselaw check` | CI: are the committed docs still what the answers produce? |
 | `caselaw upgrade` | re-render; never touches what you edited |

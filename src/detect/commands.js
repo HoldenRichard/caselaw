@@ -19,6 +19,8 @@
 import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { run } from './exec.js'
+import { isVersionProbe } from './ci-gates.js'
+import { tomlTable, tomlStrings, tomlEntries } from './toml.js'
 
 export const SLOTS = ['test', 'lint', 'format', 'typecheck', 'build']
 
@@ -66,15 +68,20 @@ export function emptyCommands() {
 /**
  * @param {string} root
  * @param {{xcode?: boolean, xcodebuildBin?: string, xcodeTimeoutMs?: number}} [opts]
- * @param {{stack?: object, walked?: object}} [ctx]
+ * @param {{stack?: object, walked?: object, ciGates?: object}} [ctx]
  * @returns {Promise<{commands: object, warnings: object[]}>}
  */
 export async function detectCommands(root, opts = {}, ctx = {}) {
   const warnings = []
   const commands = emptyCommands()
-  /** First provider to fill a slot wins; providers are ordered by how precise they are. */
+  /**
+   * First provider to fill a slot wins. They run in the order a project's own
+   * choices outrank ours: CI steps, then task runners (package.json scripts,
+   * tox, nox, make, just, task), then the lockfile's runner over pyproject
+   * sections, then the language's defaults.
+   */
   const set = (slot, cmd, source) => {
-    if (!commands[slot] && cmd) commands[slot] = { cmd, source }
+    if (!commands[slot] && cmd && !isVersionProbe(cmd)) commands[slot] = { cmd, source }
   }
 
   const rootFiles = new Set(
@@ -83,7 +90,17 @@ export async function detectCommands(root, opts = {}, ctx = {}) {
   const rootDirs = (ctx.walked?.dirs || (await safeReaddir(root, true))).filter((d) => !d.includes('/'))
   const pm = ctx.stack?.packageManager || 'npm'
 
-  // 1. package.json scripts — the most precise source there is.
+  // 1. What CI runs, resolved. A project writes down what has to pass in its
+  //    workflow, with the flags it needs (`go test -race`) and the runner it
+  //    uses (`golangci-lint`, not the language's default `go vet`).
+  for (const g of ctx.ciGates?.gates || []) {
+    // A step that runs elsewhere, or is allowed to fail, says nothing about the root.
+    if (g.workingDirectory || g.continueOnError) continue
+    const slot = slotOfCommand(g.cmd)
+    if (slot) set(slot, g.cmd, `${g.file}:${g.line}`)
+  }
+
+  // 2. Task runners: the project's own names for its checks.
   if (rootFiles.has('package.json')) {
     const pkg = await readJson(join(root, 'package.json'))
     if (pkg === undefined) {
@@ -109,58 +126,32 @@ export async function detectCommands(root, opts = {}, ctx = {}) {
     }
   }
 
-  // 2. pyproject.toml tool sections.
-  if (rootFiles.has('pyproject.toml')) {
-    const text = await readText(join(root, 'pyproject.toml'))
+  const pyText = rootFiles.has('pyproject.toml') ? await readText(join(root, 'pyproject.toml')) : null
+  const py = pythonRunner(rootFiles, pyText)
+
+  // tox and nox: itsdangerous types with `tox -e typing`, and `mypy .` is not what it runs.
+  if (rootFiles.has('tox.ini')) {
+    const text = await readText(join(root, 'tox.ini'))
     if (text !== null) {
-      const sections = tomlSections(text)
-      const has = (s) => sections.some((x) => x === s || x.startsWith(`${s}.`))
-      const src = (s) => `pyproject.toml:[${s}]`
-      if (has('tool.pytest')) set('test', 'pytest', src('tool.pytest.ini_options'))
-      if (has('tool.ruff')) set('lint', 'ruff check .', src('tool.ruff'))
-      if (has('tool.flake8')) set('lint', 'flake8', src('tool.flake8'))
-      if (has('tool.black')) set('format', 'black .', src('tool.black'))
-      if (sections.includes('tool.ruff.format')) set('format', 'ruff format .', src('tool.ruff.format'))
-      if (has('tool.mypy')) set('typecheck', 'mypy .', src('tool.mypy'))
-      if (has('tool.pyright')) set('typecheck', 'pyright', src('tool.pyright'))
-      if (has('tool.poetry')) set('build', 'poetry build', src('tool.poetry'))
-      if (has('build-system')) set('build', 'python -m build', src('build-system'))
+      const envs = toxEnvs(text)
+      for (const slot of SLOTS) {
+        const env = pickEnv(envs, slot)
+        if (env) set(slot, wrapRunner(py, 'tox', `-e ${env.name}`), `tox.ini:${env.source}`)
+      }
+      if (/^\s*\[testenv\]/m.test(text)) set('test', wrapRunner(py, 'tox', '-e py'), 'tox.ini:[testenv]')
+    }
+  }
+  if (rootFiles.has('noxfile.py')) {
+    const text = await readText(join(root, 'noxfile.py'))
+    if (text !== null) {
+      const sessions = noxSessions(text)
+      for (const slot of SLOTS) {
+        const s = pickEnv(sessions, slot)
+        if (s) set(slot, wrapRunner(py, 'nox', `-s ${s.name}`), `noxfile.py:${s.name}`)
+      }
     }
   }
 
-  // 3. Ecosystems whose commands are fixed by convention rather than declared.
-  if (rootFiles.has('Cargo.toml')) {
-    set('test', 'cargo test', 'Cargo.toml')
-    set('lint', 'cargo clippy -- -D warnings', 'Cargo.toml')
-    set('format', 'cargo fmt --check', 'Cargo.toml')
-    set('build', 'cargo build', 'Cargo.toml')
-  }
-  if (rootFiles.has('go.mod')) {
-    set('test', 'go test ./...', 'go.mod')
-    set('lint', 'go vet ./...', 'go.mod')
-    set('format', 'gofmt -l .', 'go.mod')
-    set('build', 'go build ./...', 'go.mod')
-  }
-  if (rootFiles.has('Package.swift')) {
-    set('test', 'swift test', 'Package.swift')
-    set('build', 'swift build', 'Package.swift')
-  }
-
-  // 4. Xcode. Optional, timeout-guarded, and never fatal.
-  const xcodeTarget = pickXcodeTarget(rootFiles, rootDirs)
-  if (xcodeTarget && opts.xcode !== false) {
-    const res = await listXcodeSchemes(root, xcodeTarget, opts)
-    if (res.scheme) {
-      const q = /\s/.test(res.scheme) ? `"${res.scheme}"` : res.scheme
-      set('test', `xcodebuild test -scheme ${q}`, `xcodebuild -list:${xcodeTarget.name}`)
-      set('build', `xcodebuild build -scheme ${q}`, `xcodebuild -list:${xcodeTarget.name}`)
-    } else if (res.warning) {
-      warnings.push(res.warning)
-    }
-  }
-
-  // 5. Generic task runners, last: they are real but say nothing about which
-  //    target is the one CI runs.
   if (rootFiles.has('Makefile') || rootFiles.has('makefile')) {
     const name = rootFiles.has('Makefile') ? 'Makefile' : 'makefile'
     const text = await readText(join(root, name))
@@ -195,7 +186,179 @@ export async function detectCommands(root, opts = {}, ctx = {}) {
     break
   }
 
+  // 3. pyproject.toml tool sections, through the lockfile's runner: bare
+  //    `pytest` is not installed on a machine that has only run `uv sync`.
+  if (pyText !== null) {
+    const sections = tomlSections(pyText)
+    const has = (s) => sections.some((x) => x === s || x.startsWith(`${s}.`))
+    const src = (s) => `pyproject.toml:[${s}]${py.runner ? ` (run through ${py.lock})` : ''}`
+    if (has('tool.pytest') || rootFiles.has('pytest.ini')) set('test', wrapRunner(py, 'pytest'), src('tool.pytest.ini_options'))
+    else if (py.groupWith('pytest') !== null) set('test', wrapRunner(py, 'pytest'), src('dependency-groups'))
+    if (has('tool.ruff')) set('lint', wrapRunner(py, 'ruff', 'check .'), src('tool.ruff'))
+    if (has('tool.flake8')) set('lint', wrapRunner(py, 'flake8'), src('tool.flake8'))
+    if (has('tool.black')) set('format', wrapRunner(py, 'black', '.'), src('tool.black'))
+    if (sections.includes('tool.ruff.format')) set('format', wrapRunner(py, 'ruff', 'format .'), src('tool.ruff.format'))
+    if (has('tool.mypy')) set('typecheck', wrapRunner(py, 'mypy', '.'), src('tool.mypy'))
+    if (has('tool.pyright')) set('typecheck', wrapRunner(py, 'pyright'), src('tool.pyright'))
+    if (has('tool.poetry') && py.lock !== 'uv.lock') set('build', 'poetry build', src('tool.poetry'))
+    else if (py.lock === 'uv.lock' || has('tool.uv')) set('build', 'uv build', `pyproject.toml:[${has('tool.uv') ? 'tool.uv' : 'build-system'}]`)
+    else if (has('build-system')) set('build', 'python -m build', src('build-system'))
+  }
+
+  // 4. Ecosystems whose commands are fixed by convention rather than declared.
+  if (rootFiles.has('Cargo.toml')) {
+    set('test', 'cargo test', 'Cargo.toml')
+    set('lint', 'cargo clippy -- -D warnings', 'Cargo.toml')
+    set('format', 'cargo fmt --check', 'Cargo.toml')
+    set('build', 'cargo build', 'Cargo.toml')
+  }
+  if (rootFiles.has('go.mod')) {
+    set('test', 'go test ./...', 'go.mod')
+    // A golangci-lint config is the project saying which linter it means.
+    const golangci = ['.golangci.yml', '.golangci.yaml', '.golangci.toml', '.golangci.json'].find((f) => rootFiles.has(f))
+    if (golangci) set('lint', 'golangci-lint run', golangci)
+    set('lint', 'go vet ./...', 'go.mod')
+    set('format', 'gofmt -l .', 'go.mod')
+    set('build', 'go build ./...', 'go.mod')
+  }
+  if (rootFiles.has('Package.swift')) {
+    set('test', 'swift test', 'Package.swift')
+    set('build', 'swift build', 'Package.swift')
+  }
+
+  // 5. Xcode. Optional, timeout-guarded, and never fatal.
+  const xcodeTarget = pickXcodeTarget(rootFiles, rootDirs)
+  if (xcodeTarget && opts.xcode !== false) {
+    const res = await listXcodeSchemes(root, xcodeTarget, opts)
+    if (res.scheme) {
+      const q = /\s/.test(res.scheme) ? `"${res.scheme}"` : res.scheme
+      set('test', `xcodebuild test -scheme ${q}`, `xcodebuild -list:${xcodeTarget.name}`)
+      set('build', `xcodebuild build -scheme ${q}`, `xcodebuild -list:${xcodeTarget.name}`)
+    } else if (res.warning) {
+      warnings.push(res.warning)
+    }
+  }
+
   return { commands, warnings }
+}
+
+// --- classifying commands --------------------------------------------------
+
+/** What a `tox -e <env>` or `nox -s <session>` name does, by the names projects give them. */
+function slotOfEnv(name) {
+  if (/^(typing|types?|typecheck|type-?check|mypy|pyright)$/i.test(name)) return 'typecheck'
+  if (/^(fmt|format|black)$/i.test(name)) return 'format'
+  if (/^(lint|linting|style|flake8|ruff|pylint|pre-?commit)$/i.test(name)) return 'lint'
+  if (/^(build|package|dist)$/i.test(name)) return 'build'
+  if (/^(tests?|pytest|unit|py\d*|pypy\d*)$/i.test(name)) return 'test'
+  return null
+}
+
+const SLOT_PATTERNS = [
+  ['typecheck', /\b(mypy|pyright|pytype)\b|\btsc\b|\b(npm|yarn|pnpm)( run)? (typecheck|type-check|check-types|types)\b|\bmake (typecheck|types|mypy)\b/],
+  ['format', /\b(black|ruff format|gofmt|prettier|cargo fmt|isort|swiftformat|rustfmt)\b|\b(npm|yarn|pnpm)( run)? (format|fmt|prettier)\b|\bmake (format|fmt)\b/],
+  ['lint', /\b(ruff check|ruff|flake8|pylint|golangci-lint|eslint|clippy|go vet|staticcheck|rubocop|swiftlint|pre-commit run)\b|\b(npm|yarn|pnpm)( run)? lint\b|\bmake (lint|vet)\b/],
+  ['test', /\b(pytest|py\.test|go test|cargo (nextest|test)|jest|vitest|mocha|rspec|swift test|dotnet test|phpunit|ctest)\b|\bpython3? -m (pytest|unittest)\b|\b(npm|yarn|pnpm|bun)( run)? test\b|\bmvn\b.*\b(test|verify)\b|\bgradlew?\b.*\b(test|check)\b|\bmake (tests?|check\w*)\b|\bxcodebuild\b.*\btest\b/],
+  ['build', /\bpython3? -m build\b|\b(uv|poetry|flit|hatch|pdm) build\b|\bgo build\b|\bcargo build\b|\bswift build\b|\b(npm|yarn|pnpm)( run)? build\b|\bmake (build|all)\b|\bxcodebuild\b.*\bbuild\b|\bgradlew? build\b/],
+]
+
+/**
+ * Which of the five slots a CI command fills, or null. A chain (`a && b`) is
+ * two commands and says neither; a version probe is not a check.
+ */
+export function slotOfCommand(raw) {
+  const cmd = String(raw).trim()
+  if (!cmd || /&&|\|\||[;|]/.test(cmd) || isVersionProbe(cmd)) return null
+  const tool = /\b(tox|nox)\b(?:\s+run)?(.*)$/.exec(cmd)
+  if (tool) {
+    const env = /(?:^|\s)(?:-e|-s|--env|--session|-p)[ =]?(\S+)/.exec(tool[2])?.[1]
+    return env ? slotOfEnv(env.split(',')[0]) : 'test'
+  }
+  for (const [slot, re] of SLOT_PATTERNS) if (re.test(cmd)) return slot
+  return null
+}
+
+/** The tox environments a tox.ini names, as {name, source}. */
+export function toxEnvs(text) {
+  const out = []
+  const add = (name, source) => { if (name && !/[{}]/.test(name) && !out.some((e) => e.name === name)) out.push({ name, source }) }
+  for (const line of text.split(/\r?\n/)) {
+    const h = /^\s*\[testenv:([^\]]+)\]/.exec(line)
+    if (h) add(h[1].trim(), `[testenv:${h[1].trim()}]`)
+  }
+  // `envlist = a, b` and its indented continuation lines.
+  const lines = text.split(/\r?\n/)
+  const at = lines.findIndex((l) => /^\s*envlist\s*=/.test(l))
+  if (at !== -1) {
+    const rest = [lines[at].replace(/^\s*envlist\s*=/, '')]
+    for (let i = at + 1; i < lines.length && /^\s+\S/.test(lines[i]); i++) rest.push(lines[i])
+    // Brace groups (`py3{12,13}`) are generated names, not envs of their own.
+    for (const name of rest.join(' ').replace(/\{[^}]*\}/g, '{}').split(/[\s,]+/)) add(name, '[tox] envlist')
+  }
+  return out
+}
+
+/** The nox sessions a noxfile.py defines: `def name(session`, or `@nox.session(name="x")`. */
+export function noxSessions(text) {
+  const out = []
+  const add = (name) => { if (name && !out.some((e) => e.name === name)) out.push({ name, source: name }) }
+  const renamed = new Set()
+  for (const m of text.matchAll(/@nox\.session\(([^)]*)\)\s*\n\s*def\s+(\w+)\s*\(/g)) {
+    const name = /name\s*=\s*["']([\w-]+)["']/.exec(m[1])?.[1]
+    if (name) renamed.add(m[2])
+    add(name || m[2])
+  }
+  for (const m of text.matchAll(/^def\s+(\w+)\s*\(\s*session\b/gm)) if (!renamed.has(m[1])) add(m[1])
+  return out
+}
+
+/** The first environment or session whose name does this slot's job. */
+function pickEnv(envs, slot) {
+  // `py312` is one interpreter's run of the tests, not a name for them: `tox -e py` is.
+  return envs.find((e) => slotOfEnv(e.name) === slot && !(slot === 'test' && /^pypy?\d*$/i.test(e.name)))
+}
+
+// --- python runners --------------------------------------------------------
+
+/**
+ * How this project runs a Python tool: through the lockfile's runner when it
+ * has one (`uv run --locked`, `poetry run`), where the tool lives in a
+ * dependency group the lock installs. itsdangerous keeps pytest in a `tests`
+ * group, so its working command is `uv run --locked --group tests pytest`.
+ */
+export function pythonRunner(rootFiles, pyText) {
+  const lock = ['uv.lock', 'poetry.lock', 'pdm.lock', 'Pipfile.lock'].find((f) => rootFiles.has(f)) || null
+  const runner = { 'uv.lock': 'uv', 'poetry.lock': 'poetry', 'pdm.lock': 'pdm', 'Pipfile.lock': 'pipenv' }[lock] || null
+  const groups = tomlEntries(pyText ? tomlTable(pyText, 'dependency-groups') : null)
+  const uvTable = pyText ? tomlTable(pyText, 'tool.uv') : null
+  if (uvTable) {
+    const legacy = tomlEntries(uvTable).get('dev-dependencies')
+    if (legacy && !groups.has('dev')) groups.set('dev', legacy)
+  }
+  const defaults = new Set(['dev', ...tomlStrings(uvTable, 'default-groups')])
+  const project = pyText ? tomlTable(pyText, 'project') || '' : ''
+  const mentions = (text, tool) => new RegExp(`["']${tool.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w.-])`, 'i').test(text)
+  return {
+    lock,
+    runner,
+    /** '' when `uv sync` installs the tool by default, a group name when it does not, null when no group holds it. */
+    groupWith(tool) {
+      if (mentions(project, tool)) return ''
+      const held = [...groups].filter(([, text]) => mentions(text, tool)).map(([name]) => name)
+      if (!held.length) return null
+      return held.find((g) => defaults.has(g)) !== undefined ? '' : held[0]
+    },
+  }
+}
+
+/** `tool args`, behind the lockfile's runner when the lock installs the tool. */
+export function wrapRunner(py, tool, args = '') {
+  const tail = args ? ` ${args}` : ''
+  if (py.runner === 'uv') {
+    const group = py.groupWith(tool)
+    return group === null ? `${tool}${tail}` : `uv run --locked${group ? ` --group ${group}` : ''} ${tool}${tail}`
+  }
+  return py.runner ? `${py.runner} run ${tool}${tail}` : `${tool}${tail}`
 }
 
 // --- parsers ---------------------------------------------------------------

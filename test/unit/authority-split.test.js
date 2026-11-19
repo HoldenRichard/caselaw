@@ -161,3 +161,19 @@ describe('authority split — markdown shape is publishable', () => {
     })
   }
 })
+
+describe('detected commands fill the slots CI does not cover (0.5.0 field test)', () => {
+  const detected = {
+    ciGates: { gates: [{ file: '.github/workflows/tests.yaml', job: 'tests', cmd: 'uv run --locked tox run -e typing' }] },
+    commands: { test: { cmd: 'uv run --locked pytest' }, typecheck: { cmd: 'tox -e typing' } },
+  }
+  test('POSITIVE CONTROL: CI ran only typecheck, so the detected test command is still listed', () => {
+    const can = buildModel({ answers: {}, detected }).can.join('\n')
+    assert.match(can, /uv run --locked pytest/)
+    assert.doesNotMatch(can, /Run: [^\n]*tox -e typing/, 'a slot CI covers is not repeated')
+  })
+  test('a drafted reach sentence does not hide unverified detected commands', () => {
+    const answers = { 'authority.agent_reach': 'The repository declares these verification commands: x. Their execution and coverage still need to be verified locally.' }
+    assert.match(buildModel({ answers, detected }).can.join('\n'), /uv run --locked pytest/)
+  })
+})

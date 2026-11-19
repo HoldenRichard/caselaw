@@ -59,8 +59,10 @@ export function gatekeeperCandidates(detected = {}) {
   const stores = kinds('stores')
   const registries = [...kinds('registries')].filter((k) => k !== 'goreleaser')
   const all = [
+    // Store evidence, not the language: a Swift or Kotlin repo with no fastlane
+    // deliver/supply, TestFlight or store link in it has no reviewer to name.
     { value: 'app-review', label: 'an app store\'s review (Apple App Review, Google Play)',
-      when: () => langs.has('swift') || langs.has('kotlin') || langs.has('objective-c') },
+      when: () => stores.has('app-store') || stores.has('play-store') },
     { value: 'extension-store', label: 'a browser extension store\'s review', when: () => stores.has('extension-store') },
     { value: 'vscode-marketplace', label: 'the VS Code Marketplace', when: () => stores.has('vscode-marketplace') },
     { value: 'registry-policy', label: 'the package registry\'s policies', when: () => registries.length > 0 },
@@ -160,6 +162,24 @@ export const TRIAGE_OPTIONS = [
   { value: 'untested', key: 'u', label: 'untested — assumed, never actually checked' },
 ]
 
+/**
+ * "None of these" as an answer of its own. A question with no way to say
+ * "nothing applies" can only be skipped, and a skipped question is a warning
+ * in every audit for as long as the install lives. Chosen, it is stored as an
+ * empty list (see settleNone): answered, with nothing in it.
+ */
+export const NONE_VALUE = 'none'
+const noneOption = (label) => ({ value: NONE_VALUE, label: `none: ${label}` })
+
+/**
+ * 'none' is exclusive and is not data: it becomes []. Picked beside real
+ * choices it is dropped, since the real choices are the more specific answer.
+ */
+export function settleNone(value) {
+  if (!Array.isArray(value) || !value.includes(NONE_VALUE)) return value
+  return value.filter((v) => v !== NONE_VALUE)
+}
+
 /** @type {Array<object>} */
 export const QUESTIONS = [
   // ── Session 1 — the authority split ──────────────────────────────────────
@@ -173,7 +193,7 @@ export const QUESTIONS = [
       'Right now, today, what can your coding agent NOT do or observe in this project without you?',
     help:
       'This is the question the whole harness is built around. Everything the agent cannot check itself is work that has to come back to you — naming it is what makes the handoff explicit instead of assumed.',
-    options: (ctx) => boundaryCandidates(ctx.detected),
+    options: (ctx) => [...boundaryCandidates(ctx.detected), noneOption('there is nothing the agent cannot do or observe here')],
     allowOther: true,
     generates: ['docs/authority-split.md#the-agent-cannot-physical', 'docs/authority-split.md#the-agent-cannot-chosen', 'docs/close-out.md#not-verified-over-to-you'],
   },
@@ -242,7 +262,7 @@ export const QUESTIONS = [
     prompt: 'Who outside this repository can rule on whether it ships, or on what it may do?',
     help:
       'Their rulings sit outside anything this repository controls and need not explain themselves. Only a ruling whose basis is known can become a rule here; naming them now is what makes that limit visible before the first one arrives.',
-    options: (ctx) => gatekeeperCandidates(ctx.detected),
+    options: (ctx) => [...gatekeeperCandidates(ctx.detected), noneOption('no one outside this repository can rule on it')],
     allowOther: true,
     generates: ['docs/authority-split.md#outside-authority'],
   },
@@ -255,7 +275,7 @@ export const QUESTIONS = [
     prompt: 'Where does this project make claims about itself in public?',
     help:
       'A README\'s numbers, a privacy policy, a store listing, a website. Each is a promise that drifts while the code moves, and nothing in the build fails when it does.',
-    options: (ctx) => claimCandidates(ctx.detected),
+    options: (ctx) => [...claimCandidates(ctx.detected), noneOption('this project makes no public claims about itself')],
     allowOther: true,
     generates: ['docs/declarations.md#the-register'],
   },
@@ -302,7 +322,7 @@ export const QUESTIONS = [
     preference: true,
     prompt: 'This repository has what these rules are for. Which should be in force?',
     help:
-      'Each trigger fired on a fact about this repository, named after it. Like a default, each rule carries the study\'s incidents as precedent until its first catch here.',
+      'Each trigger fired on a fact about this repository, named after it. Like a default, each rule carries the incidents it came from (docs/rules/PRECEDENT.md) as precedent until its first catch here.',
     // Asked after session 2, so the outside authorities and public claims named there count.
     when: (answers, detected) => firedTriggers({ detected, answers }).length > 0,
     options: (ctx) => firedTriggers({ detected: ctx.detected, answers: ctx.answers }).map((t) => ({
@@ -355,4 +375,42 @@ export function optionsFor(question, ctx = {}) {
 
 export function sessionMeta(n) {
   return SESSIONS.find((s) => s.n === n) || null
+}
+
+/**
+ * Which questions are still open and how to close each: the id, what it asks,
+ * and the values it takes. The count alone ("1 question(s) unanswered") never
+ * said which one, so nobody could act on it.
+ *
+ * @param {Array<{id: string, prompt?: string}>} unanswered
+ * @param {{detected?: object, answers?: object}} [ctx]  for options that depend on detection
+ * @returns {string[]} lines, unindented
+ */
+export function describeUnanswered(unanswered = [], ctx = {}) {
+  const lines = []
+  for (const u of unanswered) {
+    const q = QUESTIONS.find((x) => x.id === u.id)
+    lines.push(`${u.id}: ${u.prompt || q?.prompt || ''}`)
+    const how = answerHint(q, ctx)
+    if (how) lines.push(`  ${how}`)
+  }
+  if (unanswered.length) {
+    lines.push('Answer at a terminal with `caselaw init --interview`, or have your agent run `caselaw init --draft`, set "answer" for each id above, then `caselaw init --from-draft --yes`.')
+  }
+  return lines
+}
+
+/** What a question takes, in one line; null when it takes free text. */
+export function answerHint(q, ctx = {}) {
+  if (!q) return null
+  if (q.type === 'select' || q.type === 'multiselect') {
+    let values = []
+    try { values = optionsFor(q, ctx).map((o) => o.value) } catch { /* detection absent */ }
+    const list = values.length ? values.join(' | ') : null
+    const none = values.includes(NONE_VALUE) ? ` (answer ["${NONE_VALUE}"] if nothing applies)` : ''
+    return list ? `takes: ${list}${none}` : null
+  }
+  if (q.type === 'triage') return `takes: an object of boundary -> ${TRIAGE_OPTIONS.map((o) => o.value).join(' | ')}`
+  if (q.type === 'number') return `takes: a number from ${q.min} to ${q.max}`
+  return null
 }

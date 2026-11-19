@@ -7,3 +7,6 @@ if (!process.env.CASELAW_HOME_FOR_TESTS) {
   process.env.CASELAW_HOME_FOR_TESTS = '1'
   process.env.CASELAW_HOME = mkdtempSync(join(tmpdir(), 'caselaw-home-'))
 }
+// The suite must give the same result whichever agent runs it: the setup
+// draft prefills the running tool from its environment marker.
+delete process.env.CLAUDECODE

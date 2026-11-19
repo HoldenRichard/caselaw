@@ -188,6 +188,7 @@ export async function detectSignals(root, walked) {
     }
   }
   for (const c of claimSurfaces(walked.files)) addKind(signals.claims, c.kind, c.source)
+  for (const st of await storeDistribution(walked.files, read)) addKind(signals.stores, st.kind, st.source)
 
   // Env example files name the keys a project spends with (trigger T4).
   for (const f of walked.files.filter((f) => /(^|\/)\.env\.(example|sample|template|dist)$|(^|\/)\.env-example$/.test(f))) {
@@ -273,6 +274,46 @@ export function claimSurfaces(files) {
     else if (parts.length === 1 && /^(mkdocs\.ya?ml|docusaurus\.config\.(js|ts|mjs))$/.test(base)) out.push({ kind: 'docs-site', source: f })
   }
   if (files.some((f) => f.startsWith('fastlane/metadata/'))) out.push({ kind: 'store-listing', source: 'fastlane/metadata/' })
+  return out
+}
+
+/**
+ * Evidence that the project is distributed through an app store, which is what
+ * puts a store's review between it and its users: a fastlane lane that uploads,
+ * an export for the store, a workflow that talks to App Store Connect or Google
+ * Play, a link to its own store listing. A Swift or Kotlin repository with none
+ * of these has no reviewer (the reprompt field test: a macOS app that is not on
+ * any store was offered App Review as an outside authority).
+ */
+const LISTING_LINK = [
+  ['app-store', /apps\.apple\.com|testflight\.apple\.com/i],
+  ['play-store', /play\.google\.com\/store/i],
+]
+/** What each kind of file says when it distributes through a store; the words are only evidence where they are actions. */
+const LANE_ACTIONS = {
+  fastfile: [['app-store', /\b(upload_to_app_store|upload_to_testflight|deliver|pilot)\b/], ['play-store', /\b(upload_to_play_store|supply)\b/]],
+  workflow: [
+    ['app-store', /upload_to_app_store|upload_to_testflight|fastlane\s+(deliver|pilot)\b|\bxcrun altool\b|app[- ]?store[- ]?connect|testflight/i],
+    ['play-store', /upload_to_play_store|fastlane\s+supply\b|r0adkll\/upload-google-play|google-play-publisher/i],
+  ],
+  export: [['app-store', /<string>app-store(-connect)?<\/string>/]],
+}
+
+export async function storeDistribution(files, read) {
+  const out = []
+  const add = (kind, source) => { if (!out.some((o) => o.kind === kind)) out.push({ kind, source }) }
+  for (const f of files.slice().sort()) {
+    const lane = /^fastlane\/Fastfile$/.test(f) ? 'fastfile'
+      : /^\.github\/workflows\/[^/]+\.ya?ml$/.test(f) ? 'workflow'
+        : /(^|\/)ExportOptions[^/]*\.plist$/.test(f) && f.split('/').length <= 3 ? 'export'
+          : null
+    const readme = /^readme(\.(md|rst|txt))?$/i.test(f)
+    if (!lane && !readme) continue
+    const text = await read(f)
+    if (!text) continue
+    for (const [kind, re] of lane ? LANE_ACTIONS[lane] : LISTING_LINK) if (re.test(text)) add(kind, f)
+  }
+  if (files.includes('fastlane/Deliverfile')) add('app-store', 'fastlane/Deliverfile')
   return out
 }
 

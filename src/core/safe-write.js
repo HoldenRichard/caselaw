@@ -2,6 +2,7 @@
 import { mkdir, writeFile, readFile, rename, rm, link } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { adoptEdit } from './manifest.js'
 
 export async function writeExclusive(path, text) {
   await mkdir(dirname(path), { recursive: true })
@@ -24,6 +25,18 @@ export async function atomicWrite(path, text) {
     await writeFile(temp, text, { encoding: 'utf8', flag: 'wx' })
     await rename(temp, path)
   } finally { await rm(temp, { force: true }) }
+}
+/**
+ * atomicWrite for a file the manifest may own. A caselaw command's own edit to
+ * a generated file is recorded in the manifest (adoptEdit), so check, audit and
+ * `check --strict` do not report the tool's work as someone's hand edit.
+ */
+export async function writeManaged(root, relPath, text) {
+  const abs = join(root, relPath)
+  let before = null
+  try { before = await readFile(abs, 'utf8') } catch { /* a new file */ }
+  await atomicWrite(abs, text)
+  await adoptEdit(root, relPath, { before, after: text })
 }
 export async function withMutationLock(root, operation) {
   const lock = join(root, '.caselaw', 'mutation.lock')

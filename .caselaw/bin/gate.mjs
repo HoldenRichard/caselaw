@@ -2088,18 +2088,85 @@ async function runCommandHook(mode, common, args, payload, command, stdout, stde
   const root = await installAbove(str(payload.cwd) || process.cwd()) ?? (args.root ? resolve(args.root) : null)
   if (!root) return EXIT.OK // a command outside any install has nothing here to answer to
   const result = await evaluate({ ...common, root, mode: 'pre', command, onlyKinds: ['command'], writes: [], targets: [], proposed: [], changeSet: null, changeSetReason: 'a shell command, not a write' })
+  // D5 never blocks: the human may have approved this very action. Where the
+  // host has an "ask" it asks; everywhere else the agent is told and it goes on.
+  const host = args.host || 'claude'
+  const outward = result.blocking.length === 0 && await outwardGuardOn(root) ? outwardAction(command) : null
+  if (outward && host !== 'claude' && host !== 'cursor') stderr(`${outwardReason(outward)}\n`)
   if (args.host === 'generic') return reportGenericHook(mode, result, stdout)
   const asides = []
   if (result.config.degraded) asides.push(`config not usable: ${oneLine(result.config.reason, 300)}`)
   for (const f of result.warnings) asides.push(oneLine(`warn ${f.gate}: ${f.detail}${f.message ? ` — ${f.message}` : ''}`, 400))
   for (const r of result.degraded) for (const d of r.degradations) asides.push(oneLine(`degraded ${r.gate}: ${d.reason}`, 400))
   if (result.blocking.length === 0) {
-    emitAsides(stdout, mode, asides)
+    const ask = !outward ? {}
+      : host === 'cursor' ? { permission: 'ask', user_message: outwardReason(outward), agent_message: outwardReason(outward) }
+      : host === 'claude' ? { hookSpecificOutput: { permissionDecision: 'ask', permissionDecisionReason: outwardReason(outward) } }
+      : {}
+    emitHostAsides(host, stdout, stderr, mode, asides, ask)
     return EXIT.OK
   }
   if (asides.length) stderr(`caselaw gate (${mode}):\n  ${asides.join('\n  ')}\n`)
   stderr(blockReason(result) + '\n')
   return EXIT.PRE_BLOCK
+}
+
+// ===========================================================================
+// D5: outward actions
+// ===========================================================================
+
+/** Shell words that put something outside the project, or spend money, and cannot be taken back. */
+const OUTWARD = [
+  { name: 'git push', re: /^git(?:\s+(?:-C\s+\S+|-c\s+\S+|--[\w-]+(?:=\S+)?))*\s+push\b/ },
+  { name: 'npm publish', re: /^(?:npm|pnpm|yarn|bun)(?:\s+(?:--?[\w-]+(?:=\S+)?))*\s+(?:npm\s+)?publish\b/ },
+  { name: 'gh release', re: /^gh\s+release\s+(?:create|edit|delete|upload)\b/ },
+  { name: 'cargo publish', re: /^cargo\s+publish\b/ },
+  { name: 'twine upload', re: /^(?:python3?\s+-m\s+)?twine\s+upload\b/ },
+  { name: 'docker push', re: /^docker(?:\s+(?:buildx|image|manifest))?\s+push\b/ },
+  { name: 'gem push', re: /^gem\s+push\b/ },
+  { name: 'poetry publish', re: /^(?:poetry|uv|hatch|flit)\s+publish\b/ },
+]
+
+/**
+ * The outward action a shell command would take, or null. Each segment of a
+ * compound command is tested at its own start, after env assignments and
+ * wrappers, so `git commit -m "docs: git push"` is not a push. A dry run is
+ * not an outward action.
+ */
+export function outwardAction(command, depth = 0) {
+  const segments = String(command ?? '').split(/&&|\|\||[;|&\n]/)
+  for (let seg of segments) {
+    seg = seg.trim().replace(/^[({]+\s*/, '')
+    for (;;) {
+      const next = seg.replace(/^(?:[A-Za-z_][A-Za-z0-9_]*=\S*|sudo|env|command|time|nohup|exec)\s+/, '')
+      if (next === seg) break
+      seg = next
+    }
+    const wrapped = /^(?:ba|z|da)?sh\s+-c\s+(['"])([\s\S]*)\1\s*$/.exec(seg)
+    if (wrapped && depth < 3) {
+      const inner = outwardAction(wrapped[2], depth + 1)
+      if (inner) return inner
+      continue
+    }
+    if (/\s(?:--dry-run|-n)(?=\s|$)/.test(seg) && /^(?:git|npm|pnpm|yarn|cargo|bun)\b/.test(seg)) continue
+    for (const o of OUTWARD) if (o.re.test(seg)) return o.name
+  }
+  return null
+}
+
+function outwardReason(name) {
+  return `caselaw D5: \`${name}\` leaves the project and cannot be undone. Outward-facing actions wait for the human; confirm with them first.`
+}
+
+/** D5 is in force only where the install accepted it. Unreadable answers mean not in force. */
+async function outwardGuardOn(root) {
+  try {
+    const doc = JSON.parse(stripBom(await readFile(join(root, '.caselaw/answers.json'), 'utf8')))
+    const accepted = doc?.answers?.['harness.defaults']
+    return Array.isArray(accepted) && accepted.includes('D5')
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -2117,6 +2184,70 @@ async function recordCompaction(args) {
   if (!root) return EXIT.OK
   const line = JSON.stringify({ at: new Date().toISOString(), trigger: str(payload?.trigger) || null }) + '\n'
   try { await appendFile(join(root, '.caselaw/compactions.jsonl'), line, 'utf8') } catch { /* never block a compaction */ }
+  return EXIT.OK
+}
+
+// ===========================================================================
+// Session digest
+// ===========================================================================
+
+const SAFE_DIR = /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/
+const DIGEST_WORDS = 22
+const DIGEST_RULES = 40
+
+/** Where this install keeps its doctrine: answers.json, then the manifest, then docs/. */
+async function doctrineDirOf(root) {
+  const clean = (d) => (typeof d === 'string' && SAFE_DIR.test(d.trim().replace(/\/+$/, '')) && !d.split('/').some((p) => p === '..' || p === '.') ? d.trim().replace(/\/+$/, '') : null)
+  const read = async (rel) => { try { return JSON.parse(stripBom(await readFile(join(root, rel), 'utf8'))) } catch { return null } }
+  const fromAnswers = clean((await read('.caselaw/answers.json'))?.doctrineDir)
+  if (fromAnswers) return fromAnswers
+  const manifest = await read('.caselaw/manifest.json')
+  const authority = Object.keys(manifest?.entries ?? {}).find((p) => p.endsWith('/authority-split.md'))
+  return clean(manifest?.doctrineDir) || clean(authority?.slice(0, -'/authority-split.md'.length)) || 'docs'
+}
+
+/**
+ * The active rules in one line each (`- name: Trigger`), under one line that
+ * points at the authority split. Read from the rule files on every call, so it
+ * is right after a compaction, a resume or a /clear, when what a session
+ * loaded earlier is gone.
+ */
+export async function sessionDigest(root) {
+  const dir = await doctrineDirOf(root)
+  const lines = [`CaseLaw: read \`${dir}/authority-split.md\` first (what you can and cannot verify here). Active rules, one line each; open \`${dir}/rules/active/<name>.md\` when its Trigger matches this turn.`]
+  let names = []
+  try { names = (await readdir(join(root, dir, 'rules/active'))).filter((n) => n.endsWith('.md') && n !== 'WHY-THIS-IS-EMPTY.md' && n !== 'README.md').sort() } catch { /* no rules directory yet */ }
+  const rules = []
+  for (const file of names) {
+    let text = ''
+    try { text = await readFile(join(root, dir, 'rules/active', file), 'utf8') } catch { continue }
+    const m = /^\*\*Trigger:\*\*[ \t]*(.+)$/m.exec(text)
+    if (!m) continue
+    const words = m[1].trim().split(/\s+/)
+    rules.push(`- ${file.slice(0, -3)}: ${words.slice(0, DIGEST_WORDS).join(' ')}${words.length > DIGEST_WORDS ? '…' : ''}`)
+  }
+  lines.push(...rules.slice(0, DIGEST_RULES))
+  if (rules.length > DIGEST_RULES) lines.push(`- (${rules.length - DIGEST_RULES} more in \`${dir}/rules/active/\`)`)
+  if (!rules.length) lines.push('- (no active rules yet)')
+  return lines.join('\n')
+}
+
+/**
+ * SessionStart: print the digest where the host reads it as context. Claude
+ * Code and Codex take plain stdout; Cursor and Gemini CLI want JSON. Outside
+ * an install it prints nothing, and it never fails.
+ */
+async function runSession(args, stdout) {
+  const raw = await readStdin(500)
+  let payload = {}
+  try { payload = raw.ok && raw.text.trim() ? JSON.parse(raw.text) : {} } catch { /* a bad payload still gets its digest */ }
+  const start = str(payload?.cwd) || str(Array.isArray(payload?.workspace_roots) ? payload.workspace_roots[0] : '') || process.cwd()
+  const root = (await installAbove(start)) ?? (args.root ? resolve(args.root) : null)
+  if (!root || !(await isDirectory(join(root, '.caselaw')))) return EXIT.OK
+  const text = await sessionDigest(root)
+  if (args.host === 'cursor') stdout(JSON.stringify({ additional_context: text }) + '\n')
+  else if (args.host === 'gemini') stdout(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: text } }) + '\n')
+  else stdout(text + '\n')
   return EXIT.OK
 }
 
@@ -2310,6 +2441,8 @@ const USAGE = `caselaw gate runner
   node gate.mjs --mode pre    --host generic  JSON write or command on stdin, exit 2 to block
   node gate.mjs --mode post   --host generic  JSON path on stdin, re-read from disk
   node gate.mjs --mode compact --host generic  record a context compaction for the optimizer
+  node gate.mjs --mode session                print the active-rule digest (SessionStart hooks)
+  node gate.mjs --mode pre|post --host codex|cursor|gemini  the host's own hook payload on stdin
   node gate.mjs --mode staged                 git diff --cached, exit 1 if a block-severity gate fires
   node gate.mjs --mode all                    whole tree (CI), exit 1 if a block-severity gate fires
 
@@ -2340,12 +2473,13 @@ export async function main(argv = process.argv.slice(2), io = {}) {
     const mode = args.mode
     // A telemetry event for the optimizer, separate from gate evaluation.
     if (mode === 'compact') return await recordCompaction(args)
+    if (mode === 'session') return await runSession(args, stdout)
     if (!MODES.includes(mode)) {
       // Bad invocation is OUR failure, and our failures never block.
       stderr(`caselaw gate: --mode must be one of ${MODES.join(', ')} (got ${JSON.stringify(mode ?? null)})\n`)
       return EXIT.OK
     }
-    if (args.host && !['claude', 'generic'].includes(args.host)) {
+    if (args.host && !['claude', 'generic', ...ADAPTED_HOSTS].includes(args.host)) {
       stderr(`caselaw gate: unknown --host ${JSON.stringify(args.host)}; nothing was checked\n`)
       return EXIT.OK
     }
@@ -2458,6 +2592,7 @@ function emitAsides(stdout, mode, lines, extra = {}) {
     const text = `caselaw gate (${mode}):\n  ${lines.join('\n  ')}`
     payload.systemMessage = text
     payload.hookSpecificOutput = {
+      ...extra.hookSpecificOutput,
       hookEventName: mode === 'pre' ? 'PreToolUse' : 'PostToolUse',
       additionalContext: text,
     }
@@ -2475,6 +2610,94 @@ function reportGenericHook(mode, result, stdout) {
   }) + '\n')
   return blocked && mode === 'pre' ? EXIT.PRE_BLOCK : EXIT.OK
 }
+
+/**
+ * Notes and asks on an exit-0 hook, in the shape each host reads. Claude Code
+ * takes hook JSON with a systemMessage; Codex and Gemini CLI take the same
+ * systemMessage (Gemini wants stdout to be JSON or nothing); Cursor has no
+ * message channel on an allow, so notes go to stderr and only an ask is JSON.
+ */
+function emitHostAsides(host, stdout, stderr, mode, lines, extra = {}) {
+  if (host === 'cursor') {
+    if (lines.length) stderr(`caselaw gate (${mode}):\n  ${lines.join('\n  ')}\n`)
+    if (Object.keys(extra).length) stdout(JSON.stringify(extra) + '\n')
+    return
+  }
+  if (host === 'codex' || host === 'gemini') {
+    const payload = { ...extra }
+    if (lines.length) payload.systemMessage = `caselaw gate (${mode}):\n  ${lines.join('\n  ')}`
+    if (Object.keys(payload).length) stdout(JSON.stringify(payload) + '\n')
+    return
+  }
+  emitAsides(stdout, mode, lines, {
+    ...extra,
+    ...(extra.hookSpecificOutput ? { hookSpecificOutput: { hookEventName: 'PreToolUse', ...extra.hookSpecificOutput } } : {}),
+  })
+}
+
+/**
+ * Codex's apply_patch text, as the files it writes. `*** Add File` carries the
+ * whole new file in its `+` lines; `*** Update File` carries fragments (one
+ * per hunk); `*** Delete File` carries a path only, which path-scope still
+ * needs. A rename writes the new path too.
+ */
+export function parseApplyPatch(patch) {
+  const files = []
+  let cur = null
+  for (const line of String(patch ?? '').split(/\r?\n/)) {
+    let m = /^\*\*\* (Add|Update|Delete) File:\s*(.+?)\s*$/.exec(line)
+    if (m) { cur = { op: m[1], path: m[2], hunks: [[]], moveTo: null }; files.push(cur); continue }
+    if (!cur) continue
+    if ((m = /^\*\*\* Move to:\s*(.+?)\s*$/.exec(line))) { cur.moveTo = m[1]; continue }
+    if (/^\*\*\* End Patch/.test(line)) { cur = null; continue }
+    if (line.startsWith('@@')) { cur.hunks.push([]); continue }
+    if (line.startsWith('+')) cur.hunks[cur.hunks.length - 1].push(line.slice(1))
+  }
+  const out = []
+  for (const f of files) {
+    const add = f.op === 'Add'
+    const texts = f.op === 'Delete' ? [] : add ? [f.hunks.flat().join('\n')] : f.hunks.filter((h) => h.length).map((h) => h.join('\n'))
+    out.push({ path: f.path, texts, whole: add })
+    if (f.moveTo) out.push({ path: f.moveTo, texts, whole: false })
+  }
+  return out
+}
+
+/**
+ * One payload shape per host, mapped onto the shapes the runner already
+ * checks: a shell command, or files with proposed text. Anything it does not
+ * recognise is reported and left unchecked, never guessed at and never blocked.
+ * @returns {{command: string} | {hook: object} | {reason: string}}
+ */
+function adaptHostPayload(host, mode, payload) {
+  const tool = str(payload.tool_name)
+  const input = payload.tool_input && typeof payload.tool_input === 'object' ? payload.tool_input : {}
+  const shell = (c) => typeof c === 'string' && c.trim() ? { command: c } : { reason: `${host} shell payload has no command` }
+  if (host === 'cursor') {
+    // beforeShellExecution {command, cwd}; afterFileEdit {file_path, edits[]}
+    if (typeof payload.command === 'string') return shell(payload.command)
+    const path = str(payload.file_path)
+    if (!path) return { reason: 'Cursor payload has neither a command nor a file_path' }
+    return { hook: mode === 'post' ? hookFiles([{ path, texts: [], whole: false }]) : extractHookInput({ tool_input: payload }) }
+  }
+  if (host === 'gemini') {
+    if (tool === 'run_shell_command') return shell(input.command)
+    if (tool === 'write_file' || tool === 'replace') return { hook: extractHookInput(payload) }
+    return { reason: `Gemini tool ${JSON.stringify(tool || null)} is not one the gate checks` }
+  }
+  // codex
+  if (tool === 'Bash') return shell(input.command)
+  if (tool === 'apply_patch' || tool === 'Edit' || tool === 'Write') {
+    if (typeof input.command === 'string') {
+      const files = parseApplyPatch(input.command)
+      return files.length ? { hook: hookFiles(files, tool) } : { reason: 'apply_patch payload has no file headers' }
+    }
+    return { hook: extractHookInput(payload) }
+  }
+  return { reason: `Codex tool ${JSON.stringify(tool || null)} is not one the gate checks` }
+}
+
+const ADAPTED_HOSTS = ['codex', 'cursor', 'gemini']
 
 async function runHookMode(mode, common, args, stdout, stderr) {
   const raw = await readStdin()
@@ -2501,7 +2724,12 @@ async function runHookMode(mode, common, args, stdout, stderr) {
   }
 
   const generic = args.host === 'generic'
-  const command = generic ? payload.command : str(payload.tool_name) === 'Bash' ? payload.tool_input?.command : undefined
+  const adapted = ADAPTED_HOSTS.includes(args.host) ? adaptHostPayload(args.host, mode, payload) : null
+  if (adapted?.reason) {
+    stderr(`caselaw gate: ${adapted.reason}; nothing was checked\n`)
+    return EXIT.OK
+  }
+  const command = adapted ? adapted.command : generic ? payload.command : str(payload.tool_name) === 'Bash' ? payload.tool_input?.command : undefined
   if (generic && payload.command !== undefined &&
       (mode !== 'pre' || typeof command !== 'string' || !command.trim() ||
         payload.path !== undefined || payload.content !== undefined || payload.fragments !== undefined || payload.writes !== undefined)) {
@@ -2512,7 +2740,7 @@ async function runHookMode(mode, common, args, stdout, stderr) {
     return await runCommandHook(mode, common, args, payload, command, stdout, stderr)
   }
 
-  const hook = generic ? extractGenericHookInput(mode, payload) : extractHookInput(payload)
+  const hook = adapted ? adapted.hook : generic ? extractGenericHookInput(mode, payload) : extractHookInput(payload)
   if (!hook.ok) {
     stderr(`caselaw gate: ${hook.reason}\n`)
     return EXIT.OK
@@ -2528,7 +2756,7 @@ async function runHookMode(mode, common, args, stdout, stderr) {
   }
   if (notices.length) stderr(`caselaw gate: ${notices.join('; ')}\n`)
   if (!groups.size) {
-    if (!generic) emitAsides(stdout, mode, notices)
+    if (!generic) emitHostAsides(args.host || 'claude', stdout, stderr, mode, notices)
     return EXIT.OK
   }
   const evaluated = []
@@ -2587,7 +2815,7 @@ async function runHookMode(mode, common, args, stdout, stderr) {
   }
 
   if (result.blocking.length === 0) {
-    emitAsides(stdout, mode, asides)
+    emitHostAsides(args.host || 'claude', stdout, stderr, mode, asides)
     return EXIT.OK
   }
 
@@ -2597,7 +2825,9 @@ async function runHookMode(mode, common, args, stdout, stderr) {
     stderr(blockReason(result) + '\n')
     return EXIT.PRE_BLOCK
   }
-  emitAsides(stdout, mode, asides, { decision: 'block', reason: blockReason(result) })
+  // Cursor's afterFileEdit cannot take a verdict back; the reason goes where its log is read.
+  if (args.host === 'cursor') stderr(blockReason(result) + '\n')
+  emitHostAsides(args.host || 'claude', stdout, stderr, mode, asides, args.host === 'cursor' ? {} : { decision: 'block', reason: blockReason(result) })
   return EXIT.OK
 }
 

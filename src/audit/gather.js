@@ -52,6 +52,7 @@ export async function gather(root, { now = new Date() } = {}) {
 
   const rules = await gatherRules(root, { now, notes })
   const docRefs = await gatherRefs(root, docTexts)
+  const installCommitted = await gatherInstallCommitted(root)
   const untracked = await gatherUntracked(root, [...Object.keys(docTexts), ...allRuleFiles(rules)], notes)
   const authority = parseAuthority(docTexts[`${dir}/authority-split.md`], `${dir}/authority-split.md`)
   const staleCommands = await gatherStaleCommands(root, answers, docTexts)
@@ -73,6 +74,10 @@ export async function gather(root, { now = new Date() } = {}) {
     } catch (err) { notes.push(`harness: ${err.message}`) }
   }
   const gitignoreClaims = await gatherGitignoreClaims(root, docTexts)
+  let ruleIndex = null
+  if (answers) {
+    try { const { state, path } = await (await import('../core/rules.js')).ruleIndexState(root); ruleIndex = { state, path } } catch (err) { notes.push(`rule index: ${err.message}`) }
+  }
 
   let trackedFiles = []
   try {
@@ -94,9 +99,9 @@ export async function gather(root, { now = new Date() } = {}) {
     root, now, notes,
     answers, manifest,
     gatesConfig: gatesConfig ?? gatesStore.emptyConfig(),
-    rules, docTexts, docRefs, untracked, authority, staleCommands, adrs, gitignoreClaims,
+    rules, docTexts, docRefs, untracked, installCommitted, authority, staleCommands, adrs, gitignoreClaims,
     fireCounts, earnedFires, drifted, installAgeDays, borrowed, optimizer, harnessChanges,
-    trackedFiles, incidents,
+    trackedFiles, incidents, ruleIndex,
     installed: Boolean(answers || manifest),
   }
 }
@@ -138,8 +143,13 @@ async function gatherRules(root, { now, notes }) {
       enforcement: parseEnforcement(parsed.enforcement),
       problems,
       ageDays: await fileAgeDays(join(root, r.path || ''), now),
+      // An error means git has the history and the commit is not in it. A warning
+      // means git could not say (no git, a shallow clone): not a verdict.
       unresolvedRefs: problems
-        .filter((p) => p.code === 'origin-unresolvable')
+        .filter((p) => p.code === 'origin-unresolvable' && p.severity === 'error')
+        .map((p) => p.ref || p.message),
+      uncheckedRefs: problems
+        .filter((p) => p.code === 'origin-unresolvable' && p.severity !== 'error')
         .map((p) => p.ref || p.message),
     }
     merged.missingSubjects = await missingSubjects(root, merged)
@@ -267,6 +277,19 @@ async function gatherRefs(root, docTexts) {
     }
   }
   return refs
+}
+
+/**
+ * Has this install been committed before? True when HEAD already holds
+ * .caselaw/answers.json. Before that, "not tracked" is the state every install
+ * is in until its first commit, and the audit asks for the commit once instead
+ * of failing once per file.
+ */
+async function gatherInstallCommitted(root) {
+  try {
+    await pExecFile('git', ['cat-file', '-e', `HEAD:${answersStore.ANSWERS_PATH}`], { cwd: root })
+    return true
+  } catch { return false }
 }
 
 async function gatherUntracked(root, paths, notes) {

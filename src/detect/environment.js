@@ -18,6 +18,7 @@ import { readFile, readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { run } from './exec.js'
 import { walk } from './stack.js'
+import { detectLocalGates } from './local-gates.js'
 
 /** gh is a network call. Four seconds or we move on. */
 export const DEFAULT_GH_TIMEOUT_MS = 4000
@@ -82,7 +83,7 @@ const SECRET_RULES = [
 export function emptyEnvironment() {
   return {
     ci: { present: false, provider: null, files: [], providers: [] },
-    hooks: { framework: null, files: [] },
+    hooks: { framework: null, files: [], localGates: [] },
     agentConfig: {
       claudeMd: false,
       agentsMd: false,
@@ -91,6 +92,9 @@ export function emptyEnvironment() {
       copilot: false,
       existingHarness: false,
       windsurfRules: false,
+      geminiMd: false,
+      geminiDir: false,
+      codexDir: false,
       files: [],
     },
     deploySurface: [],
@@ -150,6 +154,12 @@ export async function detectEnvironment(root, opts = {}, ctx = {}) {
   // gate this repo already enforces, so the interview must know about them.
   // .git is excluded from the walk, so this needs its own readdir.
   for (const h of await listNativeHooks(root)) env.hooks.files.push(h)
+  // A hooks directory the repository ships and wires with core.hooksPath.
+  env.hooks.localGates = await detectLocalGates(root, w)
+  for (const g of env.hooks.localGates) {
+    env.hooks.framework = env.hooks.framework || 'core.hooksPath'
+    env.hooks.files.push(...g.files)
+  }
 
   // --- agent config --------------------------------------------------------
   const ac = env.agentConfig
@@ -159,11 +169,23 @@ export async function detectEnvironment(root, opts = {}, ctx = {}) {
   }
   ac.claudeMd = mark(fileSet.has('CLAUDE.md'), 'CLAUDE.md')
   ac.agentsMd = mark(fileSet.has('AGENTS.md'), 'AGENTS.md')
+  // An AGENTS.md holding nothing but caselaw's own pointer is not a sign of
+  // another tool: caselaw writes it on every install, and counting it made
+  // every Claude Code repo look like a two-tool repo on the next upgrade.
+  if (ac.agentsMd) {
+    const text = await readFile(join(root, 'AGENTS.md'), 'utf8').catch(() => '')
+    ac.agentsMdOwnContent = /\S/.test(text.replace(/<!-- caselaw:begin[\s\S]*?<!-- caselaw:end[^>]*-->/g, ''))
+  }
   ac.claudeDir = mark(dirSet.has('.claude'), '.claude/')
   ac.cursorRules =
     mark(dirSet.has('.cursor/rules'), '.cursor/rules/') || mark(fileSet.has('.cursorrules'), '.cursorrules')
   ac.copilot = mark(fileSet.has('.github/copilot-instructions.md'), '.github/copilot-instructions.md')
   ac.windsurfRules = mark(fileSet.has('.windsurfrules'), '.windsurfrules')
+  // Gemini CLI and Codex keep project config in dot-directories; either is
+  // enough to know the repo is worked on with that tool.
+  ac.geminiMd = mark(fileSet.has('GEMINI.md'), 'GEMINI.md')
+  ac.geminiDir = mark(dirSet.has('.gemini'), '.gemini/')
+  ac.codexDir = mark(dirSet.has('.codex'), '.codex/')
   // Fresh install vs upgrade. This one changes what the CLI does next, so it
   // is checked on disk rather than inferred from a possibly truncated walk.
   ac.existingHarness = mark(await isFile(join(root, '.caselaw/manifest.json')), '.caselaw/manifest.json')

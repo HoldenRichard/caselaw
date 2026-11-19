@@ -4,11 +4,11 @@
 
 **Rule:** name a secret by its last four characters only. Never paste a key, token or password into a file, a commit or a chat; if one lands there, treat it as leaked and rotate it, and confirm the rotation by the new secret's last four, not by having clicked rotate.
 
-**Precedent:** In the study caselaw came from (ids are rows of its defect ledger): DEF-008 (Kabu, 2026-07-06): the API key in the app was byte-identical to a leaked key that internal notes said had been rotated. DEF-310 (Reprompt, 2026-09-09): a redacted key display overlapped its prefix and suffix on short keys and printed more of the key than intended.
+**Precedent:** a key believed rotated was byte-identical to the leaked one (2026-07-06). [More](../PRECEDENT.md#secrets-by-last-four).
 
 **Enforcement:** memory
 
 **Triggered:** {{ id }}, because {{ fact }}; {{ status }} (caselaw 0.3)
 
 ---
-_Proposed by caselaw trigger {{ id }}, because this repository has what the trigger looks for (above), on another project's evidence, not yours. Its first catch here becomes this project's own Origin: `caselaw rule catch {{ name }} --what "<what it caught, with a commit, a date or an issue>"`. If it has caught nothing after {{ days }} days of commits, `caselaw audit` asks whether this project needs it._
+_Caselaw trigger {{ id }}, on other projects' evidence until your first catch: `caselaw rule catch {{ name }} --what "<commit, date or issue>"`. No catch after {{ days }} days of commits: `caselaw audit` asks if you need it._

@@ -33,10 +33,7 @@
       },
       "lint": null,
       "format": null,
-      "typecheck": {
-        "cmd": "npm run typecheck",
-        "source": "package.json:scripts.typecheck"
-      },
+      "typecheck": null,
       "build": null
     },
     "deploySurface": [],

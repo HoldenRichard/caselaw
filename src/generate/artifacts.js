@@ -14,10 +14,10 @@ import { generate as generateAuthoritySplit } from './authority-split.js'
 import { generate as generateCloseOut } from './close-out.js'
 import { generate as generateDeclarations } from './declarations.js'
 import { doctrineDirOf, DEFAULT_DOCTRINE_DIR } from '../core/doctrine.js'
-import { selectAdapters, commandCollisions } from '../adapters/index.js'
+import { selectAdapters, commandCollisions, cleanHosts, detectedHosts } from '../adapters/index.js'
 import { isoDate } from '../core/dates.js'
 import { render } from '../render/engine.js'
-import { defaultArtifacts, defaultsSince, personalArtifacts } from '../core/defaults.js'
+import { defaultArtifacts, defaultsSince, personalArtifacts, acceptedDefaults } from '../core/defaults.js'
 import { triggerArtifacts, acceptedTriggers, writerGuardOn, writerGuard } from '../core/triggers.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -77,7 +77,64 @@ export function claudeHookSettings({ commands = false } = {}) {
   // governance a session loads is too much. Manual /compact is the human's
   // choice and is not counted.
   const compact = { matcher: 'auto', hooks: [{ type: 'command', command: cmd('compact'), timeout: 10 }] }
-  return { hooks: { PreToolUse: commands ? [entry('pre'), bash] : [entry('pre')], PostToolUse: [entry('post')], PreCompact: [compact] } }
+  // The rule digest, again after every start, resume, clear and compaction:
+  // what a session loaded about the rules is gone after the last of those.
+  const session = { matcher: 'startup|resume|clear|compact', hooks: [{ type: 'command', command: cmd('session'), timeout: 10 }] }
+  return { hooks: { PreToolUse: commands ? [entry('pre'), bash] : [entry('pre')], PostToolUse: [entry('post')], PreCompact: [compact], SessionStart: [session] } }
+}
+
+/**
+ * The hook command for a host that, unlike Claude Code, gives no variable
+ * naming the project root. The runner is found from the repository's top
+ * level (or the working directory outside git); the runner then finds the
+ * install that owns the file or command from the payload itself. A missing
+ * runner says so on stderr, on exit 0: it must never block a tool.
+ */
+function hostCommand(host, mode, rootVar = null) {
+  const root = rootVar ? `\${${rootVar}:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}` : '$(git rev-parse --show-toplevel 2>/dev/null || pwd)'
+  return `d="${root}"; if [ -f "$d/.caselaw/bin/gate.mjs" ]; then node "$d/.caselaw/bin/gate.mjs" --mode ${mode} --host ${host}; ` +
+    `else echo "caselaw: gate runner not found at $d/.caselaw/bin/gate.mjs; nothing was checked. Run caselaw doctor." >&2; fi`
+}
+
+/** Codex: project .codex/hooks.json. apply_patch is its write tool; Bash only where a command gate or D5 needs it. */
+export function codexHookSettings({ commands = false } = {}) {
+  const cmd = (mode) => hostCommand('codex', mode)
+  const entry = (matcher, mode, timeout = 30) => ({ matcher, hooks: [{ type: 'command', command: cmd(mode), timeout }] })
+  return { hooks: {
+    PreToolUse: [entry(commands ? 'Bash|apply_patch' : 'apply_patch', 'pre')],
+    PostToolUse: [entry('apply_patch', 'post')],
+    SessionStart: [{ hooks: [{ type: 'command', command: cmd('session'), timeout: 10 }] }],
+  } }
+}
+
+/** Cursor: .cursor/hooks.json, entries flat. afterFileEdit cannot stop an edit; it reports. */
+export function cursorHookSettings({ commands = false } = {}) {
+  const cmd = (mode) => hostCommand('cursor', mode, 'CURSOR_PROJECT_DIR')
+  return { hooks: {
+    ...(commands ? { beforeShellExecution: [{ command: cmd('pre'), timeout: 30 }] } : {}),
+    afterFileEdit: [{ command: cmd('post'), timeout: 30 }],
+    sessionStart: [{ command: cmd('session'), timeout: 10 }],
+  } }
+}
+
+/** Gemini CLI: .gemini/settings.json. Its timeouts are milliseconds. */
+export function geminiHookSettings({ commands = false } = {}) {
+  const cmd = (mode) => hostCommand('gemini', mode, 'GEMINI_PROJECT_DIR')
+  return { hooks: {
+    BeforeTool: [{
+      matcher: commands ? 'run_shell_command|write_file|replace' : 'write_file|replace',
+      hooks: [{ type: 'command', command: cmd('pre'), timeout: 30000 }],
+    }],
+    SessionStart: [{ hooks: [{ type: 'command', command: cmd('session'), timeout: 10000 }] }],
+  } }
+}
+
+/** Where each host's live hooks live, and what builds them. */
+export const HOST_HOOKS = {
+  'claude-code': { path: '.claude/settings.json', build: claudeHookSettings },
+  codex: { path: '.codex/hooks.json', build: codexHookSettings },
+  cursor: { path: '.cursor/hooks.json', build: cursorHookSettings },
+  gemini: { path: '.gemini/settings.json', build: geminiHookSettings },
 }
 
 /**
@@ -168,11 +225,16 @@ export async function buildArtifacts({ doc, detected, adapterIds = null, modules
   out.push(...defaults, ...triggered)
 
   // Install shared instructions and let detected tools find them through thin bridges.
-  const adapters = selectAdapters(detected, { only: adapterIds })
+  // The hosts the setup recorded decide; without a record, detection does.
+  const hostIds = adapterIds ?? cleanHosts(doc.hosts) ?? detectedHosts(detected)
+  const adapters = selectAdapters(detected, { only: hostIds })
   for (const adapter of adapters) {
     out.push(...adapter.artifacts({ detected, dir }))
   }
   const usesClaude = adapters.some((a) => a.id === 'claude-code')
+  // A shell hook is wanted wherever something checks commands: the writer
+  // guard (T3) or the outward-actions default (D5, which asks before a push).
+  const shell = guard || acceptedDefaults(doc).some((d) => d.id === 'D5')
 
   out.push({
     path: '.caselaw/bin/gate.mjs', kind: 'file',
@@ -193,7 +255,7 @@ export async function buildArtifacts({ doc, detected, adapterIds = null, modules
     // Merged into whatever settings.json the project already keeps, never
     // written whole: our managed content is the two hook entries and nothing
     // else in the file (src/core/jsonmerge.js).
-    const hooks = claudeHookSettings({ commands: guard }).hooks
+    const hooks = claudeHookSettings({ commands: shell }).hooks
     out.push({
       path: '.claude/settings.json', kind: 'json-merge', blockId: 'hooks', merge: hooks,
       body: JSON.stringify({ hooks }, null, 2) + '\n',
@@ -213,6 +275,13 @@ export async function buildArtifacts({ doc, detected, adapterIds = null, modules
         body: (await readFile(join(TEMPLATE_ROOT, 'adapters/claude/commands', rel), 'utf8')).replace('docs/close-out.md', `${dir}/close-out.md`),
       })
     }
+  }
+
+  for (const host of ['codex', 'cursor', 'gemini']) {
+    if (!hostIds.includes(host)) continue
+    const { path, build } = HOST_HOOKS[host]
+    const hooks = build({ commands: shell }).hooks
+    out.push({ path, kind: 'json-merge', blockId: 'hooks', merge: hooks, body: JSON.stringify({ hooks }, null, 2) + '\n' })
   }
 
   for (const id of modules) {

@@ -11,7 +11,7 @@
  */
 
 import { readFile, writeFile, mkdir, realpath } from 'node:fs/promises'
-import { homedir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join, basename } from 'node:path'
 import { createHash } from 'node:crypto'
 import { DEFAULTS } from './defaults.js'
@@ -40,6 +40,12 @@ async function save(home, data) {
   await writeFile(join(home, PERSONAL_FILE), JSON.stringify(data, null, 2) + '\n', 'utf8')
 }
 
+/** True for a path inside the system temp folder (or /tmp, which macOS resolves to /private/tmp). */
+export async function isThrowaway(path) {
+  const temps = await Promise.all([tmpdir(), '/tmp'].map((d) => realpath(d).catch(() => d)))
+  return temps.some((d) => path === d || path.startsWith(d.endsWith('/') ? d : d + '/'))
+}
+
 /** A repository's id: a hash of its real path, so the store never needs the path to tell two apart. */
 async function repoId(root) {
   const real = await realpath(root).catch(() => root)
@@ -54,6 +60,9 @@ export async function recordPersonalCatch({ root, rule, at, home = personalHome(
   if (personalOff()) return null
   const data = await loadPersonal(home)
   const { id, path } = await repoId(root)
+  // A clone in the system temp folder is a test or a demo, not one of the
+  // owner's repositories: two of them must never add up to a personal default.
+  if (!process.env.CASELAW_HOME && await isThrowaway(path)) return null
   data.repos[id] = { name: basename(path), path, seen: at }
   const prev = data.rules[rule.name] || { catches: [] }
   data.rules[rule.name] = {
