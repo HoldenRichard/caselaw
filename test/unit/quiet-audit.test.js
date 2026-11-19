@@ -576,3 +576,24 @@ describe('a recorded settle command', () => {
     assert.equal(noSettle.answers['authority.settle'], undefined)
   })
 })
+
+describe('drift: a gitignored generated file absent from a fresh clone (0.5.0 CI self-audit)', () => {
+  test('POSITIVE CONTROL: an ignored missing file is not drift; an unignored missing one still is', async () => {
+    const { gather } = await import('../../src/audit/gather.js')
+    const { mkdtemp, writeFile: wf, mkdir: md } = await import('node:fs/promises')
+    const { tmpdir: td } = await import('node:os')
+    const { join: j } = await import('node:path')
+    const { execFileSync } = await import('node:child_process')
+    const dir = await mkdtemp(j(td(), 'caselaw-drift-'))
+    execFileSync('git', ['init', '-q'], { cwd: dir })
+    await wf(j(dir, '.gitignore'), '.codex/\n')
+    await md(j(dir, '.caselaw'), { recursive: true })
+    await wf(j(dir, '.caselaw/manifest.json'), JSON.stringify({ schemaVersion: 1, entries: {
+      '.codex/hooks.json': { kind: 'file', hash: 'a'.repeat(64) },
+      'docs/close-out.md': { kind: 'file', hash: 'b'.repeat(64) },
+    } }))
+    const g = await gather(dir)
+    const missing = (g.drifted || []).filter((d) => d.kind === 'missing').map((d) => d.path)
+    assert.deepEqual(missing, ['docs/close-out.md'])
+  })
+})

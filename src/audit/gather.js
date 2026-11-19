@@ -384,9 +384,14 @@ async function gatherDrift(root, manifest, notes) {
   if (!manifest) return []
   try {
     const r = await manifestStore.reconcile(root, manifest, { locate })
+    // A missing file the repository gitignores was never in this checkout to
+    // begin with (a fresh CI clone of a repo that ignores .codex/): per-clone,
+    // like the pre-commit hook, so it is not drift.
+    const ignored = await Promise.all(r.missing.map((path) =>
+      pExecFile('git', ['check-ignore', '-q', '--', path], { cwd: root }).then(() => true, () => false)))
     return [
       ...r.modified.map((path) => ({ path, kind: 'modified' })),
-      ...r.missing.map((path) => ({ path, kind: 'missing' })),
+      ...r.missing.filter((_, i) => !ignored[i]).map((path) => ({ path, kind: 'missing' })),
     ]
   } catch (err) {
     notes.push(`drift: ${err.message}`)
