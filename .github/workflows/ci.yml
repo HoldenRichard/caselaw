@@ -22,7 +22,9 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       # Zero dependencies, so there is nothing to install. Node's own runner.
-      - run: node --test test/unit/*.test.js
+      # npm test adds test/setup.cjs: a throwaway personal store, and no agent
+      # environment marker, so CI and a laptop run the same suite.
+      - run: npm test
       # The tool must pass its own audit. A governance tool whose own
       # governance is stale has already lost the argument.
       - run: node bin/cli.mjs audit .

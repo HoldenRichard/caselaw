@@ -62,7 +62,7 @@ export async function recordPersonalCatch({ root, rule, at, home = personalHome(
   const { id, path } = await repoId(root)
   // A clone in the system temp folder is a test or a demo, not one of the
   // owner's repositories: two of them must never add up to a personal default.
-  if (!process.env.CASELAW_HOME && await isThrowaway(path)) return null
+  if (home === join(homedir(), '.caselaw') && await isThrowaway(path)) return null
   data.repos[id] = { name: basename(path), path, seen: at }
   const prev = data.rules[rule.name] || { catches: [] }
   data.rules[rule.name] = {
