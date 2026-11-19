@@ -1,16 +1,16 @@
 {
   "schemaVersion": 1,
-  "cliVersion": "0.4.2",
+  "cliVersion": "0.5.1",
   "templateVersion": "1.2",
-  "generatedAt": "2026-11-19T18:59:42.729Z",
+  "generatedAt": "2026-11-19T23:48:17.117Z",
   "entries": {
     "docs/authority-split.md": {
       "kind": "file",
-      "hash": "e52ee8a8da5e09d711f6ec82f28c7515c61bb657a36362b1fd1c77ab076ae08d"
+      "hash": "b3628bb39fd48b44ebd224d943fed97f64258293b9f907b6c4c54da3b88ff8c3"
     },
     "docs/close-out.md": {
       "kind": "file",
-      "hash": "065fcfd6f5a10ac13ae01fc44c579425452bf6b8ce0806752e9cf1a504d5da73"
+      "hash": "0e79b3ec3b5f4876d65bc2d8baef268e733106698a9b22b11ea2ad2e01b33a21"
     },
     "docs/rules/README.md": {
       "kind": "file",

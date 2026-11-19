@@ -152,7 +152,7 @@ describe('what lives outside GitHub Actions', () => {
     assert.deepEqual(ciGates.unread, [{ file: 'azure-pipelines.yml', system: 'Azure Pipelines' }])
 
     const { content } = await generateAuthoritySplit({ answers: {}, detected: { publishing, ciGates }, projectName: 'P', now: NOW })
-    assert.match(content, /\*\*Read the Docs \(the documentation site\)\*\* \(`\.readthedocs\.yaml:1`\): when the pushes its project settings on readthedocs\.org select \(they are not in this repository\)\./)
+    assert.match(content, /\*\*Read the Docs \(the documentation site\)\*\* \(`\.readthedocs\.yaml:1`\): when pushes that its readthedocs\.org project settings select \(those settings are not in this repository\)\./)
     assert.match(content, /CI also runs in Azure Pipelines \(`azure-pipelines\.yml`\), which caselaw does not read: its gates, and anything it publishes, are not listed in this file\./)
   })
 })

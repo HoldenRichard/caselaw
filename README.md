@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/caselaw.svg?color=24292e&label=npm)](https://www.npmjs.com/package/caselaw)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**Using the current npm release?** See the [caselaw 0.5.0 documentation](https://github.com/HoldenRichard/caselaw/tree/v0.5.0#readme).
+**Using the current npm release?** See the [caselaw 0.5.1 documentation](https://github.com/HoldenRichard/caselaw/tree/v0.5.1#readme).
 
 **Case law for your codebase.** Set up project rules with your coding agent,
 turn proven rules into gates, and audit both as the project changes.
@@ -171,6 +171,7 @@ telemetry and makes no gate decision.
 | | |
 |---|---|
 | `caselaw <command> [<subcommand>] --help` | that command's own flags, required ones marked, with an example |
+| `caselaw --version` | the installed version |
 | `caselaw init` | prepare setup for your coding agent |
 | `caselaw check` | CI: are the committed docs still what the answers produce? |
 | `caselaw upgrade` | re-render; never touches what you edited |

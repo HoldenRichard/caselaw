@@ -162,18 +162,25 @@ export function summarize(entries) {
 /** Human-readable plan. Kept plain so it reads the same piped to a file. */
 export function formatPlan({ entries, summary }, { root = '.' } = {}) {
   const lines = []
-  const verb = summary.willWrite === 0 ? 'Nothing to write' : `Plan — ${summary.willWrite} file(s)`
+  // A NEW entry that replaces a file already on disk is an update; calling it
+  // new made an upgrade's plan look like a fresh install (0.5.0 field test).
+  const updated = entries.filter((e) => e.action === NEW && e.replacing).length
   const parts = []
-  if (summary.NEW) parts.push(`${summary.NEW} new`)
+  if (summary.NEW - updated) parts.push(`${summary.NEW - updated} new`)
+  if (updated) parts.push(`${updated} updated`)
   if (summary.MERGE) parts.push(`${summary.MERGE} merged`)
   if (summary.PATCH) parts.push(`${summary.PATCH} patched`)
-  if (summary.UNCHANGED) parts.push(`${summary.UNCHANGED} unchanged`)
-  if (summary.SKIP) parts.push(`${summary.SKIP} skipped`)
-  lines.push(`${verb}${parts.length ? ` (${parts.join(', ')})` : ''}`)
+  const rest = []
+  if (summary.UNCHANGED) rest.push(`${summary.UNCHANGED} already correct`)
+  if (summary.SKIP) rest.push(`${summary.SKIP} skipped`)
+  lines.push(summary.willWrite === 0
+    ? `Nothing to write${rest.length ? ` (${rest.join(', ')})` : ''}`
+    : `Plan: write ${summary.willWrite} file(s) (${parts.join(', ')})${rest.length ? `; ${rest.join(', ')}` : ''}`)
   lines.push('')
 
   const width = Math.max(...entries.map((e) => e.path.length), 10)
   for (const e of entries) {
+    const label = e.action === NEW && e.replacing ? 'UPDATE' : e.action
     const note =
       e.action === SKIP ? `  ← ${e.reason}`
       : e.action === MERGE && e.kind === 'json-merge' ? '  adds the caselaw hook entries, nothing else touched'
@@ -181,9 +188,10 @@ export function formatPlan({ entries, summary }, { root = '.' } = {}) {
       : e.action === PATCH ? `  appends a managed block, nothing removed`
       : e.action === UNCHANGED && e.keptToolEdit ? '  kept: a caselaw command wrote into it'
       : e.action === UNCHANGED ? '  already correct'
-      : e.replacing ? '  regenerated' : ''
-    lines.push(`  ${e.action.padEnd(9)} ${e.path.padEnd(width)}${note}`)
+      : e.replacing ? '  regenerated from your answers' : ''
+    lines.push(`  ${label.padEnd(9)} ${e.path.padEnd(width)}${note}`)
   }
+  if (summary.willWrite) lines.push(`  ALSO      .caselaw/answers.json, .caselaw/manifest.json, the rules INDEX.md  your answers, caselaw's record of what it wrote, and the rule index`)
 
   if (summary.SKIP) {
     lines.push('')

@@ -7,7 +7,7 @@ This file says who can verify what. It is the difference between "the agent said
 
 ## The agent can
 
-- Run what CI runs on a change, in its order (`.github/workflows/ci.yml`, job `test`): `node --test test/unit/*.test.js`; `node bin/cli.mjs audit .`. In its `test` job, CI runs across 2 node; a run here covers one combination.
+- Run what CI runs on a change, in its order (`.github/workflows/ci.yml`, job `test`): `npm test`; `node bin/cli.mjs audit .`. In its `test` job, CI runs across 2 values of node; a run here covers one combination.
 - Run what CI runs on a change, in its order (`.github/workflows/ci.yml`, job `gitleaks`): `docker run --rm -v "$PWD:/repo"   ghcr.io/gitleaks/gitleaks:v8.30.1   dir /repo --no-banner --no-color --redact` (gitleaks — working tree).
 - Run what CI runs on a change, in its order (`.github/workflows/ci.yml`, job `trufflehog`): `docker run --rm -v "$PWD:/repo"   -e GIT_CONFIG_COUNT=1   -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/repo   ghcr.io/trufflesecurity/trufflehog:3.96.0   git file:///repo --results=verified --fail --no-update --no-color` (trufflehog — verified secrets, full history).
 - It can run the full suite, the self-audit, gitleaks and trufflehog, and install itself into a scratch repo end to end.

@@ -45,7 +45,7 @@ const PUBLISHERS = [
 /** Hosted builds configured outside the repository: the file says it builds, its settings say when. */
 const HOSTED_DOCS = [
   [/^\.readthedocs\.ya?ml$|^readthedocs\.ya?ml$/, 'Read the Docs (the documentation site)',
-    'the pushes its project settings on readthedocs.org select (they are not in this repository)'],
+    'pushes that its readthedocs.org project settings select (those settings are not in this repository)'],
 ]
 
 /** A document that says how a release is made, at the root or in docs/. */

@@ -15,12 +15,12 @@ Keep it short. A close-out nobody writes is worth less than a rough one they do.
 ## Verified
 
 <!-- One line per check that actually ran. Value — who ran it — what it showed.
-     "Tests pass" is not a verification line; "node --test test/unit/*.test.js — agent — 41 passed, 0 failed" is. -->
+     "Tests pass" is not a verification line; "npm test — agent — 41 passed, 0 failed" is. -->
 
 The gates CI runs on a change, job by job, each job in its own order. Run the ones your change touches before calling the
 work done; CI will run the rest.
 
-- [ ] `node --test test/unit/*.test.js`
+- [ ] `npm test`
 - [ ] `node bin/cli.mjs audit .`
 - [ ] `docker run --rm -v "$PWD:/repo"   ghcr.io/gitleaks/gitleaks:v8.30.1   dir /repo --no-banner --no-color --redact`
 - [ ] `docker run --rm -v "$PWD:/repo"   -e GIT_CONFIG_COUNT=1   -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/repo   ghcr.io/trufflesecurity/trufflehog:3.96.0   git file:///repo --results=verified --fail --no-update --no-color`

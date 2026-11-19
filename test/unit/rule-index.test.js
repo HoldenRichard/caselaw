@@ -213,7 +213,7 @@ describe('rules --for', () => {
     await D2()
     const hit = await run({ opt: { for: 'tests/test_x.py' } })
     assert.match(hit.text, /- seen-to-fail:/)
-    assert.match(hit.text, /matched tests\/test_x\.py: a test path, and the Trigger says "test"/)
+    assert.match(hit.text, /matched tests\/test_x\.py: a test path, and the Trigger says "adding or changing a test"/)
     const miss = await run({ opt: { for: 'src/render/engine.js' } })
     assert.match(miss.text, /No active rules triggered for: src\/render\/engine\.js/)
     assert.doesNotMatch(miss.text, /seen-to-fail/)
@@ -286,4 +286,19 @@ describe('shipped rule text', () => {
     await put('docs/rules/active/seen-to-fail.md', artifacts.find((a) => a.path.endsWith('seen-to-fail.md')).body)
     assert.ok(artifacts.some((a) => a.path === 'docs/rules/PRECEDENT.md'), 'the precedent file ships once, beside the rules')
   }
+})
+
+describe('keyword matching is about the kind of work (0.5.1)', () => {
+  test('POSITIVE CONTROL: a test path loads the rule about editing tests, not the one about running "build then test"', async () => {
+    const { explainTriggerMatch } = await import('../../src/core/rules.js')
+    assert.ok(explainTriggerMatch('adding or changing a test, check, gate or script that decides pass or fail', 'tests/test_x.py').length)
+    assert.equal(explainTriggerMatch('running steps where one depends on the one before: build then test, test then commit', 'tests/test_x.py').length, 0)
+    assert.equal(explainTriggerMatch('reporting the result of any check, test run, audit or review', 'tests/test_x.py').length, 0)
+  })
+  test('POSITIVE CONTROL: a paid-API client file loads the spend rule; an ordinary file does not', async () => {
+    const { explainTriggerMatch } = await import('../../src/core/rules.js')
+    const spend = 'a call to a paid or metered API: a model, a scraper, a media generator, anything billed per call or per unit.'
+    assert.ok(explainTriggerMatch(spend, 'Sources/Reprompt/GroqClient.swift').length)
+    assert.equal(explainTriggerMatch(spend, 'Sources/Reprompt/SettingsView.swift').length, 0)
+  })
 })

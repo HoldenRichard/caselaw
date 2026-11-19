@@ -1454,8 +1454,15 @@ export function pathKeywords(filePath) {
   if (dirs.some((d) => /^(db\/)?migrations?$/.test(d)) || /migration/.test(base)) { out.add('migration'); out.add('schema') }
   if (/^\.env/.test(base) || /\.(pem|key|p12|keystore|jks)$/.test(base) || /(secret|credential)/.test(p)) { out.add('credential'); out.add('secret'); out.add('key') }
   if (dirs.some((d) => d === 'scripts') || /\.(sh|bash)$/.test(base) || /^(makefile|justfile)$/.test(base)) out.add('script')
+  // A client for a paid or metered API, named after its vendor (GroqClient.swift,
+  // openai_client.py): editing it is the work the spend rule is about.
+  if (/(openai|anthropic|claude|groq|gemini|mistral|cohere|replicate|elevenlabs|deepgram|assemblyai|perplexity|fireworks|huggingface|stripe|twilio|sendgrid)/.test(base)) {
+    out.add('paid'); out.add('metered')
+  }
   return [...out]
 }
+
+const TEST_EDIT = /\b(?:add|adding|change|changing|write|writing|edit|editing|modify|modifying|delete|deleting|remove|removing|rename|renaming)\b[^.;:]{0,30}?\btests?\b/i
 
 /** A keyword as a Trigger word: a prefix at a word start; very short ones whole-word only. */
 const keywordRe = (kw) => new RegExp(kw.length <= 2 ? `(?<![a-z])${kw}(?![a-z])` : `(?<![a-z])${kw}`, 'i')
@@ -1474,7 +1481,12 @@ export function explainTriggerMatch(triggerText, filePath) {
   const reasons = []
   if (matchesTriggerPath(triggerText, filePath)) reasons.push({ via: 'path', detail: 'the Trigger names this path or a glob that covers it' })
   for (const kw of pathKeywords(filePath)) {
-    const word = new RegExp(`${keywordRe(kw).source}[a-z]*`, 'i').exec(String(triggerText ?? ''))
+    // "test" is also a step a Trigger runs ("build then test"); only a Trigger
+    // about editing tests is about a test file (0.5.0 field test: the chain
+    // rule loaded for every test edit).
+    const word = kw === 'test'
+      ? TEST_EDIT.exec(String(triggerText ?? ''))
+      : new RegExp(`${keywordRe(kw).source}[a-z]*`, 'i').exec(String(triggerText ?? ''))
     if (word) reasons.push({ via: 'keyword', detail: `a ${kw} path, and the Trigger says "${word[0]}"` })
   }
   return reasons

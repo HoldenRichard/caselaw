@@ -272,7 +272,7 @@ export async function applyDeclarations(draft, doc, { confirmWith = null, accept
   return {
     by: 'agent-draft',
     evidence: [...new Set(entries.flatMap((e) => e.evidence || []))],
-    confirmed: confirmWith ? 'at a terminal' : 'in chat (--yes)',
+    confirmed: confirmWith ? 'at a terminal' : 'with the setup summary (--yes)',
   }
 }
 
@@ -479,7 +479,11 @@ export async function evidenceWarnings(draft, { root, doc = { answers: {} } } = 
   for (const d of draft?.questions || []) {
     if (d.answer == null || d.answer === UNKNOWN || d.source === 'human' || !Array.isArray(d.evidence)) continue
     if (hasAnswer(doc, d.id) && JSON.stringify(doc.answers[d.id]) === JSON.stringify(d.answer)) continue
-    await look(d.id, d.evidence, null)
+    // A free-text answer is a claim like a declaration's: the cited line should
+    // say it (0.5.0 field test: package.json's version line was accepted as
+    // evidence for an answer about a release console). Option answers carry
+    // only a value, so they keep the blank-line check alone.
+    await look(d.id, d.evidence, typeof d.answer === 'string' ? d.answer : null)
   }
   const existing = doc.answers?.declarations || {}
   for (const [surface, entries] of Object.entries(draft?.declarations || {})) {
@@ -556,7 +560,7 @@ export function draftPrompt(draft, { confirmWith = null, accept = false, root = 
       return d.value
     }
     if (!accept) return SKIPPED
-    record(q.id, { by: d.source === 'human' ? 'human' : 'agent-draft', evidence: d.evidence, confirmed: 'in chat (--yes)' })
+    record(q.id, { by: d.source === 'human' ? 'human' : 'agent-draft', evidence: d.evidence, confirmed: d.source === 'human' ? 'in chat (--yes)' : 'with the setup summary (--yes)' })
     return d.value
   }
 

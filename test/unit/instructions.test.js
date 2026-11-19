@@ -74,7 +74,7 @@ describe('the conditions CI runs its gates under', () => {
     assert.match(content, /CI runs with a postgres service and the secret `NTFY_TEST_S3_URL`; a test that needs one may skip itself here, so a pass here is not CI's pass\./)
     // The matrix belongs to the job that has it, and is said of that job only (round 3).
     const py = await generateAuthoritySplit({ answers: {}, detected: { ciGates: { gates: [{ file: 'ci.yml', cmd: 'ruff check pyvisa', line: 1, job: 'formatting' }, { file: 'ci.yml', cmd: 'pytest', line: 9, job: 'tests' }], shared: [], contexts: [{ file: 'ci.yml', job: 'tests', ...pyvisa }] } }, projectName: 'P', now: NOW })
-    assert.match(py.content, /In its `tests` job, CI runs across 3 os × 5 python-version; a run here covers one combination\./)
+    assert.match(py.content, /In its `tests` job, CI runs across 3 values of os × 5 values of python-version; a run here covers one combination\./)
   })
 })
 

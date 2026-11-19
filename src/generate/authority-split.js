@@ -397,7 +397,7 @@ function ciContext({ job = null, services = [], secrets = [], matrix = [] }) {
   ]
   const out = []
   if (has.length) out.push(`${where} runs with ${has.join(' and ')}; a test that needs one may skip itself here, so a pass here is not CI's pass.`)
-  if (matrix.length) out.push(`${where} runs across ${matrix.map((m) => `${m.count} ${plain(m.key, 40)}`).join(' × ')}; a run here covers one combination.`)
+  if (matrix.length) out.push(`${where} runs across ${matrix.map((m) => `${m.count} values of ${plain(m.key, 40)}`).join(' × ')}; a run here covers one combination.`)
   return out.join(' ')
 }
 

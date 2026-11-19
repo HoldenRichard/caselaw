@@ -117,6 +117,16 @@ describe('evidence that exists but cannot support the claim is a warning, not an
     assert.deepEqual(await warnings(withDeclarations({ readme: [claim({ claim: 'Needs macOS 14', evidence: ['README.md:5'] })] })), [])
   })
 
+  test('POSITIVE CONTROL: a free-text answer is checked against its cited line too; an option answer is not', async () => {
+    const draft = buildDraft({ doc: emptyAnswers(), detected: DETECTED })
+    Object.assign(draft.questions.find((q) => q.id === 'authority.human_proof'), { answer: 'A Windows installer is signed by hand', evidence: ['README.md:5'] })
+    const w = await warnings(draft)
+    assert.equal(w.length, 1)
+    assert.match(w[0], /authority\.human_proof: evidence "README\.md:5" shares no meaningful word/)
+    Object.assign(draft.questions.find((q) => q.id === 'authority.human_proof'), { answer: 'Runs on macOS 14 by hand', evidence: ['README.md:5'] })
+    assert.deepEqual(await warnings(draft), [], 'a line that says it passes')
+  })
+
   test('a range of only blank lines is warned about; a path alone is checked against the whole file', async () => {
     await writeFile(join(root, 'blank.md'), '\n\n\n', 'utf8')
     const w = await warnings(withDeclarations({ readme: [claim({ evidence: ['blank.md:1-3'] }), claim({ claim: 'Ships a Windows installer', evidence: ['README.md'] })] }))

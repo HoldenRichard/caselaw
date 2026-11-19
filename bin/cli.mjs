@@ -184,6 +184,10 @@ Options
  */
 export async function main(list = argv.slice(2)) {
   const args = parseArgs(list)
+  if (args.version) {
+    say(CLI_VERSION)
+    return 0
+  }
 
   // `caselaw <command> [<sub>] --help` prints that command's own flags and an
   // example, with the repository's actual doctrine directory in it.
@@ -935,7 +939,7 @@ function renderDetection(d) {
     push(k, d.commands?.[k]?.cmd)
   }
   push('ci', d.ci?.present ? (d.ci.providers || []).join(', ') || 'yes' : null)
-  push('agents', selectAdapters(d).map((a) => a.label).join(', '))
+  push('agents', selectAdapters(d).filter((a) => a.id !== 'agents-md' || d.agentConfig?.agentsMd).map((a) => a.label).join(', ') || 'none detected (AGENTS.md is always written)')
   push('deploys to', (d.deploySurface || []).map((x) => x.kind).join(', '))
   return rows.length ? '\n' + rows.join('\n') : '\n  (nothing detected)'
 }
@@ -966,6 +970,7 @@ export function parseArgs(list) {
   for (let i = 0; i < list.length; i++) {
     const a = list[i]
     if (a === '--help' || a === '-h') out.help = true
+    else if (a === '--version' || a === '-V') out.version = true
     else if (a === '--dry-run') out.dryRun = true
     else if (a === '--yes' || a === '-y') out.yes = true
     else if (a.startsWith('--') && BOOL_FLAGS.includes(a.slice(2))) {
