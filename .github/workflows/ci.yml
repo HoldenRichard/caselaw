@@ -9,10 +9,12 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # The README says macOS and Linux; both run here, so the claim has a check.
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, macos-latest]
         node: ['20', '22']
     steps:
       - uses: actions/checkout@v7

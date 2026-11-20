@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/caselaw.svg?color=24292e&label=npm)](https://www.npmjs.com/package/caselaw)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**Using the current npm release?** See the [caselaw 0.5.1 documentation](https://github.com/HoldenRichard/caselaw/tree/v0.5.1#readme).
+**Using the current npm release?** See the [caselaw 0.5.2 documentation](https://github.com/HoldenRichard/caselaw/tree/v0.5.2#readme).
 
 **Case law for your codebase.** Set up project rules with your coding agent,
 turn proven rules into gates, and audit both as the project changes.
@@ -23,6 +23,12 @@ The agent can resume a draft with `caselaw init --draft`, preview it with
 `caselaw init --from-draft --dry-run`, then apply it with
 `caselaw init --from-draft --yes` after chat approval. To answer the
 questionnaire directly, use `npx caselaw init --interview`. About six minutes.
+
+---
+
+**Platforms:** macOS and Linux, Node.js 20 or later, tested in CI on every change. On Windows,
+run it inside WSL. Native Windows is not supported yet, because the commit and agent hooks are
+POSIX shell scripts.
 
 ---
 

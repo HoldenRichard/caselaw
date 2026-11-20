@@ -351,6 +351,7 @@ async function cmdUpgrade(args, root) {
 async function cmdDoctor(args, root) {
   const r = await doctor({ root })
   say('')
+  if (process.platform === 'win32') say(WINDOWS_NOTE)
   for (const f of r.findings) {
     const mark = f.status === 'ok' ? '  ok  ' : f.status === 'warn' ? '  warn' : '  FAIL'
     say(`${mark}  ${f.name.padEnd(13)} ${f.detail}`)
@@ -607,8 +608,11 @@ async function cmdRules(args, root) {
   return listRulesCmd({ ...args, paths }, { root, say })
 }
 
+const WINDOWS_NOTE = '  ! Native Windows is not supported yet: the commit and agent hooks are POSIX shell. Run caselaw inside WSL (Windows Subsystem for Linux), where it is tested like Linux.'
+
 async function cmdInit(args, root) {
   say(`\ncaselaw ${CLI_VERSION} — ${root}`)
+  if (process.platform === 'win32') say(WINDOWS_NOTE)
   say('Reading the repository before asking you anything…')
   const detected = await detect(root)
   if (!personalOff()) detected.personal = personalDefaults(await loadPersonal())

@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "cliVersion": "0.5.1",
+  "cliVersion": "0.5.2",
   "templateVersion": "1.2",
-  "generatedAt": "2026-11-19T23:48:17.117Z",
+  "generatedAt": "2026-11-20T00:51:34.059Z",
   "entries": {
     "docs/authority-split.md": {
       "kind": "file",
-      "hash": "b3628bb39fd48b44ebd224d943fed97f64258293b9f907b6c4c54da3b88ff8c3"
+      "hash": "5a1ee83d837dd64fd3e32bd1a346b5d1d294e16eced0fc283a4d65d4ddca6ce7"
     },
     "docs/close-out.md": {
       "kind": "file",

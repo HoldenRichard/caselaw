@@ -1,0 +1,2 @@
+# Templates and fixtures are compared byte for byte; Windows checkouts must not convert them to CRLF.
+* text=auto eol=lf
